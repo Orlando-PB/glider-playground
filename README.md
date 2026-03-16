@@ -29,10 +29,9 @@ Once installed, you can start the application from anywhere in your terminal (as
 
 This will load up the local server and automatically open the application in your default web browser. To stop the server, return to the terminal and press Ctrl+C.
 
-## How it Works (Under the Hood)
+## How to use
 
-When you run the installation command, Python's package manager reads the pyproject.toml file. It spots the [project.scripts] section and automatically generates a terminal command called glider-playground.
-
+.nc data files must be placed inside a data folder. There is a button to open this folder in the browser. You can then see the variables, and create X,Y plots, and also colour it by another variable. If the data has _QC flags, it you can choose which points to plot. the default is anything with QC 5 or less. You can zoom into a plot by dragging a square on it. There is a reset button at the bottom
 
 ## Uninstalling
 
