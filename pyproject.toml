@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glider-playground"
+version = "0.1.0"
+description = "A fast, web-based NetCDF explorer for glider data."
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "xarray",
+    "pandas",
+    "numpy",
+    "matplotlib"
+]
+
+[project.scripts]
+glider-playground = "glider_playground.cli:main"
+
+# Explicitly tell setuptools to only build the glider_playground folder
+[tool.setuptools.packages.find]
+include = ["glider_playground*"]

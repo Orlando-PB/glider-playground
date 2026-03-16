@@ -1,0 +1,8 @@
+/glider_playground/__pycache__
+/__pycache__
+.vscode/
+*.pyc
+*.egg-info/
+.DS_Store
+/data/
+*.nc
