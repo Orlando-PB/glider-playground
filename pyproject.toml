@@ -18,7 +18,8 @@ dependencies = [
     "xarray",
     "pandas",
     "numpy",
-    "matplotlib"
+    "matplotlib",
+    "httpx"
 ]
 
 [project.scripts]
