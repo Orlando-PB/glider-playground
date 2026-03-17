@@ -4,69 +4,49 @@ A fast, web-based NetCDF explorer for viewing and validating glider data. This t
 
 ![Glider Playground Home View](glider_playground/static/home_view.png)
 
-## Prerequisites
-
-It is highly recommended to run this project inside a Python virtual environment to keep its dependencies isolated from the rest of your system.
-
-1. Open your terminal and navigate to the project folder.
-2. Create a virtual environment named `.venv`:
-   ```bash
-   python -m venv .venv
-   ```    
-3. Activate the virtual environment:
-   ```bash
-   source .venv/bin/activate
-   ```   
-*(Note: You will need to run the activation command any time you open a new terminal window to work on this project).*
-
 ## Installation
 
-Ensure you have Python 3.9+ installed and your virtual environment is active. Navigate to this directory in your terminal and run:
+Ensure you have Python 3.9+ installed. It is recommended to install this inside a virtual environment to keep your system clean.
 
 ```bash
-pip install -e .
+pip install glider-playground
 ```
-
-The `-e` flag installs the package in "editable" mode. This means any changes you make to the Python code will be immediately recognised without needing to reinstall the package.
 
 ## How to Run
 
-Once installed, you can start the application from anywhere in your terminal (as long as your virtual environment is active) by simply typing:
+Once installed, you can start the application from anywhere in your terminal by simply typing:
 
 ```bash
 glider-playground
 ``` 
 
-This will load up the local server and automatically open the application in your default web browser. To stop the server, return to the terminal and press `Ctrl+C`.
+This will start the local server and automatically open the application in your default web browser. To stop the server, return to the terminal and press `Ctrl+C`.
 
 ## How to Use
 
 ### Loading Data
-`.nc` data files must be placed inside a local `data` folder. You can click the folder icon in the top navigation bar to easily open this directory on your machine. Once files are added, select your target dataset from the dropdown.
+`.nc` data files must be placed inside a local `data` folder (this folder is created automatically in your current directory the first time you run the app). You can click the **Folder** icon in the top navigation bar to open this directory. Once files are added, select your dataset from the dropdown.
 
 ### Views & Plotting
-* **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the **Colour** and choose a specific colourmap. 
-* **Presets:** Use the **View** dropdown to select some built-in oceanographic presets (e.g., Thermal Structure, Salinity Profile). You can also configure your own preferred axes and colourmaps, name them, and click **Save** to create Custom Views for future use.
-
-### Quality Control (QC) Filtering
-
-If your dataset contains Argo standard `_QC` variables, the tool will automatically clean the plot. 
-* You can control exactly which data points are rendered by providing a comma-separated list of flags (the default is `1,2,5,8` to include good, probably good, and interpolated data). This is applied to all axis.
+* **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the **Colour** axis and choose a specific colourmap. 
+* **Presets:** Use the **View** dropdown to select built- per-configured oceanographic views (e.g., Thermal Structure, Salinity Profile). You can also save your own axes and colour combinations as **Custom Views**.
 
 ### Interaction & Analysis
-* **Zoom:** Click and drag a box directly on the plot to zoom in. You can also use the interactive range sliders on the X and Y axes to precisely trim the data limits. Click the **Reset Lims** button at the bottom to return to the full overview.
-* **Z Zoom:** Drag the slider on the right to adjust the colour range to focus on.
-* **Data Inspector:** Click a point to trigger the Inspector. This will reveal its exact values in the sude bar, and show its location on the mini-map.
-* **Axis Controls:** Use the **Invert** checkbox to flip the Y-axis (useful for depth or pressure). Should automatically turn on in most cases. The **Delta** checkbox can be used plot the difference between variables (need same units)
+* **Smart Zoom:** Click and drag a box directly on the plot to zoom. When you zoom on X or Y, the **Colour axis auto-scales** its contrast to focus on the data currently in view.
+* **Manual Trimming:** Use the interactive range sliders on the X, Y, and Colour axes to precisely trim data limits.
+* **Data Inspector:** Click any point on the plot to trigger the Inspector. This reveals exact values in the sidebar and updates the mini-map to show the glider's GPS location at that moment.
+* **Reset:** Click **Reset Lims** to return to the full dataset overview and original colour scaling.
+
+### Quality Control (QC) Filtering
+If your dataset contains standard `_QC` variables, the tool cleans the data automatically. 
+* You can adjust which data points are visible by providing a list of flags (default is `1,2,5,8` for good/interpolated data).
 
 ### Exporting
-* **Plot All:** By default, the tool limits rendering to 259,about 250,000 points to maintain a fast, responsive UI. Tick the **Plot All** checkbox to bypass this limit and render every single data point for a high-resolution view.
-* **Download:** Click the **Download** button in the top right to save the plot as a PNG file.
+* **Plot All:** By default, the tool downsamples to ~250,000 points to keep the UI snappy. Tick **Plot All** to render every single point at high resolution.
+* **Download:** Click the **Download** icon to save your current view as a PNG.
 
 ## Uninstalling
 
-If you ever wish to remove the application and its terminal command from your environment, simply run:
-
 ```bash
 pip uninstall glider-playground
-``` 
+```
