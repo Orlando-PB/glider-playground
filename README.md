@@ -45,23 +45,22 @@ This will load up the local server and automatically open the application in you
 `.nc` data files must be placed inside a local `data` folder. You can click the folder icon in the top navigation bar to easily open this directory on your machine. Once files are added, select your target dataset from the dropdown.
 
 ### Views & Plotting
-* **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the marker **Colour** and choose a specific colourmap (e.g., Viridis, Plasma). 
-* **Presets:** Use the **View** dropdown to select built-in oceanographic presets (e.g., Thermal Structure, Salinity Profile). You can also configure your own preferred axes and colourmaps, name them, and click **Save** to create Custom Views for future use.
+* **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the **Colour** and choose a specific colourmap. 
+* **Presets:** Use the **View** dropdown to select some built-in oceanographic presets (e.g., Thermal Structure, Salinity Profile). You can also configure your own preferred axes and colourmaps, name them, and click **Save** to create Custom Views for future use.
 
 ### Quality Control (QC) Filtering
 
 If your dataset contains Argo standard `_QC` variables, the tool will automatically clean the plot. 
 * You can control exactly which data points are rendered by providing a comma-separated list of flags (the default is `1,2,5,8` to include good, probably good, and interpolated data). 
-* Hover over the **Flags** label in the UI to see a quick reference dictionary for all standard Argo QC definitions.
 
 ### Interaction & Analysis
-* **Zoom & Trim:** Click and drag a box directly on the plot to zoom in. You can also use the interactive range sliders on the X and Y axes to precisely trim the data limits. Click the **Reset Lims** button to return to the full overview.
-* **Data Inspector:** Click near any plotted point to trigger the Inspector. This will reveal the exact X, Y, and Colour values, alongside the timestamp and coordinates. The corresponding location will simultaneously be highlighted with a red marker on the mini-map.
-* **Axis Controls:** Use the **Invert** checkbox to flip the Y-axis (useful for depth or pressure) and the **Delta** checkbox to plot the difference between variables.
+* **Zoom:** Click and drag a box directly on the plot to zoom in. You can also use the interactive range sliders on the X and Y axes to precisely trim the data limits. Click the **Reset Lims** button at the bottom to return to the full overview.
+* **Data Inspector:** Click a point to trigger the Inspector. This will reveal its exact values in the sude bar, and show its location on the mini-map.
+* **Axis Controls:** Use the **Invert** checkbox to flip the Y-axis (useful for depth or pressure). Should automatically turn on in most cases. The **Delta** checkbox can be used plot the difference between variables (need same units)
 
 ### Exporting
-* **Plot All:** By default, the tool limits rendering to 259,000 points to maintain a fast, responsive UI. Tick the **Plot All** checkbox to bypass this limit and render every single data point for a high-resolution view.
-* **Download:** Once you have framed your ideal view, click the **Download** button in the top right to save the plot as a PNG file.
+* **Plot All:** By default, the tool limits rendering to 259,about 250,000 points to maintain a fast, responsive UI. Tick the **Plot All** checkbox to bypass this limit and render every single data point for a high-resolution view.
+* **Download:** Click the **Download** button in the top right to save the plot as a PNG file.
 
 ## Uninstalling
 

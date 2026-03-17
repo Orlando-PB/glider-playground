@@ -247,7 +247,7 @@
                     <div id="zoomBoxOverlay"></div>
                     
                     <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border border-green-200 text-[10px] font-bold px-2 py-1 rounded shadow-sm z-30 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
-                        <span class="material-symbols-outlined text-[14px]">auto_awesome</span> Auto QC Applied
+                        <span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied
                     </div>
 
                     <div id="emptyState" class="text-gray-400 flex flex-col items-center gap-2 absolute inset-0 m-auto h-fit pointer-events-none">
@@ -980,6 +980,7 @@
         ySelect.addEventListener('change', () => { 
             resetPlotState(true);
             updateMetadataLabels(); 
+            document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
         });
 
         applyQcCheck.addEventListener('change', () => { 
