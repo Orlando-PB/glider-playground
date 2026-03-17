@@ -100,6 +100,10 @@ def get_dataset_info(filename: str):
 @app.get("/api/sparkline")
 def get_sparkline(filename: str, x_var: str, y_var: str):
     return plot_logic.generate_sparkline(str(state["DATA_DIR"] / filename), x_var, y_var)
+    
+@app.get("/api/config")
+def get_config():
+    return {"is_server": os.getenv("IS_SERVER") == "True"}
 
 @app.get("/api/hover")
 def get_hover(

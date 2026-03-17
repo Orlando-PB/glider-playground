@@ -912,6 +912,16 @@ function resetPlotState(fullReset = true) {
         let variableCache = [];
 
         async function init() {
+            try {
+                const cfgRes = await fetch('/api/config');
+                const cfg = await cfgRes.json();
+                if (cfg.is_server) {
+                    document.getElementById('openFolderBtn').style.display = 'none';
+                }
+            } catch(e) { 
+                console.error("Config fetch failed:", e); 
+            }
+
             renderPresetsDropdown();
             await checkFilesAndTogglePrompt();
         }

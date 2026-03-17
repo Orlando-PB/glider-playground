@@ -19,7 +19,9 @@ dependencies = [
     "pandas",
     "numpy",
     "matplotlib",
-    "httpx"
+    "httpx",
+    "h5netcdf",
+    "netcdf4"
 ]
 
 [project.scripts]
