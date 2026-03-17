@@ -31,3 +31,5 @@ glider-playground = "glider_playground.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["glider_playground*"]
+[tool.setuptools.package-data]
+"glider_playground" = ["static/index.html", "static/icon.png"]
