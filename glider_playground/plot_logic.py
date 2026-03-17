@@ -315,6 +315,9 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
                 qc_vals = data_dict[f"{v}_QC"]
                 valid_mask &= np.isin(qc_vals, allowed_flags)
 
+    # Capture the global valid colour range BEFORE applying X/Y zooms
+    global_valid_c = c_vals[valid_mask] if c_vals is not None else None
+
     is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
     try:
         if trim_start and str(trim_start).strip() and trim_start != "undefined":
@@ -372,13 +375,16 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         ax.plot(plot_x, plot_y, marker='.', linestyle='none', markersize=dynamic_size, color='black')
     elif plot_c is not None:
         valid_c = plot_c[~pd.isnull(plot_c)]
-        if len(valid_c) > 0:
-            # Lock the track's absolute limits to the 2nd and 98th percentiles
-            track_min = float(np.percentile(valid_c, 2))
-            track_max = float(np.percentile(valid_c, 98))
+        valid_global_c = global_valid_c[~pd.isnull(global_valid_c)]
+        
+        if len(valid_c) > 0 and len(valid_global_c) > 0:
+            # Lock the absolute limits to the entire dataset (for the UI slider track)
+            track_min = float(np.percentile(valid_global_c, 0.1))
+            track_max = float(np.percentile(valid_global_c, 99.9))
             
-            c_min = track_min
-            c_max = track_max
+            # Auto-scale the applied limits to the zoomed dataset (for contrast)
+            c_min = float(np.percentile(valid_c, 0.1))
+            c_max = float(np.percentile(valid_c, 99.9))
             
             # Override with user slider values if they moved the handles
             try:
@@ -392,7 +398,6 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             if track_max <= track_min: track_max = track_min + 1e-10
             if c_max <= c_min: c_max = c_min + 1e-10
 
-            # Create a compressed colormap mapped to the fixed track bounds
             x_pts = np.linspace(track_min, track_max, 256)
             x_norm = (x_pts - c_min) / (c_max - c_min)
             x_norm = np.clip(x_norm, 0, 1)
@@ -401,11 +406,9 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             custom_colors = orig_cmap(x_norm)
             new_cmap = matplotlib.colors.ListedColormap(custom_colors)
             
-            # vmin and vmax are fixed to track_min and track_max so the colorbar never zooms
             scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max)
             plt.colorbar(scatter, label=c_var) 
             
-            # Return the percentiles as the absolute boundaries for the slider UI
             clim_bounds = [track_min, track_max]
             c_used = [c_min, c_max]
         else:

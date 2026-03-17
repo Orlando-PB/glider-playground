@@ -484,28 +484,40 @@
         };
         const parseDateTimeLocal = (str) => { return new Date(str + 'Z').getTime(); };
 
-    function resetPlotState(fullReset = true) {
-            if (currentPlotController) currentPlotController.abort();
-            plotImage.classList.add('hidden');
-            emptyState.classList.remove('hidden');
-            emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
-            qcBadge.classList.add('hidden');
-            downloadBtn.classList.add('hidden');
+function resetPlotState(fullReset = true) {
+        if (currentPlotController) currentPlotController.abort();
+        plotImage.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
+        qcBadge.classList.add('hidden');
+        downloadBtn.classList.add('hidden');
 
-            if (fullReset) {
-                xTrimRow.classList.replace('flex', 'hidden');
-                yTrimContainer.classList.replace('flex', 'hidden');
-                cTrimContainer.classList.replace('flex', 'hidden');
-                sparklineImg.classList.add('hidden');
-                baseXMin = null; baseXMax = null;
-                baseYMin = null; baseYMax = null;
-                baseCMin = null; baseCMax = null;
-                trimStartInput.value = ''; trimEndInput.value = '';
-                yTrimMinInput.value = ''; yTrimMaxInput.value = '';
-                cTrimMinInput.value = ''; cTrimMaxInput.value = '';
-            }
-            resetInspectorState();
+        if (fullReset) {
+            xTrimRow.classList.replace('flex', 'hidden');
+            yTrimContainer.classList.replace('flex', 'hidden');
+            cTrimContainer.classList.replace('flex', 'hidden');
+            sparklineImg.classList.add('hidden');
+            
+            // Clear baseline values so they can be re-learned from the full dataset
+            baseXMin = null; baseXMax = null;
+            baseYMin = null; baseYMax = null;
+            baseCMin = null; baseCMax = null;
+            
+            // Clear all input boxes
+            [trimStartInput, trimEndInput, yTrimMinInput, yTrimMaxInput, cTrimMinInput, cTrimMaxInput].forEach(i => i.value = '');
+            
+            // Reset slider handle positions
+            trimLeftHandle.style.left = '0%'; trimRightHandle.style.left = '100%';
+            trimFill.style.left = '0%'; trimFill.style.right = '0%';
+            
+            yTrimTopHandle.style.top = '0%'; yTrimBottomHandle.style.bottom = '0%';
+            yTrimFill.style.top = '0%'; yTrimFill.style.bottom = '0%';
+            
+            cTrimTopHandle.style.top = '0%'; cTrimBottomHandle.style.bottom = '0%';
+            cTrimTopMask.style.height = '0%'; cTrimBottomMask.style.height = '0%';
         }
+        resetInspectorState();
+    }
 
         const updateHandlesFromInputs = (axis) => {
             if (axis === 'x' && baseXMin !== null && baseXMax !== null) {
@@ -727,10 +739,19 @@
         document.addEventListener('mousemove', handleSliderDrag);
         document.addEventListener('mouseup', stopDrag);
 
-        [trimStartInput, trimEndInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('x'); updatePlot(); }));
-        [yTrimMinInput, yTrimMaxInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('y'); updatePlot(); }));
-        [cTrimMinInput, cTrimMaxInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('c'); updatePlot(); }));
-        
+        [trimStartInput, trimEndInput].forEach(el => el.addEventListener('change', () => { 
+            cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+            updateHandlesFromInputs('x'); updatePlot(); 
+        }));
+        [yTrimMinInput, yTrimMaxInput].forEach(el => el.addEventListener('change', () => { 
+            cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+            updateHandlesFromInputs('y'); updatePlot(); 
+        }));
+        [cTrimMinInput, cTrimMaxInput].forEach(el => el.addEventListener('change', () => { 
+            updateHandlesFromInputs('c'); updatePlot(); 
+        }));
+
+
         resetTrimBtn.addEventListener('click', () => { 
             resetTrimUI('both'); 
             baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
@@ -820,6 +841,11 @@
             }
             
             yTrimMinInput.value = dataYMin.toFixed(4); yTrimMaxInput.value = dataYMax.toFixed(4);
+            
+            // Auto-scale colour axis: clear inputs to trigger backend auto-scaling, but keep global base limits
+            cTrimMinInput.value = ''; 
+            cTrimMaxInput.value = '';
+            
             updateHandlesFromInputs('x'); updateHandlesFromInputs('y'); updatePlot();
         });
 
@@ -1230,100 +1256,103 @@
         resetInspectorBtn.addEventListener('click', resetInspectorState);
 
         async function updatePlot() {
-            // Prevent spamming the server. Queue the request if busy.
-            if (isPlotting) {
-                plotQueued = true;
+        if (isPlotting) { plotQueued = true; return; }
+
+        setLoading(true); 
+        resetInspectorState(); 
+        
+        if (currentPlotController) currentPlotController.abort();
+        currentPlotController = new AbortController();
+
+        try {
+            if (baseXMin === null) await fetchSparkline();
+            
+            let safeTrimStart = trimStartInput.value; let safeTrimEnd = trimEndInput.value;
+            if (isXDateTime && safeTrimStart) safeTrimStart = new Date(safeTrimStart + 'Z').toISOString();
+            if (isXDateTime && safeTrimEnd) safeTrimEnd = new Date(safeTrimEnd + 'Z').toISOString();
+            
+            const params = new URLSearchParams({
+                filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
+                c_var: cVarSelect.value, cmap: cmapInput.value, plot_delta: deltaCheck.checked,
+                delta_axis: deltaAxis.value, invert_y: document.getElementById('invertY').checked,
+                trim_start: safeTrimStart, trim_end: safeTrimEnd,
+                y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
+                c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
+                apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
+                plot_all: plotAllCheck.checked
+            });
+
+            const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });
+            const data = await response.json();
+            
+            if (data.error) {
+                plotImage.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                emptyState.innerHTML = `<span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">search_off</span><p class="text-sm font-medium text-gray-600">${data.error}</p>`;
+                downloadBtn.classList.add('hidden');
+                qcBadge.classList.add('hidden');
                 return;
             }
-
-            setLoading(true); 
-            resetInspectorState(); 
             
-            if (currentPlotController) currentPlotController.abort();
-            currentPlotController = new AbortController();
+            plotImage.src = data.image; plotImage.classList.remove('hidden');
+            emptyState.classList.add('hidden'); downloadBtn.classList.remove('hidden');
+            xTrimRow.classList.replace('hidden', 'flex'); yTrimContainer.classList.replace('hidden', 'flex');
+            
+            if (data.qc_applied) qcBadge.classList.remove('hidden');
+            else qcBadge.classList.add('hidden');
+            
+            currentPlotMeta = data.plot_meta;
 
-            try {
-                if (baseXMin === null) {
-                    await fetchSparkline();
-                }
-                
-                let safeTrimStart = trimStartInput.value; let safeTrimEnd = trimEndInput.value;
-                if (isXDateTime && safeTrimStart) safeTrimStart = new Date(safeTrimStart + 'Z').toISOString();
-                if (isXDateTime && safeTrimEnd) safeTrimEnd = new Date(safeTrimEnd + 'Z').toISOString();
-                
-                const params = new URLSearchParams({
-                    filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
-                    c_var: cVarSelect.value, cmap: cmapInput.value, plot_delta: deltaCheck.checked,
-                    delta_axis: deltaAxis.value, invert_y: document.getElementById('invertY').checked,
-                    trim_start: safeTrimStart, trim_end: safeTrimEnd,
-                    y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
-                    c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
-                    apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
-                    plot_all: plotAllCheck.checked
-                });
-
-                const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });
-                const data = await response.json();
-                
-                if (data.error) {
-                    plotImage.classList.add('hidden');
-                    emptyState.classList.remove('hidden');
-                    emptyState.innerHTML = `<span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">search_off</span><p class="text-sm font-medium text-gray-600">${data.error}</p>`;
-                    downloadBtn.classList.add('hidden');
-                    qcBadge.classList.add('hidden');
-                    return;
-                }
-                
-                plotImage.src = data.image; plotImage.classList.remove('hidden');
-                emptyState.classList.add('hidden'); 
-                downloadBtn.classList.remove('hidden');
-                
-                xTrimRow.classList.replace('hidden', 'flex'); 
-                yTrimContainer.classList.replace('hidden', 'flex');
-                
-                if (data.qc_applied) {
-                    qcBadge.classList.remove('hidden');
-                } else {
-                    qcBadge.classList.add('hidden');
-                }
-                
-                currentPlotMeta = data.plot_meta;
-
-                if (baseXMin === null || baseXMax === null) {
-                    baseXMin = currentPlotMeta.xlim[0]; baseXMax = currentPlotMeta.xlim[1]; resetTrimUI('x');
-                }
-                if (baseYMin === null || baseYMax === null) {
-                    let ymin = currentPlotMeta.ylim[0], ymax = currentPlotMeta.ylim[1];
-                    if (ymin > ymax) { let temp = ymin; ymin = ymax; ymax = temp; } 
-                    baseYMin = ymin; baseYMax = ymax; resetTrimUI('y');
-                }
-                
-                if (cVarSelect.value && data.plot_meta.clim_bounds) {
-                    cTrimContainer.classList.replace('hidden', 'flex');
-                    if (baseCMin === null || baseCMax === null) {
-                        baseCMin = data.plot_meta.clim_bounds[0];
-                        baseCMax = data.plot_meta.clim_bounds[1];
-                        cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
-                        cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
-                        updateHandlesFromInputs('c');
+            // Learn baseline limits from the first full-view plot
+            if (baseXMin === null || baseXMax === null) {
+                baseXMin = currentPlotMeta.xlim[0]; baseXMax = currentPlotMeta.xlim[1];
+                if (!trimStartInput.value) {
+                    if (isXDateTime) {
+                        trimStartInput.value = formatDateTimeLocal(baseXMin);
+                        trimEndInput.value = formatDateTimeLocal(baseXMax);
+                    } else {
+                        trimStartInput.value = baseXMin.toFixed(4);
+                        trimEndInput.value = baseXMax.toFixed(4);
                     }
-                } else {
-                    cTrimContainer.classList.replace('flex', 'hidden');
-                    baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
                 }
-
-            } catch (err) { 
-                if (err.name !== 'AbortError') console.error("Plotting error:", err); 
-            } finally { 
-                setLoading(false); 
-                
-                // If the user moved sliders while the server was busy, fire the queued plot now!
-                if (plotQueued) {
-                    plotQueued = false;
-                    updatePlot();
-                }
+                updateHandlesFromInputs('x');
             }
+            
+            if (baseYMin === null || baseYMax === null) {
+                let ymin = currentPlotMeta.ylim[0], ymax = currentPlotMeta.ylim[1];
+                if (ymin > ymax) { let temp = ymin; ymin = ymax; ymax = temp; } 
+                baseYMin = ymin; baseYMax = ymax;
+                if (!yTrimMinInput.value) {
+                    yTrimMinInput.value = baseYMin.toFixed(4);
+                    yTrimMaxInput.value = baseYMax.toFixed(4);
+                }
+                updateHandlesFromInputs('y');
+            }
+            
+            if (cVarSelect.value && data.plot_meta.clim_bounds) {
+                cTrimContainer.classList.replace('hidden', 'flex');
+                if (baseCMin === null || baseCMax === null) {
+                    baseCMin = data.plot_meta.clim_bounds[0];
+                    baseCMax = data.plot_meta.clim_bounds[1];
+                }
+                
+                // Populate C-limits if empty (triggers auto-scale on X/Y zoom)
+                if (!cTrimMinInput.value || !cTrimMaxInput.value) {
+                    cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
+                    cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
+                    updateHandlesFromInputs('c');
+                }
+            } else {
+                cTrimContainer.classList.replace('flex', 'hidden');
+            }
+
+        } catch (err) { 
+            if (err.name !== 'AbortError') console.error("Plotting error:", err); 
+        } finally { 
+            setLoading(false); 
+            if (plotQueued) { plotQueued = false; updatePlot(); }
         }
+    }
 
         function setLoading(isLoading) {
             isPlotting = isLoading;

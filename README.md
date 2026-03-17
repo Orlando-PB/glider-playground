@@ -51,10 +51,11 @@ This will load up the local server and automatically open the application in you
 ### Quality Control (QC) Filtering
 
 If your dataset contains Argo standard `_QC` variables, the tool will automatically clean the plot. 
-* You can control exactly which data points are rendered by providing a comma-separated list of flags (the default is `1,2,5,8` to include good, probably good, and interpolated data). 
+* You can control exactly which data points are rendered by providing a comma-separated list of flags (the default is `1,2,5,8` to include good, probably good, and interpolated data). This is applied to all axis.
 
 ### Interaction & Analysis
 * **Zoom:** Click and drag a box directly on the plot to zoom in. You can also use the interactive range sliders on the X and Y axes to precisely trim the data limits. Click the **Reset Lims** button at the bottom to return to the full overview.
+* **Z Zoom:** Drag the slider on the right to adjust the colour range to focus on.
 * **Data Inspector:** Click a point to trigger the Inspector. This will reveal its exact values in the sude bar, and show its location on the mini-map.
 * **Axis Controls:** Use the **Invert** checkbox to flip the Y-axis (useful for depth or pressure). Should automatically turn on in most cases. The **Delta** checkbox can be used plot the difference between variables (need same units)
 
