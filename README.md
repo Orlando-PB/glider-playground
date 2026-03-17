@@ -2,11 +2,13 @@
 
 A fast, web-based NetCDF explorer for viewing and validating glider data. This tool provides a highly responsive UI to explore oceanographic `.nc` files without running computationally heavy processing steps on the fly. It was built as a simple tool to learn about glider data at NOC (National Oceanography Centre).
 
+**Live Demo:** You can try out the site with demo data right now at [glider-playground.co.uk](https://glider-playground.co.uk). *(Please note: this is running on my personal Raspberry Pi, so it might be a little slow!)*
+
 ![Glider Playground Home View](glider_playground/static/home_view.png)
 
 ## Installation
 
-Ensure you have Python 3.9+ installed. It is recommended to install this inside a virtual environment to keep your system clean.
+To explore your own data locally with full performance, you can download the tool via pip. Ensure you have Python 3.9+ installed. It is recommended to install this inside a virtual environment to keep your system clean.
 
 ```bash
 pip install glider-playground
@@ -27,9 +29,11 @@ This will start the local server and automatically open the application in your 
 ### Loading Data
 `.nc` data files must be placed inside a local `data` folder (this folder is created automatically in your current directory the first time you run the app). You can click the **Folder** icon in the top navigation bar to open this directory. Once files are added, select your dataset from the dropdown.
 
+*Need sample data?* OG NetCDF files can be downloaded from the [BIO-Carbon Deployment Catalogue](https://platforms.bodc.ac.uk/deployment-catalogue/BIO-Carbon/). Thanks to NOC for making these resources available.
+
 ### Views & Plotting
 * **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the **Colour** axis and choose a specific colourmap. 
-* **Presets:** Use the **View** dropdown to select built- per-configured oceanographic views (e.g., Thermal Structure, Salinity Profile). You can also save your own axes and colour combinations as **Custom Views**.
+* **Presets:** Use the **View** dropdown to select built-in, pre-configured oceanographic views (e.g., Thermal Structure, Salinity Profile). You can also save your own axes and colour combinations as **Custom Views**.
 
 ### Interaction & Analysis
 * **Smart Zoom:** Click and drag a box directly on the plot to zoom. When you zoom on X or Y, the **Colour axis auto-scales** its contrast to focus on the data currently in view.

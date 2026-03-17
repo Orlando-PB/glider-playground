@@ -49,41 +49,55 @@
 <body class="overflow-hidden">
     <div id="customTooltip"></div>
 
-    <nav class="flex items-center px-4 py-2 bg-[#f8f9fa] border-b border-gray-200 gap-3 w-full text-xs shrink-0 relative h-[48px]" style="z-index: 60;">
-        <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300">
-            <img src="/static/icon.png" alt="Logo" class="w-6 h-6"> Glider Playground
-        </div>
+    <nav class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
+        <div class="flex flex-wrap items-center justify-between px-4 py-1.5 gap-3 w-full border-b border-gray-200/60">
+            <div class="flex items-center gap-3 flex-wrap">
+                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300">
+                    <img src="/static/icon.png" alt="Logo" class="w-5 h-5"> Glider Playground
+                </div>
 
-        <div class="flex items-center gap-1">
-            <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Dataset</label>
-            <select id="dataset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-36 outline-none transition-all"></select>
-            <button id="openFolderBtn" class="p-1.5 text-gray-400 hover:text-googleBlue transition-colors flex items-center" title="Open Data Folder">
-                <span class="material-symbols-outlined text-[18px]">folder_open</span>
-            </button>
-        </div>
+                <div class="flex items-center gap-1">
+                    <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Dataset</label>
+                    <select id="dataset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-44 outline-none transition-all"></select>
+                    <button id="openFolderBtn" class="p-1.5 text-gray-400 hover:text-googleBlue transition-colors flex items-center" title="Open Data Folder">
+                        <span class="material-symbols-outlined text-[18px]">folder_open</span>
+                    </button>
+                </div>
 
-        <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
-            <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">View</label>
-            <div class="flex items-center gap-1">
-                <select id="plotPreset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-40 outline-none transition-all font-medium">
-                    <optgroup label="Default Views" id="defaultOptGroup"></optgroup>
-                    <optgroup label="Custom Views" id="customOptGroup" style="display: none;"></optgroup>
-                    <option value="custom">Custom Plot...</option>
-                </select>
-                <button id="deletePresetBtn" class="hidden text-gray-400 hover:text-googleRed transition-colors p-1" title="Delete Custom Preset">
-                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
+                    <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">View</label>
+                    <div class="flex items-center gap-1">
+                        <select id="plotPreset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-48 outline-none transition-all font-medium">
+                            <optgroup label="Default Views" id="defaultOptGroup"></optgroup>
+                            <optgroup label="Custom Views" id="customOptGroup" style="display: none;"></optgroup>
+                            <option value="custom">Custom Plot...</option>
+                        </select>
+                        <button id="deletePresetBtn" class="hidden text-gray-400 hover:text-googleRed transition-colors p-1" title="Delete Custom Preset">
+                            <span class="material-symbols-outlined text-[16px]">delete</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-2 items-center ml-auto">
+                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium text-[10px] mr-2">
+                    <input type="checkbox" id="plotAll" class="w-3.5 h-3.5 accent-googleBlue"> Plot All
+                </label>
+                <button id="plotBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm"><span class="material-symbols-outlined text-[14px]">scatter_plot</span> Plot</button>
+                <button id="downloadBtn" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm transition-colors hidden" title="Download Plot">
+                    <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
             </div>
         </div>
-        
-        <div id="customControls" class="flex items-center gap-3 flex-grow">
-            <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
+
+        <div id="customControls" class="flex flex-wrap items-center px-4 py-1.5 gap-3 w-full bg-[#fcfcfc]">
+            <div class="flex items-center gap-1">
                 <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">X</label>
-                <select id="xVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-24 outline-none transition-all"></select>
+                <select id="xVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-28 outline-none transition-all"></select>
             </div>
             <div class="flex items-center gap-1">
                 <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Y</label>
-                <select id="yVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-24 outline-none transition-all"></select>
+                <select id="yVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-28 outline-none transition-all"></select>
             </div>
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
@@ -129,13 +143,13 @@
 
             <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1 relative">
                 <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Colour</label>
-                <select id="cVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-20 outline-none transition-all">
+                <select id="cVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-28 outline-none transition-all">
                     <option value="">None</option>
                 </select>
                 
                 <div class="relative" id="cmapContainer">
                     <button id="cmapTrigger" class="h-7 w-12 border border-gray-200 flex items-center px-1 cursor-pointer focus:ring-1 ring-googleBlue" style="background: linear-gradient(to right, #440154, #21918c, #fde725);" aria-haspopup="true" aria-expanded="false"></button>
-                <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-24 max-h-48 overflow-y-auto bg-white border border-gray-200 shadow-xl hidden z-50 py-1 flex-col custom-scrollbar">
+                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-24 max-h-48 overflow-y-auto bg-white border border-gray-200 shadow-xl hidden z-50 py-1 flex-col custom-scrollbar">
                         <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="viridis" style="background: linear-gradient(to right, #440154, #482878, #3e4a89, #31688e, #26828e, #1f9e89, #35b779, #6ece58, #b5de2b, #fde725);"></button>
                         <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="viridis_r" style="background: linear-gradient(to right, #fde725, #b5de2b, #6ece58, #35b779, #1f9e89, #26828e, #31688e, #3e4a89, #482878, #440154);"></button>
                         <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="plasma" style="background: linear-gradient(to right, #0d0887, #46039f, #7201a8, #9c179e, #bd3786, #d8576b, #ed7953, #fb9f3a, #fdca26, #f0f921);"></button>
@@ -156,19 +170,9 @@
             </div>
 
             <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
-                <input type="text" id="presetNameInput" placeholder="Save preset as..." class="p-1.5 border border-gray-300 bg-white w-28 text-[10px] outline-none focus:border-googleBlue">
+                <input type="text" id="presetNameInput" placeholder="Save preset as..." class="p-1.5 border border-gray-300 bg-white w-32 text-[10px] outline-none focus:border-googleBlue">
                 <button id="savePresetBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1.5 text-[10px] font-medium transition-colors">Save</button>
             </div>
-        </div>
-
-        <div class="ml-auto flex gap-2 items-center">
-            <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium text-[10px] mr-2">
-                <input type="checkbox" id="plotAll" class="w-3.5 h-3.5 accent-googleBlue"> Plot All
-            </label>
-            <button id="plotBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm"><span class="material-symbols-outlined text-[14px]">scatter_plot</span> Plot</button>
-            <button id="downloadBtn" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm transition-colors hidden" title="Download Plot">
-                <span class="material-symbols-outlined text-[14px]">download</span>
-            </button>
         </div>
     </nav>
 
