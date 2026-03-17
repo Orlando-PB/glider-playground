@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "glider-playground"
-version = "0.1.2"
+version = "0.1.3"
 description = "A fast, web-based NetCDF explorer for glider data."
 readme = "README.md"
 license = {text = "MIT"}
