@@ -128,5 +128,34 @@ def get_plot(
         c_trim_min=c_trim_min, c_trim_max=c_trim_max,
         apply_qc=apply_qc, qc_flags=qc_flags, plot_all=plot_all
     )
+
+
+import httpx # You may need to: pip install httpx
+
+@app.post("/api/download_demo")
+async def download_demo_files():
+    demo_files = [
+        "https://linkedsystems.uk/erddap/files/Public_OG1_Data_001_Recovery/Nelson_20240528/Nelson_646.nc",
+        "https://linkedsystems.uk/erddap/files/Public_Glider_Data_0711/Nelson_20240528/Nelson_646_R.nc"
+    ]
+    
+    data_dir = state["DATA_DIR"]
+    data_dir.mkdir(exist_ok=True)
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            for url in demo_files:
+                filename = url.split("/")[-1]
+                target_path = data_dir / filename
+                
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    with open(target_path, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+                            
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8420, reload=True)

@@ -215,6 +215,7 @@
                 Load data to see stats
             </div>
 
+
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
                 <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex justify-between items-center shrink-0">
                     <span class="font-bold text-gray-600 uppercase tracking-wider">Shared Dimension</span>
@@ -246,6 +247,20 @@
                 <div class="flex-grow flex items-center justify-center p-4 overflow-hidden relative" id="plotAreaWrapper">
                     <img id="plotImage" src="" alt="" class="max-w-full max-h-full object-contain hidden cursor-crosshair">
                     <div id="zoomBoxOverlay"></div>
+
+                            <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
+                        <div class="text-center">
+                            <span class="material-symbols-outlined text-gray-300" style="font-size: 48px;">folder_off</span>
+                            <p class="text-sm text-gray-500 mt-2">No NetCDF (.nc) files found.</p>
+                            <p class="text-[10px] text-gray-400">Select a different folder or try the demo data.</p>
+                        </div>
+                        <button id="downloadDemoBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-6 py-2.5 rounded text-xs font-medium transition-colors flex items-center gap-2 shadow-sm">
+                            <span class="material-symbols-outlined text-sm">cloud_download</span>
+                            Download Demo Files
+                        </button>
+                    </div>
+
+
                     
                     <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border border-green-200 text-[10px] font-bold px-2 py-1 rounded shadow-sm z-30 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
                         <span class="material-symbols-outlined text-[14px]">auto_awesome</span> Auto QC Applied
@@ -898,13 +913,7 @@ function resetPlotState(fullReset = true) {
 
         async function init() {
             renderPresetsDropdown();
-            const fileRes = await fetch('/api/files');
-            const fileData = await fileRes.json();
-            fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
-
-            if (datasetSelect.options.length > 0) {
-                await handleDatasetChange();
-            }
+            await checkFilesAndTogglePrompt();
         }
 
         async function handleDatasetChange() {
@@ -1253,6 +1262,59 @@ function resetPlotState(fullReset = true) {
             });
         };
 
+        const demoPrompt = document.getElementById('demoPrompt');
+        const downloadDemoBtn = document.getElementById('downloadDemoBtn');
+
+        async function checkFilesAndTogglePrompt() {
+            const fileRes = await fetch('/api/files');
+            const fileData = await fileRes.json();
+            
+            datasetSelect.innerHTML = '';
+            
+            if (fileData.files.length === 0) {
+                // Show Demo Prompt, Hide the standard "Select Variables" message
+                demoPrompt.classList.remove('hidden');
+                emptyState.classList.add('hidden');
+                
+                datasetSelect.disabled = true;
+                plotBtn.disabled = true;
+                plotBtn.classList.add('opacity-50');
+            } else {
+                // Hide Demo Prompt, Restore standard "Select Variables" message
+                demoPrompt.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                
+                datasetSelect.disabled = false;
+                plotBtn.disabled = false;
+                plotBtn.classList.remove('opacity-50');
+                
+                fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
+                await handleDatasetChange();
+            }
+        }
+
+        downloadDemoBtn.addEventListener('click', async () => {
+            setLoading(true);
+            const pt = document.getElementById('progressText');
+            pt.textContent = "Downloading demo datasets...";
+            
+            try {
+                const res = await fetch('/api/download_demo', { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.status === "success") {
+                    // Re-run the check which will now find the files and flip the UI back
+                    await checkFilesAndTogglePrompt();
+                } else {
+                    alert("Download failed: " + data.message);
+                }
+            } catch (err) {
+                console.error("Demo download error:", err);
+            } finally {
+                setLoading(false);
+            }
+        });
+
         resetInspectorBtn.addEventListener('click', resetInspectorState);
 
         async function updatePlot() {
@@ -1405,28 +1467,17 @@ function resetPlotState(fullReset = true) {
             }
         });
 
-        document.getElementById('openFolderBtn').addEventListener('click', async () => {
-            try {
-                const res = await fetch('/api/open_folder', { method: 'POST' });
-                const data = await res.json();
-                
-                if (data.status === "success") {
-                    datasetSelect.innerHTML = '';
-                    const fileRes = await fetch('/api/files');
-                    const fileData = await fileRes.json();
-                    
-                    fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
-                    
-                    if (datasetSelect.options.length > 0) {
-                        await handleDatasetChange();
-                    } else {
-                        resetPlotState(true);
+            document.getElementById('openFolderBtn').addEventListener('click', async () => {
+                try {
+                    const res = await fetch('/api/open_folder', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.status === "success") {
+                        await checkFilesAndTogglePrompt();
                     }
+                } catch (err) {
+                    console.error("Failed to open folder:", err);
                 }
-            } catch (err) {
-                console.error("Failed to open folder:", err);
-            }
-        });
+            });
 
         plotBtn.addEventListener('click', updatePlot);
         plotPreset.addEventListener('change', () => {
@@ -1458,6 +1509,9 @@ function resetPlotState(fullReset = true) {
         });
 
         init();
+
+
+        
     </script>
 </body>
 </html>
