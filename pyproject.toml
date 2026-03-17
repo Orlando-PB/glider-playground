@@ -21,7 +21,9 @@ dependencies = [
     "matplotlib",
     "httpx",
     "h5netcdf",
-    "netcdf4"
+    "netcdf4",
+    "geopandas",
+    "geodatasets"
 ]
 
 [project.scripts]
