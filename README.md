@@ -2,7 +2,7 @@
 
 A fast, web-based NetCDF explorer for viewing and validating glider data. This tool provides a highly responsive UI to explore oceanographic `.nc` files without running computationally heavy processing steps on the fly. It was built as a simple tool to learn about glider data at NOC (National Oceanography Centre).
 
-![Glider Playground Home View](static/home_view.png)
+![Glider Playground Home View](glider_playground/static/home_view.png)
 
 ## Prerequisites
 
