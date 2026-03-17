@@ -10,6 +10,9 @@ import base64
 import os
 
 MAX_RENDER_POINTS = 259000
+LINE_COLOUR = '#1a73e8'
+TEXT_BOX_BG = '#ffffffcc'
+MIN_MARKER_SIZE = 0.5
 
 def format_dt(dt64):
     return pd.to_datetime(dt64).strftime('%d %B %Y, %H:%M')
@@ -94,7 +97,7 @@ def generate_sparkline(filepath, x_var, y_var):
             y_sub = y_vals
             
         fig, ax = plt.subplots(figsize=(8, 1), dpi=100)
-        ax.plot(x_sub, y_sub, color='#1a73e8', linewidth=1, alpha=0.6)
+        ax.plot(x_sub, y_sub, color=LINE_COLOUR, linewidth=1, alpha=0.6)
         ax.axis('off')
         plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
         plt.margins(0,0)
@@ -267,13 +270,7 @@ def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_x_dt, x_mi
     ds.close()
     return out
 
-
-def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False):
-    # Variables for easy tweaking
-    LINE_COLOUR = '#1a73e8'
-    TEXT_BOX_BG = '#ffffffcc'
-    MIN_MARKER_SIZE = 0.5
-    
+def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False):
     glider_data = xr.open_dataset(filepath)
     
     actual_plot_x_var = x_var
@@ -368,20 +365,53 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
 
     fig, ax = plt.subplots(figsize=(18, 8))
     
+    clim_bounds = None
+    c_used = None
+    
     if cmap == 'black':
         ax.plot(plot_x, plot_y, marker='.', linestyle='none', markersize=dynamic_size, color='black')
     elif plot_c is not None:
         valid_c = plot_c[~pd.isnull(plot_c)]
         if len(valid_c) > 0:
-            c_min = np.percentile(valid_c, 2)
-            c_max = np.percentile(valid_c, 98)
-        else:
-            c_min, c_max = 0, 1
+            # Lock the track's absolute limits to the 2nd and 98th percentiles
+            track_min = float(np.percentile(valid_c, 2))
+            track_max = float(np.percentile(valid_c, 98))
             
-        scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max)
-        plt.colorbar(scatter, label=c_var)
-    else:
-        ax.plot(plot_x, plot_y, marker='.', linestyle='none', markersize=dynamic_size, color=LINE_COLOUR)
+            c_min = track_min
+            c_max = track_max
+            
+            # Override with user slider values if they moved the handles
+            try:
+                if c_trim_min and str(c_trim_min).strip() and c_trim_min != "undefined":
+                    c_min = float(c_trim_min)
+                if c_trim_max and str(c_trim_max).strip() and c_trim_max != "undefined":
+                    c_max = float(c_trim_max)
+            except:
+                pass
+
+            if track_max <= track_min: track_max = track_min + 1e-10
+            if c_max <= c_min: c_max = c_min + 1e-10
+
+            # Create a compressed colormap mapped to the fixed track bounds
+            x_pts = np.linspace(track_min, track_max, 256)
+            x_norm = (x_pts - c_min) / (c_max - c_min)
+            x_norm = np.clip(x_norm, 0, 1)
+            
+            orig_cmap = plt.get_cmap(cmap)
+            custom_colors = orig_cmap(x_norm)
+            new_cmap = matplotlib.colors.ListedColormap(custom_colors)
+            
+            # vmin and vmax are fixed to track_min and track_max so the colorbar never zooms
+            scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max)
+            plt.colorbar(scatter, label=c_var) 
+            
+            # Return the percentiles as the absolute boundaries for the slider UI
+            clim_bounds = [track_min, track_max]
+            c_used = [c_min, c_max]
+        else:
+            c_min, c_max = 0.0, 1.0
+            scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max)
+            plt.colorbar(scatter, label=c_var)
 
     info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
     ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10,
@@ -397,9 +427,9 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     
     fig.canvas.draw()
     bbox = ax.get_position().bounds 
-    xlim = list(ax.get_xlim())
-    ylim = list(ax.get_ylim())
-    if is_x_dt: xlim = [mdates.num2date(xlim[0]).timestamp() * 1000, mdates.num2date(xlim[1]).timestamp() * 1000]
+    xlim = [float(x) for x in ax.get_xlim()]
+    ylim = [float(y) for y in ax.get_ylim()]
+    if is_x_dt: xlim = [float(mdates.num2date(xlim[0]).timestamp() * 1000), float(mdates.num2date(xlim[1]).timestamp() * 1000)]
 
     buf = io.BytesIO()
     plt.savefig(buf, format="png", dpi=100)
@@ -408,7 +438,14 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     
     return {
         "image": f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
-        "plot_meta": {"bbox": {"x0": bbox[0], "y0": bbox[1], "w": bbox[2], "h": bbox[3]}, "xlim": xlim, "ylim": ylim, "is_x_dt": bool(is_x_dt)},
+        "plot_meta": {
+            "bbox": {"x0": float(bbox[0]), "y0": float(bbox[1]), "w": float(bbox[2]), "h": float(bbox[3])}, 
+            "xlim": xlim, 
+            "ylim": ylim, 
+            "is_x_dt": bool(is_x_dt),
+            "clim_bounds": clim_bounds,
+            "c_used": c_used
+        },
         "valid_points": int(len(plot_x)),
         "qc_applied": apply_qc
     }

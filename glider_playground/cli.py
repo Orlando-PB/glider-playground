@@ -5,7 +5,7 @@ import time
 
 # --- Configurable Variables ---
 HOST = "127.0.0.1"
-PORT = 8000
+PORT = 8420  # Changed to avoid conflicts with other apps
 APP_MODULE = "glider_playground.app:app"
 BROWSER_DELAY = 1.5
 LOG_LEVEL = "warning"

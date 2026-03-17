@@ -2,7 +2,7 @@
 <html lang="en-GB">
 <head>
     <meta charset="UTF-8">
-    <title>Glider Explorer</title>
+    <title>Glider Playground</title>
     <link rel="icon" href="/static/icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
@@ -51,7 +51,7 @@
 
     <nav class="flex items-center px-4 py-2 bg-[#f8f9fa] border-b border-gray-200 gap-3 w-full text-xs shrink-0 relative h-[48px]" style="z-index: 60;">
         <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300">
-            <img src="/static/icon.png" alt="Logo" class="w-6 h-6"> Glider Explorer
+            <img src="/static/icon.png" alt="Logo" class="w-6 h-6"> Glider Playground
         </div>
 
         <div class="flex items-center gap-1">
@@ -229,6 +229,7 @@
         
         <div class="flex-grow flex flex-col overflow-hidden relative">
             <div class="flex-grow flex overflow-hidden w-full relative">
+                
                 <div id="yTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-r border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
                     <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Y Lims</span>
                     <input type="number" step="any" id="yTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Max">
@@ -247,7 +248,7 @@
                     <div id="zoomBoxOverlay"></div>
                     
                     <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border border-green-200 text-[10px] font-bold px-2 py-1 rounded shadow-sm z-30 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
-                        <span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied
+                        <span class="material-symbols-outlined text-[14px]">auto_awesome</span> Auto QC Applied
                     </div>
 
                     <div id="emptyState" class="text-gray-400 flex flex-col items-center gap-2 absolute inset-0 m-auto h-fit pointer-events-none">
@@ -255,6 +256,22 @@
                         <p class="text-sm">Select variables and click Plot</p>
                     </div>
                 </div>
+
+                <div id="cTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
+                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">C Lims</span>
+                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Max">
+                    <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
+                        <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
+                        <div class="absolute h-full w-full cursor-pointer z-10" id="cTrimTrack">
+                            <div class="absolute w-full opacity-100 rounded-t" id="cTrimTopMask" style="top: 0%; height: 0%; background: #fde725;"></div>
+                            <div class="absolute w-full opacity-100 rounded-b" id="cTrimBottomMask" style="bottom: 0%; height: 0%; background: #440154;"></div>
+                            <div class="absolute w-6 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="cTrimTopHandle" style="left: 50%; top: 0%; transform: translate(-50%, -50%); border-radius: 4px;"></div>
+                            <div class="absolute w-6 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="cTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%); border-radius: 4px;"></div>
+                        </div>
+                    </div>
+                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Min">
+                </div>
+
             </div>
             
             <div id="xTrimRow" class="hidden w-full border-t border-gray-200 bg-white shrink-0">
@@ -323,8 +340,10 @@
 
         const xTrimRow = document.getElementById('xTrimRow');
         const yTrimContainer = document.getElementById('yTrimContainer');
+        const cTrimContainer = document.getElementById('cTrimContainer');
         const sparklineImg = document.getElementById('sparklineImg');
         const resetTrimBtn = document.getElementById('resetTrimBtn');
+        
         const trimTrack = document.getElementById('trimTrack'), trimFill = document.getElementById('trimFill');
         const trimLeftHandle = document.getElementById('trimLeftHandle'), trimRightHandle = document.getElementById('trimRightHandle');
         const trimStartInput = document.getElementById('trimStartInput'), trimEndInput = document.getElementById('trimEndInput');
@@ -333,12 +352,18 @@
         const yTrimTopHandle = document.getElementById('yTrimTopHandle'), yTrimBottomHandle = document.getElementById('yTrimBottomHandle');
         const yTrimMinInput = document.getElementById('yTrimMinInput'), yTrimMaxInput = document.getElementById('yTrimMaxInput');
 
+        const cTrimTrack = document.getElementById('cTrimTrack');
+        const cTrimTopMask = document.getElementById('cTrimTopMask'), cTrimBottomMask = document.getElementById('cTrimBottomMask');
+        const cTrimTopHandle = document.getElementById('cTrimTopHandle'), cTrimBottomHandle = document.getElementById('cTrimBottomHandle');
+        const cTrimMinInput = document.getElementById('cTrimMinInput'), cTrimMaxInput = document.getElementById('cTrimMaxInput');
+
         let progressInterval;
         let trimTimeout;
         let currentMapDataset = "";
         
         let baseXMin = null, baseXMax = null;
         let baseYMin = null, baseYMax = null;
+        let baseCMin = null, baseCMax = null;
         let isXDateTime = false;
         
         let currentPlotController = null;
@@ -349,6 +374,7 @@
         
         let isDraggingLeft = false, isDraggingRight = false;
         let isDraggingYTop = false, isDraggingYBottom = false;
+        let isDraggingCTop = false, isDraggingCBottom = false;
         let dragStartX = 0, dragStartY = 0;
         let isDraggingBox = false;
 
@@ -467,25 +493,17 @@
             if (fullReset) {
                 xTrimRow.classList.replace('flex', 'hidden');
                 yTrimContainer.classList.replace('flex', 'hidden');
+                cTrimContainer.classList.replace('flex', 'hidden');
                 sparklineImg.classList.add('hidden');
                 baseXMin = null; baseXMax = null;
                 baseYMin = null; baseYMax = null;
+                baseCMin = null; baseCMax = null;
                 trimStartInput.value = ''; trimEndInput.value = '';
                 yTrimMinInput.value = ''; yTrimMaxInput.value = '';
+                cTrimMinInput.value = ''; cTrimMaxInput.value = '';
             }
             resetInspectorState();
         }
-
-        const clearTrimInputs = (axis) => {
-            if (axis === 'x' || axis === 'both') {
-                trimStartInput.value = ''; trimEndInput.value = '';
-                baseXMin = null; baseXMax = null;
-            }
-            if (axis === 'y' || axis === 'both') {
-                yTrimMinInput.value = ''; yTrimMaxInput.value = '';
-                baseYMin = null; baseYMax = null;
-            }
-        };
 
         const updateHandlesFromInputs = (axis) => {
             if (axis === 'x' && baseXMin !== null && baseXMax !== null) {
@@ -531,6 +549,39 @@
                 yTrimTopHandle.style.top = `${topPxPct}%`; yTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
                 yTrimFill.style.top = `${topPxPct}%`; yTrimFill.style.bottom = `${bottomPxPct}%`;
             }
+
+        if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
+                let startV = parseFloat(cTrimMinInput.value); if(isNaN(startV)) startV = baseCMin;
+                let endV = parseFloat(cTrimMaxInput.value); if(isNaN(endV)) endV = baseCMax;
+
+                // Prevent zooming out beyond the absolute data bounds
+                startV = Math.max(baseCMin, startV);
+                endV = Math.min(baseCMax, endV);
+                cTrimMinInput.value = startV.toFixed(4);
+                cTrimMaxInput.value = endV.toFixed(4);
+
+                const total = baseCMax - baseCMin;
+                let startPct = ((startV - baseCMin) / total) * 100;
+                let endPct = ((endV - baseCMin) / total) * 100;
+                
+                startPct = Math.max(0, Math.min(100, startPct)); endPct = Math.max(0, Math.min(100, endPct));
+                if (startPct > endPct) { let temp = startPct; startPct = endPct; endPct = temp; }
+
+                let topPxPct = 100 - endPct; 
+                let bottomPxPct = startPct;
+                
+                cTrimTopHandle.style.top = `${topPxPct}%`; cTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
+                
+                // Squash the gradient exactly between the handles
+                const gradEl = document.getElementById('cTrimGradient');
+                if (gradEl) {
+                    gradEl.style.top = `${topPxPct}%`;
+                    gradEl.style.bottom = `${bottomPxPct}%`;
+                }
+                
+                // Fill the out-of-bounds regions with clamped solid colours
+                cTrimTopMask.style.height = `${topPxPct}%`; cTrimBottomMask.style.height = `${bottomPxPct}%`;
+            }
         };
 
         const updateInputsFromHandles = (axis, p1, p2) => {
@@ -557,6 +608,13 @@
                 
                 yTrimMinInput.value = calcMin.toFixed(4); yTrimMaxInput.value = calcMax.toFixed(4);
             }
+            if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
+                const total = baseCMax - baseCMin;
+                const calcMax = baseCMax - (p1 / 100) * total; 
+                const calcMin = baseCMin + (p2 / 100) * total;
+                
+                cTrimMinInput.value = calcMin.toFixed(4); cTrimMaxInput.value = calcMax.toFixed(4);
+            }
         };
 
         const resetTrimUI = (axis = 'both') => {
@@ -574,10 +632,13 @@
                 yTrimMinInput.value = baseYMin.toFixed(4); yTrimMaxInput.value = baseYMax.toFixed(4);
                 updateHandlesFromInputs('y');
             }
+            if ((axis === 'both' || axis === 'c') && baseCMin !== null && baseCMax !== null) {
+                cTrimMinInput.value = ''; cTrimMaxInput.value = ''; 
+            }
         };
 
         const handleSliderDrag = (e) => {
-            if (!isDraggingLeft && !isDraggingRight && !isDraggingYTop && !isDraggingYBottom) return;
+            if (!isDraggingLeft && !isDraggingRight && !isDraggingYTop && !isDraggingYBottom && !isDraggingCTop && !isDraggingCBottom) return;
             const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX;
             const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY;
             
@@ -616,24 +677,63 @@
                 yTrimFill.style.top = `${currentTopPct}%`; yTrimFill.style.bottom = `${currentBottomPct}%`;
                 updateInputsFromHandles('y', currentTopPct, currentBottomPct);
             }
+
+           if (isDraggingCTop || isDraggingCBottom) {
+                const rect = cTrimTrack.getBoundingClientRect();
+                let pctFromTop = ((clientY - rect.top) / rect.height) * 100;
+                pctFromTop = Math.max(0, Math.min(100, pctFromTop));
+                
+                let currentTopPct = parseFloat(cTrimTopHandle.style.top) || 0;
+                let currentBottomPct = parseFloat(cTrimBottomHandle.style.bottom) || 0;
+                
+                if (isDraggingCTop) {
+                    currentTopPct = Math.min(pctFromTop, 100 - currentBottomPct - 1);
+                } else if (isDraggingCBottom) {
+                    let newBottom = 100 - pctFromTop;
+                    currentBottomPct = Math.max(0, Math.min(newBottom, 100 - currentTopPct - 1));
+                }
+                
+                cTrimTopHandle.style.top = `${currentTopPct}%`; 
+                cTrimBottomHandle.style.bottom = `${currentBottomPct}%`;
+                
+                cTrimTopMask.style.height = `${currentTopPct}%`; 
+                cTrimBottomMask.style.height = `${currentBottomPct}%`;
+                
+                // Squash the gradient track live while dragging
+                const gradEl = document.getElementById('cTrimGradient');
+                if (gradEl) {
+                    gradEl.style.top = `${currentTopPct}%`;
+                    gradEl.style.bottom = `${currentBottomPct}%`;
+                }
+                
+                updateInputsFromHandles('c', currentTopPct, currentBottomPct);
+            }
             
             clearTimeout(trimTimeout);
             trimTimeout = setTimeout(() => { updatePlot(); }, 500);
         };
 
-        const stopDrag = () => { isDraggingLeft = isDraggingRight = isDraggingYTop = isDraggingYBottom = false; };
+        const stopDrag = () => { isDraggingLeft = isDraggingRight = isDraggingYTop = isDraggingYBottom = isDraggingCTop = isDraggingCBottom = false; };
 
         trimLeftHandle.addEventListener('mousedown', () => isDraggingLeft = true);
         trimRightHandle.addEventListener('mousedown', () => isDraggingRight = true);
         yTrimTopHandle.addEventListener('mousedown', () => isDraggingYTop = true);
         yTrimBottomHandle.addEventListener('mousedown', () => isDraggingYBottom = true);
+        cTrimTopHandle.addEventListener('mousedown', () => isDraggingCTop = true);
+        cTrimBottomHandle.addEventListener('mousedown', () => isDraggingCBottom = true);
         
         document.addEventListener('mousemove', handleSliderDrag);
         document.addEventListener('mouseup', stopDrag);
 
         [trimStartInput, trimEndInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('x'); updatePlot(); }));
         [yTrimMinInput, yTrimMaxInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('y'); updatePlot(); }));
-        resetTrimBtn.addEventListener('click', () => { resetTrimUI('both'); updatePlot(); });
+        [cTrimMinInput, cTrimMaxInput].forEach(el => el.addEventListener('change', () => { updateHandlesFromInputs('c'); updatePlot(); }));
+        
+        resetTrimBtn.addEventListener('click', () => { 
+            resetTrimUI('both'); 
+            baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+            updatePlot(); 
+        });
 
         plotAreaWrapper.addEventListener('mousedown', (e) => {
             if (e.target !== plotImage || !currentPlotMeta) return;
@@ -721,6 +821,32 @@
             updateHandlesFromInputs('x'); updateHandlesFromInputs('y'); updatePlot();
         });
 
+        function updateCmapGradient(cmapVal) {
+            const match = Array.from(document.querySelectorAll('.cmap-option')).find(b => b.dataset.val === cmapVal);
+            if (match) {
+                cmapTrigger.style.background = match.style.background;
+                const bg = match.style.background.replace('to right', 'to top');
+                
+                const gradEl = document.getElementById('cTrimGradient');
+                if (gradEl) gradEl.style.background = bg;
+                
+                // Securely extract edge colours for the masks from the raw HTML style attribute string
+                const rawStyle = match.getAttribute('style');
+                const colors = rawStyle.match(/#[0-9a-fA-F]{6}|rgba?\([^)]+\)/g);
+                if (colors && colors.length >= 2) {
+                    document.getElementById('cTrimBottomMask').style.backgroundColor = colors[0];
+                    document.getElementById('cTrimTopMask').style.backgroundColor = colors[colors.length - 1];
+                }
+            } else if (cmapVal === 'black') {
+                cmapTrigger.style.background = '#000000';
+                const gradEl = document.getElementById('cTrimGradient');
+                if (gradEl) gradEl.style.background = '#000000';
+                
+                document.getElementById('cTrimBottomMask').style.backgroundColor = '#000000';
+                document.getElementById('cTrimTopMask').style.backgroundColor = '#000000';
+            }
+        }
+
         cmapTrigger.addEventListener('click', (e) => {
             e.stopPropagation(); cmapMenu.classList.toggle('hidden');
             if (!cmapMenu.classList.contains('hidden')) cmapOptions[0].focus();
@@ -732,7 +858,7 @@
             btn.addEventListener('click', (e) => {
                 e.stopPropagation(); 
                 cmapInput.value = btn.dataset.val;
-                cmapTrigger.style.background = btn.style.background;
+                updateCmapGradient(btn.dataset.val);
                 cmapMenu.classList.add('hidden');
                 
                 setCustomMode();
@@ -855,13 +981,7 @@
             cVarSelect.value = findBest(p.c);
             
             cmapInput.value = p.cmap;
-            
-            const match = cmapOptions.find(b => b.dataset.val === p.cmap);
-            if (match) {
-                cmapTrigger.style.background = match.style.background;
-            } else if (p.cmap === 'black') {
-                cmapTrigger.style.background = '#000000';
-            }
+            updateCmapGradient(p.cmap);
             
             document.getElementById('invertY').checked = p.invert;
             deltaCheck.checked = p.delta || false;
@@ -938,8 +1058,8 @@
                 ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
                 cVarSelect.value = '';
                 cmapInput.value = 'viridis';
-                cmapTrigger.style.background = 'linear-gradient(to right, #440154, #21918c, #fde725)';
-                document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH'].includes(ySelect.value.toUpperCase());
+                updateCmapGradient('viridis');
+                document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
                 updateMetadataLabels();
             }
             
@@ -968,7 +1088,11 @@
         deltaCheck.addEventListener('change', () => { deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none'; resetPlotState(false); });
         ['invertY'].forEach(id => document.getElementById(id).addEventListener('change', () => { resetPlotState(false); }));
         deltaAxis.addEventListener('change', () => resetPlotState(false));
-        cVarSelect.addEventListener('change', () => resetPlotState(false));
+
+        cVarSelect.addEventListener('change', () => { 
+            baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+            resetPlotState(false); 
+        });
 
         xSelect.addEventListener('change', () => { 
             resetPlotState(true);
@@ -1125,6 +1249,7 @@
                     delta_axis: deltaAxis.value, invert_y: document.getElementById('invertY').checked,
                     trim_start: safeTrimStart, trim_end: safeTrimEnd,
                     y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
+                    c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
                     apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
                     plot_all: plotAllCheck.checked
                 });
@@ -1154,6 +1279,21 @@
                     let ymin = currentPlotMeta.ylim[0], ymax = currentPlotMeta.ylim[1];
                     if (ymin > ymax) { let temp = ymin; ymin = ymax; ymax = temp; } 
                     baseYMin = ymin; baseYMax = ymax; resetTrimUI('y');
+                }
+                
+                if (cVarSelect.value && data.plot_meta.clim_bounds) {
+                    cTrimContainer.classList.replace('hidden', 'flex');
+                    // Always refresh the base to the current absolute data limits
+                    baseCMin = data.plot_meta.clim_bounds[0];
+                    baseCMax = data.plot_meta.clim_bounds[1];
+                    
+                    if (!cTrimMinInput.value) cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
+                    if (!cTrimMaxInput.value) cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
+                    
+                    updateHandlesFromInputs('c');
+                } else {
+                    cTrimContainer.classList.replace('flex', 'hidden');
+                    baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
                 }
 
             } catch (err) { 
@@ -1201,6 +1341,8 @@
                 document.activeElement !== trimEndInput && 
                 document.activeElement !== yTrimMinInput && 
                 document.activeElement !== yTrimMaxInput && 
+                document.activeElement !== cTrimMinInput && 
+                document.activeElement !== cTrimMaxInput && 
                 document.activeElement !== presetNameInput &&
                 !e.target.closest('#qcDropdown')) updatePlot();
                 
@@ -1212,7 +1354,22 @@
 
         document.getElementById('openFolderBtn').addEventListener('click', async () => {
             try {
-                await fetch('/api/open_folder', { method: 'POST' });
+                const res = await fetch('/api/open_folder', { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.status === "success") {
+                    datasetSelect.innerHTML = '';
+                    const fileRes = await fetch('/api/files');
+                    const fileData = await fileRes.json();
+                    
+                    fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
+                    
+                    if (datasetSelect.options.length > 0) {
+                        await handleDatasetChange();
+                    } else {
+                        resetPlotState(true);
+                    }
+                }
             } catch (err) {
                 console.error("Failed to open folder:", err);
             }
