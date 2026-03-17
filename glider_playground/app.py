@@ -72,14 +72,17 @@ def get_plot(
     plot_delta: bool = False, delta_axis: str = "x", invert_y: bool = False, 
     trim_start: str = None, trim_end: str = None, 
     y_trim_min: str = None, y_trim_max: str = None,
-    apply_qc: bool = False, qc_threshold: int = 5
+    apply_qc: bool = False, qc_flags: str = "1,2,5,8",
+    plot_all: bool = False
 ):
     return plot_logic.generate_plot(
         str(DATA_DIR / filename), x_var, y_var, c_var, cmap=cmap, 
         plot_delta=plot_delta, delta_axis=delta_axis, invert_y=invert_y, 
         trim_start=trim_start, trim_end=trim_end,
         y_trim_min=y_trim_min, y_trim_max=y_trim_max,
-        apply_qc=apply_qc, qc_threshold=qc_threshold
+        apply_qc=apply_qc, qc_flags=qc_flags, plot_all=plot_all
     )
+
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

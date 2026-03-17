@@ -49,9 +49,9 @@
 <body class="overflow-hidden">
     <div id="customTooltip"></div>
 
-    <nav class="flex items-center px-4 py-2 bg-[#f8f9fa] border-b border-gray-200 gap-3 w-full text-xs shrink-0 relative z-20 h-[48px]">
+    <nav class="flex items-center px-4 py-2 bg-[#f8f9fa] border-b border-gray-200 gap-3 w-full text-xs shrink-0 relative h-[48px]" style="z-index: 60;">
         <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300">
-            <img src="/static/icon.png" alt="Logo" class="w-4 h-4"> Glider Explorer
+            <img src="/static/icon.png" alt="Logo" class="w-6 h-6"> Glider Explorer
         </div>
 
         <div class="flex items-center gap-1">
@@ -65,7 +65,7 @@
         <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
             <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">View</label>
             <div class="flex items-center gap-1">
-<select id="plotPreset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-40 outline-none transition-all font-medium">
+                <select id="plotPreset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-40 outline-none transition-all font-medium">
                     <optgroup label="Default Views" id="defaultOptGroup"></optgroup>
                     <optgroup label="Custom Views" id="customOptGroup" style="display: none;"></optgroup>
                     <option value="custom">Custom Plot...</option>
@@ -103,9 +103,27 @@
                 <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1">
                     <input type="checkbox" id="applyQc" class="w-3.5 h-3.5 accent-googleBlue" checked> Apply QC
                 </label>
-                <div id="qcThresholdContainer" class="flex items-center gap-1">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Max Flag:</span>
-                    <input type="number" id="qcThreshold" min="1" max="9" value="5" class="w-10 p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors">
+                <div id="qcFlagsContainer" class="flex items-center gap-1 relative group">
+                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
+                        Flags <span class="material-symbols-outlined text-[12px]">info</span>
+                    </span>
+                    <div class="absolute top-[120%] left-0 hidden group-hover:block bg-[#202124] text-white text-[10px] p-3 rounded shadow-xl w-[340px]">
+                        <table class="w-full text-left border-collapse leading-tight">
+                            <tbody>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top">0</td><td class="py-0.5 text-gray-300">No QC performed.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top">1</td><td class="py-0.5">Good data. Passed all tests.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-yellow-400">2</td><td class="py-0.5 text-yellow-300">Probably good. Valid but not all tests applied.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-400">3</td><td class="py-0.5 text-red-300">Bad data that are potentially correctable.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-500">4</td><td class="py-0.5 text-red-400">Bad data. Definitely erroneous.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-blue-300">5</td><td class="py-0.5 text-blue-200">Value changed. Interpolated or adjusted.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">6</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">7</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top text-purple-300">8</td><td class="py-0.5 text-purple-200">Interpolated value.</td></tr>
+                                <tr><td class="font-bold pr-2 py-0.5 align-top">9</td><td class="py-0.5 text-gray-300">Missing value.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors" title="Comma-separated list of allowed QC flags">
                 </div>
             </div>
 
@@ -143,8 +161,14 @@
             </div>
         </div>
 
-        <div class="ml-auto flex gap-2">
+        <div class="ml-auto flex gap-2 items-center">
+            <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium text-[10px] mr-2">
+                <input type="checkbox" id="plotAll" class="w-3.5 h-3.5 accent-googleBlue"> Plot All
+            </label>
             <button id="plotBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm"><span class="material-symbols-outlined text-[14px]">scatter_plot</span> Plot</button>
+            <button id="downloadBtn" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm transition-colors hidden" title="Download Plot">
+                <span class="material-symbols-outlined text-[14px]">download</span>
+            </button>
         </div>
     </nav>
 
@@ -243,7 +267,7 @@
                                 <input type="text" id="trimStartInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white transition-colors w-32 text-center" placeholder="Min">
                             </div>
                             <div class="flex items-center gap-1">
-                                <button id="resetTrimBtn" class="text-gray-600 hover:bg-gray-100 px-1.5 py-0.5 transition-colors text-[10px] border border-transparent hover:border-gray-200 flex items-center gap-0.5"><span class="material-symbols-outlined text-[12px]">refresh</span> Reset Lims</button>
+                                <button id="resetTrimBtn" class="bg-white border border-gray-300 shadow-sm rounded hover:bg-gray-100 text-gray-700 px-2 py-1 transition-colors text-[10px] flex items-center gap-0.5"><span class="material-symbols-outlined text-[12px]">refresh</span> Reset Lims</button>
                             </div>
                             <div class="flex items-center gap-1">
                                 <input type="text" id="trimEndInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white transition-colors w-32 text-center" placeholder="Max">
@@ -267,8 +291,10 @@
         const ZOOM_DRAG_THRESHOLD = 10; 
         const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
         const applyQcCheck = document.getElementById('applyQc');
-        const qcThresholdContainer = document.getElementById('qcThresholdContainer');
-        const qcThresholdInput = document.getElementById('qcThreshold');
+        const qcFlagsContainer = document.getElementById('qcFlagsContainer');
+        const qcFlagsInput = document.getElementById('qcFlags');
+        const plotAllCheck = document.getElementById('plotAll');
+        const downloadBtn = document.getElementById('downloadBtn');
         
         const datasetSelect = document.getElementById('dataset'), plotBtn = document.getElementById('plotBtn');
         const plotImage = document.getElementById('plotImage');
@@ -326,7 +352,7 @@
         let dragStartX = 0, dragStartY = 0;
         let isDraggingBox = false;
 
-const OceanPresets = {
+        const OceanPresets = {
             preset_temp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true, delta: false },
             preset_sal: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true, delta: false },
             preset_density: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true, delta: false },
@@ -436,6 +462,7 @@ const OceanPresets = {
             plotImage.classList.add('hidden');
             emptyState.classList.remove('hidden');
             qcBadge.classList.add('hidden');
+            downloadBtn.classList.add('hidden');
 
             if (fullReset) {
                 xTrimRow.classList.replace('flex', 'hidden');
@@ -708,7 +735,7 @@ const OceanPresets = {
                 cmapTrigger.style.background = btn.style.background;
                 cmapMenu.classList.add('hidden');
                 
-                setCustomMode(); // Add this
+                setCustomMode();
                 resetPlotState(false); 
             });
         });
@@ -747,7 +774,6 @@ const OceanPresets = {
                 
                 varList.innerHTML = '';
                 
-                // Custom sort to group _QC variables directly beneath their parent
                 data.variables.sort((a, b) => {
                     const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
                     const baseA = getBase(a.name);
@@ -807,123 +833,120 @@ const OceanPresets = {
         }
 
         function applyPreset(presetKey) {
-    if (presetKey === 'custom') return;
+            if (presetKey === 'custom') return;
 
-    let p;
-    if (presetKey.startsWith('custom_')) {
-        p = getCustomPresets()[presetKey.replace('custom_', '')];
-    } else {
-        p = OceanPresets[presetKey];
-    }
-    if (!p) return;
+            let p;
+            if (presetKey.startsWith('custom_')) {
+                p = getCustomPresets()[presetKey.replace('custom_', '')];
+            } else {
+                p = OceanPresets[presetKey];
+            }
+            if (!p) return;
 
-    const findBest = (arr) => {
-        for (let v of arr) {
-            if (variableCache.some(vc => vc.name === v)) return v;
+            const findBest = (arr) => {
+                for (let v of arr) {
+                    if (variableCache.some(vc => vc.name === v)) return v;
+                }
+                return variableCache.find(vc => !vc.name.endsWith('_QC'))?.name || '';
+            };
+
+            xSelect.value = findBest(p.x);
+            ySelect.value = findBest(p.y);
+            cVarSelect.value = findBest(p.c);
+            
+            cmapInput.value = p.cmap;
+            
+            const match = cmapOptions.find(b => b.dataset.val === p.cmap);
+            if (match) {
+                cmapTrigger.style.background = match.style.background;
+            } else if (p.cmap === 'black') {
+                cmapTrigger.style.background = '#000000';
+            }
+            
+            document.getElementById('invertY').checked = p.invert;
+            deltaCheck.checked = p.delta || false;
+            deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none';
+            if (p.deltaAxis) deltaAxis.value = p.deltaAxis;
+
+            updateMetadataLabels();
+            const xInfo = variableCache.find(v => v.name === xSelect.value);
+            isXDateTime = xInfo && xInfo.type === 'datetime';
         }
-        return variableCache.find(vc => !vc.name.endsWith('_QC'))?.name || '';
-    };
 
-    xSelect.value = findBest(p.x);
-    ySelect.value = findBest(p.y);
-    cVarSelect.value = findBest(p.c);
-    
-    cmapInput.value = p.cmap;
-    
-    // Sync the gradient button background
-    const match = cmapOptions.find(b => b.dataset.val === p.cmap);
-    if (match) {
-        cmapTrigger.style.background = match.style.background;
-    } else if (p.cmap === 'black') {
-        cmapTrigger.style.background = '#000000';
-    }
-    
-    document.getElementById('invertY').checked = p.invert;
-    deltaCheck.checked = p.delta || false;
-    deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none';
-    if (p.deltaAxis) deltaAxis.value = p.deltaAxis;
+        async function loadVariables() {
+            const filename = datasetSelect.value;
+            if (!filename) return;
+            
+            const response = await fetch(`/api/variables?filename=${encodeURIComponent(filename)}`);
+            const data = await response.json();
+            
+            const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
 
-    updateMetadataLabels();
-    const xInfo = variableCache.find(v => v.name === xSelect.value);
-    isXDateTime = xInfo && xInfo.type === 'datetime';
-}
-async function loadVariables() {
-    const filename = datasetSelect.value;
-    if (!filename) return;
-    
-    const response = await fetch(`/api/variables?filename=${encodeURIComponent(filename)}`);
-    const data = await response.json();
-    
-    const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
+            variableCache = data.variables.sort((a, b) => {
+                const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
+                const baseA = getBase(a.name), baseB = getBase(b.name);
+                return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
+            });
+            
+            if (!hasAnyQc) {
+                applyQcCheck.checked = false;
+                applyQcCheck.disabled = true;
+                applyQcCheck.parentElement.classList.add('opacity-40', 'cursor-not-allowed');
+                qcFlagsContainer.style.display = 'none';
+            } else {
+                applyQcCheck.disabled = false;
+                applyQcCheck.parentElement.classList.remove('opacity-40', 'cursor-not-allowed');
+                qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
+            }
 
-    variableCache = data.variables.sort((a, b) => {
-        const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
-        const baseA = getBase(a.name), baseB = getBase(b.name);
-        return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
-    });
-    
-    if (!hasAnyQc) {
-        applyQcCheck.checked = false;
-        applyQcCheck.disabled = true;
-        applyQcCheck.parentElement.classList.add('opacity-40', 'cursor-not-allowed');
-        qcThresholdContainer.style.display = 'none';
-    } else {
-        applyQcCheck.disabled = false;
-        applyQcCheck.parentElement.classList.remove('opacity-40', 'cursor-not-allowed');
-        qcThresholdContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
-    }
+            const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
 
-    const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
+            [xSelect, ySelect, cVarSelect].forEach(sel => {
+                sel.innerHTML = sel.id === 'cVar' ? '<option value="">None</option>' : '';
+                variableCache.forEach(v => {
+                    if (!v.name.endsWith('_QC')) sel.add(new Option(v.name, v.name));
+                });
+            });
+            
+            const defaultOptGroup = document.getElementById('defaultOptGroup');
+            defaultOptGroup.innerHTML = '';
+            let firstValid = null;
+            let currentValid = false;
 
-    [xSelect, ySelect, cVarSelect].forEach(sel => {
-        sel.innerHTML = sel.id === 'cVar' ? '<option value="">None</option>' : '';
-        variableCache.forEach(v => {
-            if (!v.name.endsWith('_QC')) sel.add(new Option(v.name, v.name));
-        });
-    });
-    
-    const defaultOptGroup = document.getElementById('defaultOptGroup');
-    defaultOptGroup.innerHTML = '';
-    let firstValid = null;
-    let currentValid = false;
+            defaultPresetDefinitions.forEach(def => {
+                const p = OceanPresets[def.value];
+                const hasX = p.x.some(v => isValid(v));
+                const hasY = p.y.some(v => isValid(v));
+                const hasC = p.c.some(v => isValid(v));
+                
+                if (hasX && hasY && hasC) {
+                    const opt = new Option(def.text, def.value);
+                    defaultOptGroup.appendChild(opt);
+                    if (!firstValid) firstValid = def.value;
+                    if (plotPreset.value === def.value) currentValid = true;
+                }
+            });
 
-    // Filter presets strictly: X, Y, AND Colour axis must have valid data
-    defaultPresetDefinitions.forEach(def => {
-        const p = OceanPresets[def.value];
-        const hasX = p.x.some(v => isValid(v));
-        const hasY = p.y.some(v => isValid(v));
-        const hasC = p.c.some(v => isValid(v));
-        
-        // Hide option if any required variable is missing
-        if (hasX && hasY && hasC) {
-            const opt = new Option(def.text, def.value);
-            defaultOptGroup.appendChild(opt);
-            if (!firstValid) firstValid = def.value;
-            if (plotPreset.value === def.value) currentValid = true;
+            if (!currentValid || plotPreset.value === 'custom') {
+                plotPreset.value = firstValid || 'custom';
+            }
+            
+            if (plotPreset.value !== 'custom') {
+                applyPreset(plotPreset.value);
+            } else {
+                xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
+                ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
+                cVarSelect.value = '';
+                cmapInput.value = 'viridis';
+                cmapTrigger.style.background = 'linear-gradient(to right, #440154, #21918c, #fde725)';
+                document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH'].includes(ySelect.value.toUpperCase());
+                updateMetadataLabels();
+            }
+            
+            togglePresetUI();
+            const xInfo = variableCache.find(v => v.name === xSelect.value);
+            if (xInfo) isXDateTime = xInfo.type === 'datetime';
         }
-    });
-
-    // Handle View selection state
-    if (!currentValid || plotPreset.value === 'custom') {
-        plotPreset.value = firstValid || 'custom';
-    }
-    
-    if (plotPreset.value !== 'custom') {
-        applyPreset(plotPreset.value);
-    } else {
-        xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
-        ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
-        cVarSelect.value = '';
-        cmapInput.value = 'viridis';
-        cmapTrigger.style.background = 'linear-gradient(to right, #440154, #21918c, #fde725)';
-        document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH'].includes(ySelect.value.toUpperCase());
-        updateMetadataLabels();
-    }
-    
-    togglePresetUI();
-    const xInfo = variableCache.find(v => v.name === xSelect.value);
-    if (xInfo) isXDateTime = xInfo.type === 'datetime';
-}
 
         function updateMetadataLabels() {
             const xInfo = variableCache.find(v => v.name === xSelect.value);
@@ -960,11 +983,21 @@ async function loadVariables() {
         });
 
         applyQcCheck.addEventListener('change', () => { 
-            qcThresholdContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
+            qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
             resetPlotState(false); 
         });
-        qcThresholdInput.addEventListener('change', () => resetPlotState(false));
+        qcFlagsInput.addEventListener('change', () => resetPlotState(false));
+        plotAllCheck.addEventListener('change', () => resetPlotState(false));
 
+        downloadBtn.addEventListener('click', () => {
+            if (!plotImage.src) return;
+            const link = document.createElement('a');
+            link.href = plotImage.src;
+            link.download = `glider_plot_${datasetSelect.value}_${xSelect.value}_vs_${ySelect.value}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
 
         async function loadMapImage() {
             const selectedDataset = datasetSelect.value;
@@ -1091,7 +1124,8 @@ async function loadVariables() {
                     delta_axis: deltaAxis.value, invert_y: document.getElementById('invertY').checked,
                     trim_start: safeTrimStart, trim_end: safeTrimEnd,
                     y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
-                    apply_qc: applyQcCheck.checked, qc_threshold: qcThresholdInput.value
+                    apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
+                    plot_all: plotAllCheck.checked
                 });
 
                 const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });
@@ -1099,6 +1133,7 @@ async function loadVariables() {
                 
                 plotImage.src = data.image; plotImage.classList.remove('hidden');
                 emptyState.classList.add('hidden'); 
+                downloadBtn.classList.remove('hidden');
                 
                 xTrimRow.classList.replace('hidden', 'flex'); 
                 yTrimContainer.classList.replace('hidden', 'flex');
@@ -1200,11 +1235,9 @@ async function loadVariables() {
             }
         }
 
-        // Attach to all manual controls
-        [xSelect, ySelect, cVarSelect, deltaCheck, deltaAxis, applyQcCheck, qcThresholdInput].forEach(el => {
+        [xSelect, ySelect, cVarSelect, deltaCheck, deltaAxis, applyQcCheck, qcFlagsInput, plotAllCheck].forEach(el => {
             el.addEventListener('change', () => {
                 setCustomMode();
-                // For X and Y, we want to clear the plot state because the axes changed
                 if (el === xSelect || el === ySelect) {
                     resetPlotState(true);
                 } else {

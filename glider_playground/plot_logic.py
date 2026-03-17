@@ -9,7 +9,7 @@ import io
 import base64
 import os
 
-MAX_RENDER_POINTS = 100000
+MAX_RENDER_POINTS = 259000
 
 def format_dt(dt64):
     return pd.to_datetime(dt64).strftime('%d %B %Y, %H:%M')
@@ -54,11 +54,11 @@ def generate_sparkline(filepath, x_var, y_var):
         
         if f"{actual_x_var}_QC" in glider_data.variables:
             qc_vals = glider_data[f"{actual_x_var}_QC"].values.copy().ravel()
-            valid_mask &= (qc_vals < 3)
+            valid_mask &= np.isin(qc_vals, [1, 2, 5, 8])
 
         if f"{y_var}_QC" in glider_data.variables:
             qc_vals = glider_data[f"{y_var}_QC"].values.copy().ravel()
-            valid_mask &= (qc_vals < 3)
+            valid_mask &= np.isin(qc_vals, [1, 2, 5, 8])
             
         x_vals = x_vals[valid_mask]
         y_vals = y_vals[valid_mask]
@@ -127,7 +127,7 @@ def extract_qc_stats_from_file(data_dict, var_name):
     if qc_var_name in data_dict:
         stats["applied"] = True
         qc_vals = data_dict[qc_var_name]
-        bad_mask = (qc_vals >= 3) & (qc_vals != 9) & ~pd.isnull(vals)
+        bad_mask = ~np.isin(qc_vals, [1, 2, 5, 8]) & (qc_vals != 9) & ~pd.isnull(vals)
         stats["total_bad"] = int(np.sum(bad_mask))
             
     return stats, bad_mask
@@ -268,11 +268,10 @@ def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_x_dt, x_mi
     return out
 
 
-def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, apply_qc=False, qc_threshold=5):
+def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False):
     # Variables for easy tweaking
     LINE_COLOUR = '#1a73e8'
     TEXT_BOX_BG = '#ffffffcc'
-    MAX_MARKER_SIZE = 4
     MIN_MARKER_SIZE = 0.5
     
     glider_data = xr.open_dataset(filepath)
@@ -309,10 +308,15 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
 
     if apply_qc:
+        try:
+            allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
+        except:
+            allowed_flags = [1, 2, 5, 8]
+            
         for v in [actual_plot_x_var, y_var, x_var, c_var]:
             if v and f"{v}_QC" in data_dict:
                 qc_vals = data_dict[f"{v}_QC"]
-                valid_mask &= (qc_vals <= qc_threshold)
+                valid_mask &= np.isin(qc_vals, allowed_flags)
 
     is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
     try:
@@ -343,7 +347,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         glider_data.close()
         return {"error": "No data points remain in the current view."}
 
-    if total_valid_points > MAX_RENDER_POINTS:
+    if not plot_all and total_valid_points > MAX_RENDER_POINTS:
         step = total_valid_points // MAX_RENDER_POINTS
         plot_x, plot_y = plot_x[::step], plot_y[::step]
         if plot_c is not None: plot_c = plot_c[::step]
@@ -351,9 +355,16 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     rendered_points = len(plot_x)
     percentage = (rendered_points / total_valid_points) * 100
 
-    # Calculate dynamic marker size
-    # Maps point count [100, 100,000] to size [MAX, MIN]
-    dynamic_size = np.interp(rendered_points, [100, MAX_RENDER_POINTS], [MAX_MARKER_SIZE, MIN_MARKER_SIZE])
+    if rendered_points <= 20:
+        dynamic_size = 14.0
+    elif rendered_points <= 100:
+        dynamic_size = 10.0
+    elif rendered_points <= 1000:
+        dynamic_size = 6.0
+    elif rendered_points <= 5000:
+        dynamic_size = 3.0
+    else:
+        dynamic_size = MIN_MARKER_SIZE
 
     fig, ax = plt.subplots(figsize=(18, 8))
     
@@ -372,7 +383,6 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     else:
         ax.plot(plot_x, plot_y, marker='.', linestyle='none', markersize=dynamic_size, color=LINE_COLOUR)
 
-    # Point density info in the bottom right
     info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
     ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10,
             verticalalignment='bottom', horizontalalignment='right',
@@ -399,5 +409,6 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     return {
         "image": f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
         "plot_meta": {"bbox": {"x0": bbox[0], "y0": bbox[1], "w": bbox[2], "h": bbox[3]}, "xlim": xlim, "ylim": ylim, "is_x_dt": bool(is_x_dt)},
-        "valid_points": int(len(plot_x))
+        "valid_points": int(len(plot_x)),
+        "qc_applied": apply_qc
     }
