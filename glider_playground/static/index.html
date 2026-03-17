@@ -371,6 +371,7 @@
         let currentPlotMeta = null;
         let currentMapBounds = null;
         let isPlotting = false;
+        let plotQueued = false;
         
         let isDraggingLeft = false, isDraggingRight = false;
         let isDraggingYTop = false, isDraggingYBottom = false;
@@ -483,10 +484,11 @@
         };
         const parseDateTimeLocal = (str) => { return new Date(str + 'Z').getTime(); };
 
-        function resetPlotState(fullReset = true) {
+    function resetPlotState(fullReset = true) {
             if (currentPlotController) currentPlotController.abort();
             plotImage.classList.add('hidden');
             emptyState.classList.remove('hidden');
+            emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
             qcBadge.classList.add('hidden');
             downloadBtn.classList.add('hidden');
 
@@ -1228,6 +1230,12 @@
         resetInspectorBtn.addEventListener('click', resetInspectorState);
 
         async function updatePlot() {
+            // Prevent spamming the server. Queue the request if busy.
+            if (isPlotting) {
+                plotQueued = true;
+                return;
+            }
+
             setLoading(true); 
             resetInspectorState(); 
             
@@ -1257,6 +1265,15 @@
                 const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });
                 const data = await response.json();
                 
+                if (data.error) {
+                    plotImage.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                    emptyState.innerHTML = `<span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">search_off</span><p class="text-sm font-medium text-gray-600">${data.error}</p>`;
+                    downloadBtn.classList.add('hidden');
+                    qcBadge.classList.add('hidden');
+                    return;
+                }
+                
                 plotImage.src = data.image; plotImage.classList.remove('hidden');
                 emptyState.classList.add('hidden'); 
                 downloadBtn.classList.remove('hidden');
@@ -1283,14 +1300,13 @@
                 
                 if (cVarSelect.value && data.plot_meta.clim_bounds) {
                     cTrimContainer.classList.replace('hidden', 'flex');
-                    // Always refresh the base to the current absolute data limits
-                    baseCMin = data.plot_meta.clim_bounds[0];
-                    baseCMax = data.plot_meta.clim_bounds[1];
-                    
-                    if (!cTrimMinInput.value) cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
-                    if (!cTrimMaxInput.value) cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
-                    
-                    updateHandlesFromInputs('c');
+                    if (baseCMin === null || baseCMax === null) {
+                        baseCMin = data.plot_meta.clim_bounds[0];
+                        baseCMax = data.plot_meta.clim_bounds[1];
+                        cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
+                        cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
+                        updateHandlesFromInputs('c');
+                    }
                 } else {
                     cTrimContainer.classList.replace('flex', 'hidden');
                     baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
@@ -1298,7 +1314,15 @@
 
             } catch (err) { 
                 if (err.name !== 'AbortError') console.error("Plotting error:", err); 
-            } finally { setLoading(false); }
+            } finally { 
+                setLoading(false); 
+                
+                // If the user moved sliders while the server was busy, fire the queued plot now!
+                if (plotQueued) {
+                    plotQueued = false;
+                    updatePlot();
+                }
+            }
         }
 
         function setLoading(isLoading) {
