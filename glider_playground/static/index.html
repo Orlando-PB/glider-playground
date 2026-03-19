@@ -117,6 +117,9 @@
                 <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1">
                     <input type="checkbox" id="applyQc" class="w-3.5 h-3.5 accent-googleBlue" checked> Apply QC Flags
                 </label>
+                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1" title="Filters out NaNs, pre-deployment, and future dates">
+                    <input type="checkbox" id="filterTimeCheck" class="w-3.5 h-3.5 accent-googleBlue" checked> Filter Bad Times
+                </label>
                 <div id="qcFlagsContainer" class="flex items-center gap-1 relative group">
                     <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
                         Flags <span class="material-symbols-outlined text-[12px]">info</span>
@@ -221,9 +224,12 @@
 
 
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
-                <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex justify-between items-center shrink-0">
-                    <span class="font-bold text-gray-600 uppercase tracking-wider">Shared Dimension</span>
-                    <span id="dimInfo" class="font-medium text-googleBlue">--</span>
+                    <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-gray-600 uppercase tracking-wider">Shared Dimension</span>
+                        <span id="dimInfo" class="font-medium text-googleBlue">--</span>
+                    </div>
+                    <div id="timeStatsContainer" class="hidden flex-col gap-1 mt-1 text-[9px] text-gray-700 bg-white p-1.5 rounded border border-gray-300 shadow-inner"></div>
                 </div>
                 <div class="px-3 py-1 bg-gray-50 border-b border-gray-200 text-[9px] font-bold text-gray-400 uppercase tracking-wider flex justify-between shrink-0">
                     <span>Variables</span>
@@ -327,6 +333,7 @@
         const ZOOM_DRAG_THRESHOLD = 10; 
         const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
         const applyQcCheck = document.getElementById('applyQc');
+        const filterTimeCheck = document.getElementById('filterTimeCheck');
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
         const plotAllCheck = document.getElementById('plotAll');
@@ -949,6 +956,33 @@ function resetPlotState(fullReset = true) {
                 
                 document.getElementById('dimInfo').textContent = `${data.dimension_name} (${data.dimension_size.toLocaleString()})`;
                 
+                const ts = data.time_stats;
+                const tsContainer = document.getElementById('timeStatsContainer');
+                if (ts && ts.has_time) {
+                    tsContainer.classList.remove('hidden');
+                    tsContainer.classList.add('flex');
+                    let html = `<div class="flex justify-between"><span>Total Measurements:</span> <span class="font-bold">${ts.n_measurements.toLocaleString()}</span></div>`;
+                    
+                    if (ts.removed_nan > 0 || ts.removed_before > 0 || ts.removed_after > 0) {
+                        html += `<div class="flex justify-between text-googleRed"><span>Valid Measurements:</span> <span class="font-bold">${ts.n_valid.toLocaleString()}</span></div>`;
+                        if (ts.removed_nan > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>NaNs removed:</span> <span>${ts.removed_nan.toLocaleString()}</span></div>`;
+                        
+                        const deployStr = ts.deploy_time ? ts.deploy_time.split(' ')[0] : '1990-01-01';
+                        if (ts.removed_before > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>Removed before ${deployStr}:</span> <span>${ts.removed_before.toLocaleString()}</span></div>`;
+                        if (ts.removed_after > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>Removed after now:</span> <span>${ts.removed_after.toLocaleString()}</span></div>`;
+                    } else {
+                        html += `<div class="flex justify-between text-googleGreen"><span>No bad times detected.</span></div>`;
+                    }
+                    
+                    if (!ts.is_monotonic) {
+                        html += `<div class="mt-1 p-1.5 bg-red-50 text-googleRed border border-red-200 rounded flex items-start gap-1.5"><span class="material-symbols-outlined text-[14px]">warning</span><span class="leading-tight">Warning: TIME is not monotonically increasing (even after filtering).</span></div>`;
+                    }
+                    tsContainer.innerHTML = html;
+                } else {
+                    tsContainer.classList.add('hidden');
+                    tsContainer.classList.remove('flex');
+                }
+
                 varList.innerHTML = '';
                 
                 data.variables.sort((a, b) => {
@@ -1162,6 +1196,12 @@ function resetPlotState(fullReset = true) {
             qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
             resetPlotState(false); 
         });
+
+        filterTimeCheck.addEventListener('change', () => { 
+            resetPlotState(true); 
+            updatePlot(); 
+        });
+        
         qcFlagsInput.addEventListener('change', () => resetPlotState(false));
         plotAllCheck.addEventListener('change', () => resetPlotState(false));
 
@@ -1355,7 +1395,9 @@ function resetPlotState(fullReset = true) {
                 y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
                 c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
                 apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
-                plot_all: plotAllCheck.checked
+                plot_all: plotAllCheck.checked,
+                plot_all: plotAllCheck.checked,
+                filter_time: filterTimeCheck.checked
             });
 
             const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });

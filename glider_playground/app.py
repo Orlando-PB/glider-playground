@@ -122,7 +122,7 @@ def get_plot(
     y_trim_min: str = None, y_trim_max: str = None,
     c_trim_min: str = None, c_trim_max: str = None,
     apply_qc: bool = False, qc_flags: str = "1,2,5,8",
-    plot_all: bool = False
+    plot_all: bool = False, filter_time: bool = True
 ):
     return plot_logic.generate_plot(
         str(state["DATA_DIR"] / filename), x_var, y_var, c_var, cmap=cmap, 
@@ -130,9 +130,8 @@ def get_plot(
         trim_start=trim_start, trim_end=trim_end,
         y_trim_min=y_trim_min, y_trim_max=y_trim_max,
         c_trim_min=c_trim_min, c_trim_max=c_trim_max,
-        apply_qc=apply_qc, qc_flags=qc_flags, plot_all=plot_all
+        apply_qc=apply_qc, qc_flags=qc_flags, plot_all=plot_all, filter_time=filter_time
     )
-
 
 import httpx # You may need to: pip install httpx
 

@@ -149,127 +149,65 @@ def get_dataset_info(filepath):
     for name, var in ds.variables.items():
         if len(var.dims) > 0:
             description = var.attrs.get('long_name', 'No description available')
+            variables.append({"name": name, "description": description})
             
-            variables.append({
-                "name": name,
-                "description": description
-            })
-            
-    ds.close()
+    time_stats = {
+        "has_time": False, "n_measurements": main_dim_size, "n_valid": main_dim_size,
+        "removed_before": 0, "removed_after": 0, "removed_nan": 0,
+        "is_monotonic": True, "deploy_time": None
+    }
     
+    time_name = "TIME" if "TIME" in ds.variables else None
+    if not time_name:
+        time_vars = [v for v in ds.variables if 'TIME' in v.upper()]
+        if time_vars: time_name = time_vars[0]
+        
+    if time_name:
+        time_stats["has_time"] = True
+        time_array = ds[time_name].values
+        
+        nan_mask = pd.isnull(time_array)
+        time_stats["removed_nan"] = int(nan_mask.sum())
+        
+        min_time = pd.to_datetime("1990-01-01").to_datetime64()
+        if "DEPLOYMENT_TIME" in ds.variables:
+            try:
+                deploy_time = pd.to_datetime(ds["DEPLOYMENT_TIME"].values)
+                if isinstance(deploy_time, pd.DatetimeIndex):
+                    deploy_time = deploy_time[0]
+                min_time = max(min_time, deploy_time.to_datetime64())
+                time_stats["deploy_time"] = deploy_time.strftime("%Y-%m-%d %H:%M")
+            except: pass
+        else:
+            time_stats["deploy_time"] = "1990-01-01"
+            
+        now_time = pd.Timestamp.now().to_datetime64()
+        
+        with np.errstate(invalid='ignore'):
+            before_mask = (time_array < min_time) & ~nan_mask
+            after_mask = (time_array > now_time) & ~nan_mask
+            
+        time_stats["removed_before"] = int(before_mask.sum())
+        time_stats["removed_after"] = int(after_mask.sum())
+        
+        final_valid_mask = ~(nan_mask | before_mask | after_mask)
+        valid_times = time_array[final_valid_mask]
+        time_stats["n_valid"] = int(final_valid_mask.sum())
+
+        if len(valid_times) > 1:
+            time_stats["is_monotonic"] = bool(np.all(np.diff(valid_times).astype(float) >= 0))
+
+    ds.close()
     variables.sort(key=lambda x: x["name"].lower())
     
     return {
         "dimension_name": main_dim_name,
         "dimension_size": main_dim_size,
-        "variables": variables
+        "variables": variables,
+        "time_stats": time_stats
     }
 
-def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_x_dt, x_min, x_max, y_min, y_max):
-    ds = xr.open_dataset(filepath)
-    
-    actual_x_var = x_var
-    if x_var.upper() == 'TIME' and 'TIME' not in ds.variables:
-        time_vars = [v for v in ds.variables if 'TIME' in v.upper()]
-        if time_vars: actual_x_var = time_vars[0]
-        
-    x_da = ds[actual_x_var].values.ravel()
-    y_da = ds[y_var].values.ravel()
-    
-    valid = ~pd.isnull(x_da) & ~pd.isnull(y_da)
-    if not valid.any(): 
-        ds.close()
-        return {"error": "No valid data"}
-        
-    y_floats = y_da[valid].astype(float)
-    target_y = float(y_val)
-    y_min_f = float(y_min)
-    y_max_f = float(y_max)
-    y_range = max(y_max_f - y_min_f, 1e-10)
-    
-    if is_x_dt:
-        target_dt = pd.to_datetime(float(x_val), unit='ms')
-        x_min_dt = pd.to_datetime(float(x_min), unit='ms')
-        x_max_dt = pd.to_datetime(float(x_max), unit='ms')
-        
-        x_valid_s = pd.to_datetime(x_da[valid]).astype('int64') // 10**9
-        target_x = target_dt.timestamp()
-        x_min_f = x_min_dt.timestamp()
-        x_max_f = x_max_dt.timestamp()
-        
-        x_floats = x_valid_s.values.astype(float)
-        target_x = float(target_x)
-    else:
-        x_floats = x_da[valid].astype(float)
-        target_x = float(x_val)
-        x_min_f = float(x_min)
-        x_max_f = float(x_max)
-        
-    x_range = max(x_max_f - x_min_f, 1e-10)
-    
-    norm_x_diff = (x_floats - target_x) / x_range
-    norm_y_diff = (y_floats - target_y) / y_range
-    distances = norm_x_diff**2 + norm_y_diff**2
-    
-    idx = distances.argmin()
-    real_idx = np.where(valid)[0][idx]
-    
-    out = {
-        "x": str(x_da[real_idx]),
-        "y": float(y_da[real_idx]) if not pd.isnull(y_da[real_idx]) else None,
-        "lat": None,
-        "lon": None,
-        "c_val": None,
-        "time_val": None
-    }
-    
-    if c_var and c_var in ds.variables:
-        c_data = ds[c_var].values.ravel()
-        if not pd.isnull(c_data[real_idx]):
-            out["c_val"] = float(c_data[real_idx])
-            
-    time_name = None
-    if 'TIME' in ds.variables:
-        time_name = 'TIME'
-    else:
-        time_vars = [v for v in ds.variables if 'TIME' in v.upper()]
-        if time_vars: time_name = time_vars[0]
-        
-    if time_name:
-        t_data = ds[time_name].values.ravel()
-        t_val = t_data[real_idx]
-        if not pd.isnull(t_val):
-            out["time_val"] = pd.to_datetime(t_val).strftime('%Y-%m-%d %H:%M:%S')
-    
-    if 'LATITUDE' in ds and 'LONGITUDE' in ds:
-        lat_arr = ds['LATITUDE'].values.ravel()
-        lon_arr = ds['LONGITUDE'].values.ravel()
-        
-        if time_name:
-            time_arr = ds[time_name].values.ravel()
-            valid_ll = ~np.isnan(lat_arr) & ~np.isnan(lon_arr) & ~pd.isnull(time_arr)
-            
-            if valid_ll.any():
-                target_time = time_arr[real_idx]
-                if not pd.isnull(target_time):
-                    t_valid = time_arr[valid_ll].astype(float)
-                    sort_idx = np.argsort(t_valid)
-                    t_valid = t_valid[sort_idx]
-                    lat_valid = lat_arr[valid_ll][sort_idx]
-                    lon_valid = lon_arr[valid_ll][sort_idx]
-                    
-                    target_t_float = target_time.astype(float)
-                    out['lat'] = float(np.interp(target_t_float, t_valid, lat_valid))
-                    out['lon'] = float(np.interp(target_t_float, t_valid, lon_valid))
-        else:
-            lat_val = float(lat_arr[real_idx])
-            lon_val = float(lon_arr[real_idx])
-            out['lat'] = lat_val if not np.isnan(lat_val) else None
-            out['lon'] = lon_val if not np.isnan(lon_val) else None
-            
-    ds.close()
-    return out
-def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False):
+def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False, filter_time=True):
     if c_var == "None":
         c_var = ""
 
@@ -286,6 +224,14 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     vars_to_extract = {actual_plot_x_var, y_var, x_var}
     if c_var and cmap != 'black':
         vars_to_extract.add(c_var)
+
+    actual_time_var = "TIME"
+    if "TIME" not in glider_data.variables:
+        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+        if time_vars: actual_time_var = time_vars[0]
+
+    if filter_time and actual_time_var in glider_data.variables:
+        vars_to_extract.add(actual_time_var)
 
     if apply_qc:
         qc_vars = {f"{v}_QC" for v in vars_to_extract}
@@ -316,6 +262,22 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             if v and f"{v}_QC" in data_dict:
                 qc_vals = data_dict[f"{v}_QC"]
                 valid_mask &= np.isin(qc_vals, allowed_flags)
+
+    if filter_time and actual_time_var in data_dict:
+        t_vals = data_dict[actual_time_var]
+        min_time = pd.to_datetime("1990-01-01").to_datetime64()
+        if "DEPLOYMENT_TIME" in glider_data.variables:
+            try:
+                deploy_time = pd.to_datetime(glider_data["DEPLOYMENT_TIME"].values)
+                if isinstance(deploy_time, pd.DatetimeIndex):
+                    deploy_time = deploy_time[0]
+                min_time = max(min_time, deploy_time.to_datetime64())
+            except: pass
+                
+        now_time = pd.Timestamp.now().to_datetime64()
+        with np.errstate(invalid='ignore'):
+            time_valid_mask = (t_vals >= min_time) & (t_vals <= now_time) & ~pd.isnull(t_vals)
+        valid_mask &= time_valid_mask
 
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
@@ -368,21 +330,15 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     rendered_points = len(plot_x)
     percentage = (rendered_points / total_valid_points) * 100
 
-    if rendered_points <= 20:
-        dynamic_size = 14.0
-    elif rendered_points <= 100:
-        dynamic_size = 10.0
-    elif rendered_points <= 1000:
-        dynamic_size = 6.0
-    elif rendered_points <= 5000:
-        dynamic_size = 3.0
-    else:
-        dynamic_size = MIN_MARKER_SIZE
+    if rendered_points <= 20: dynamic_size = 14.0
+    elif rendered_points <= 100: dynamic_size = 10.0
+    elif rendered_points <= 1000: dynamic_size = 6.0
+    elif rendered_points <= 5000: dynamic_size = 3.0
+    else: dynamic_size = MIN_MARKER_SIZE
 
     safe_marker_size = max(dynamic_size, 2)
 
     fig, ax = plt.subplots(figsize=(18, 8))
-    
     clim_bounds = None
     c_used = None
     
@@ -395,7 +351,6 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         if len(valid_c) > 0 and len(valid_global_c) > 0:
             track_min = float(np.percentile(valid_global_c, 0.1))
             track_max = float(np.percentile(valid_global_c, 99.9))
-            
             c_min = float(np.percentile(valid_c, 0.1))
             c_max = float(np.percentile(valid_c, 99.9))
             
@@ -404,15 +359,13 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
                     c_min = float(c_trim_min)
                 if c_trim_max and str(c_trim_max).strip() and c_trim_max != "undefined":
                     c_max = float(c_trim_max)
-            except:
-                pass
+            except: pass
 
             if track_max <= track_min: track_max = track_min + 1e-10
             if c_max <= c_min: c_max = c_min + 1e-10
 
             x_pts = np.linspace(track_min, track_max, 256)
-            x_norm = (x_pts - c_min) / (c_max - c_min)
-            x_norm = np.clip(x_norm, 0, 1)
+            x_norm = np.clip((x_pts - c_min) / (c_max - c_min), 0, 1)
             
             orig_cmap = plt.get_cmap(cmap)
             custom_colors = orig_cmap(x_norm)
@@ -431,13 +384,10 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color=LINE_COLOUR, marker='o')
 
     info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
-    ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10,
-            verticalalignment='bottom', horizontalalignment='right',
-            bbox=dict(boxstyle='round,pad=0.5', facecolor=TEXT_BOX_BG, edgecolor='none'))
+    ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10, verticalalignment='bottom', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.5', facecolor=TEXT_BOX_BG, edgecolor='none'))
 
     if invert_y: ax.invert_yaxis()
-    if is_x_dt:
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %Y\n%H:%M'))
+    if is_x_dt: ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %Y\n%H:%M'))
     
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
@@ -455,14 +405,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     
     return {
         "image": f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
-        "plot_meta": {
-            "bbox": {"x0": float(bbox[0]), "y0": float(bbox[1]), "w": float(bbox[2]), "h": float(bbox[3])}, 
-            "xlim": xlim, 
-            "ylim": ylim, 
-            "is_x_dt": bool(is_x_dt),
-            "clim_bounds": clim_bounds,
-            "c_used": c_used
-        },
+        "plot_meta": { "bbox": {"x0": float(bbox[0]), "y0": float(bbox[1]), "w": float(bbox[2]), "h": float(bbox[3])}, "xlim": xlim, "ylim": ylim, "is_x_dt": bool(is_x_dt), "clim_bounds": clim_bounds, "c_used": c_used },
         "valid_points": int(len(plot_x)),
         "qc_applied": apply_qc
     }
