@@ -8,7 +8,7 @@ import time
 # --- Configurable Variables ---
 PORT = 8420 
 APP_MODULE = "glider_playground.app:app"
-BROWSER_DELAY = 1.5
+BROWSER_DELAY = 2.5
 LOG_LEVEL = "warning"
 SERVER_HOSTNAMES = ["raspberrypi", "server", "server.local"]
 # ------------------------------
