@@ -269,8 +269,10 @@ def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_x_dt, x_mi
             
     ds.close()
     return out
-
 def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False):
+    if c_var == "None":
+        c_var = ""
+
     glider_data = xr.open_dataset(filepath)
     
     actual_plot_x_var = x_var
@@ -300,7 +302,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
 
     if len(x_vals) == 0:
         glider_data.close()
-        raise ValueError("No data found for selected variables.")
+        return {"error": "No data found for selected variables."}
 
     valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
 
@@ -315,7 +317,18 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
                 qc_vals = data_dict[f"{v}_QC"]
                 valid_mask &= np.isin(qc_vals, allowed_flags)
 
-    # Capture the global valid colour range BEFORE applying X/Y zooms
+    if c_vals is not None:
+        if np.issubdtype(c_vals.dtype, np.datetime64):
+            c_vals_numeric = np.zeros(len(c_vals), dtype=float)
+            c_vals_numeric[:] = np.nan
+            valid_dt_mask = ~pd.isnull(c_vals)
+            c_vals_numeric[valid_dt_mask] = c_vals[valid_dt_mask].astype('datetime64[s]').astype(float)
+            c_vals = c_vals_numeric
+        else:
+            c_vals = c_vals.astype(float)
+            
+        valid_mask &= ~np.isnan(c_vals)
+
     global_valid_c = c_vals[valid_mask] if c_vals is not None else None
 
     is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
@@ -366,27 +379,26 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     else:
         dynamic_size = MIN_MARKER_SIZE
 
+    safe_marker_size = max(dynamic_size, 2)
+
     fig, ax = plt.subplots(figsize=(18, 8))
     
     clim_bounds = None
     c_used = None
     
     if cmap == 'black':
-        ax.plot(plot_x, plot_y, marker='.', linestyle='none', markersize=dynamic_size, color='black')
+        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color='black', marker='o')
     elif plot_c is not None:
-        valid_c = plot_c[~pd.isnull(plot_c)]
-        valid_global_c = global_valid_c[~pd.isnull(global_valid_c)]
+        valid_c = plot_c[~np.isnan(plot_c)]
+        valid_global_c = global_valid_c[~np.isnan(global_valid_c)]
         
         if len(valid_c) > 0 and len(valid_global_c) > 0:
-            # Lock the absolute limits to the entire dataset (for the UI slider track)
             track_min = float(np.percentile(valid_global_c, 0.1))
             track_max = float(np.percentile(valid_global_c, 99.9))
             
-            # Auto-scale the applied limits to the zoomed dataset (for contrast)
             c_min = float(np.percentile(valid_c, 0.1))
             c_max = float(np.percentile(valid_c, 99.9))
             
-            # Override with user slider values if they moved the handles
             try:
                 if c_trim_min and str(c_trim_min).strip() and c_trim_min != "undefined":
                     c_min = float(c_trim_min)
@@ -406,15 +418,17 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             custom_colors = orig_cmap(x_norm)
             new_cmap = matplotlib.colors.ListedColormap(custom_colors)
             
-            scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max)
+            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max, marker='o')
             plt.colorbar(scatter, label=c_var) 
             
             clim_bounds = [track_min, track_max]
             c_used = [c_min, c_max]
         else:
             c_min, c_max = 0.0, 1.0
-            scatter = ax.scatter(plot_x, plot_y, s=dynamic_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max)
+            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max, marker='o')
             plt.colorbar(scatter, label=c_var)
+    else:
+        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color=LINE_COLOUR, marker='o')
 
     info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
     ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10,
