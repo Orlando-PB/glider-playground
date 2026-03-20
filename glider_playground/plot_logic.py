@@ -207,6 +207,87 @@ def get_dataset_info(filepath):
         "time_stats": time_stats
     }
 
+def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max):
+    try:
+        glider_data = xr.open_dataset(filepath)
+
+        if x_var not in glider_data.variables or y_var not in glider_data.variables:
+            glider_data.close()
+            return {"error": "Variables not found"}
+
+        x_arr = glider_data[x_var].values.copy().ravel()
+        y_arr = glider_data[y_var].values.copy().ravel()
+
+        c_arr = None
+        if c_var and c_var in glider_data.variables:
+            c_arr = glider_data[c_var].values.copy().ravel()
+
+        lat_arr = glider_data["LATITUDE"].values.copy().ravel() if "LATITUDE" in glider_data.variables else None
+        lon_arr = glider_data["LONGITUDE"].values.copy().ravel() if "LONGITUDE" in glider_data.variables else None
+
+        time_name = "TIME"
+        if "TIME" not in glider_data.variables:
+            time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+            if time_vars: time_name = time_vars[0]
+
+        time_arr = glider_data[time_name].values.copy().ravel() if time_name in glider_data.variables else None
+
+        glider_data.close()
+
+        valid_mask = ~pd.isnull(x_arr) & ~pd.isnull(y_arr)
+        valid_idx = np.where(valid_mask)[0]
+
+        if len(valid_idx) == 0:
+            return {"error": "No valid data points"}
+
+        x_valid = x_arr[valid_mask]
+        y_valid = y_arr[valid_mask]
+
+        if is_dt:
+            x_numeric = x_valid.astype('datetime64[ms]').astype(float)
+        else:
+            x_numeric = x_valid.astype(float)
+
+        x_range = x_max - x_min if x_max != x_min else 1.0
+        y_range = y_max - y_min if y_max != y_min else 1.0
+
+        norm_x = (x_numeric - x_min) / x_range
+        norm_y = (y_valid - y_min) / y_range
+
+        target_norm_x = (x_val - x_min) / x_range
+        target_norm_y = (y_val - y_min) / y_range
+
+        distances = (norm_x - target_norm_x)**2 + (norm_y - target_norm_y)**2
+        best_idx_relative = np.argmin(distances)
+        original_idx = valid_idx[best_idx_relative]
+
+        res_x = x_arr[original_idx]
+        if is_dt:
+            res_x = str(pd.to_datetime(res_x))
+        else:
+            res_x = float(res_x)
+
+        result = {
+            "x": res_x,
+            "y": float(y_arr[original_idx]),
+            "lat": float(lat_arr[original_idx]) if lat_arr is not None and not pd.isnull(lat_arr[original_idx]) else None,
+            "lon": float(lon_arr[original_idx]) if lon_arr is not None and not pd.isnull(lon_arr[original_idx]) else None,
+        }
+
+        if c_arr is not None:
+            val = c_arr[original_idx]
+            result["c_val"] = float(val) if not pd.isnull(val) else None
+
+        if time_arr is not None:
+            val = time_arr[original_idx]
+            result["time_val"] = str(pd.to_datetime(val)) if not pd.isnull(val) else None
+
+        return result
+
+    except Exception as e:
+        return {"error": str(e)}
+    
+    
 def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False, filter_time=True):
     if c_var == "None":
         c_var = ""
