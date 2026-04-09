@@ -95,7 +95,9 @@ def _round_bounds(value: float, decimals: int = 2) -> float:
 def generate_3d_data(filepath: str):
     try:
         with xr.open_dataset(filepath) as ds:
-            df = ds[['LONGITUDE', 'LATITUDE', 'PRES']].to_dataframe().dropna()
+            available = [v for v in ['LONGITUDE', 'LATITUDE', 'PRES', 'TEMP'] if v in ds]
+            df = ds[available].to_dataframe().dropna(subset=['LONGITUDE', 'LATITUDE', 'PRES'])
+
             
             if df.empty:
                 return {"error": "Dataset contains no valid spatial data."}
@@ -150,6 +152,8 @@ def generate_3d_data(filepath: str):
                 "lon": df_sub['LONGITUDE'].tolist(),
                 "lat": df_sub['LATITUDE'].tolist(),
                 "elevation": (-df_sub['PRES']).tolist(),
+                # Returns temp if available, otherwise None so the frontend can fall back gracefully
+                "temp": df_sub['TEMP'].tolist() if 'TEMP' in df_sub.columns else None,
                 "bathy_lon": b_lon,
                 "bathy_lat": b_lat,
                 "bathy_z": b_z,

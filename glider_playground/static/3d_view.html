@@ -117,16 +117,25 @@
                     // ==========================================
                     // 3. THE GLIDER PATH
                     // ==========================================
+                    const hasTemp = data.temp && data.temp.length > 0;
+
                     traces.push({
-                        x: data.lon, y: data.lat, z: data.elevation, 
+                        x: data.lon, y: data.lat, z: data.elevation,
                         mode: 'lines',
-                        line: { 
-                            color: data.elevation, 
-                            colorscale: 'Portland',
+                        line: {
+                            color: hasTemp ? data.temp : data.elevation,
+                            colorscale: hasTemp ? [
+                                [0, '#313695'],   // cold — deep blue
+                                [0.25, '#74add1'],
+                                [0.5, '#ffffbf'],  // mid — pale yellow
+                                [0.75, '#f46d43'],
+                                [1, '#a50026']    // warm — deep red
+                            ] : 'Portland',
                             width: 5,
-                            reversescale: true
+                            reversescale: hasTemp ? false : true,
+
                         },
-                        type: 'scatter3d', name: 'Glider', hoverinfo: 'skip' 
+                        type: 'scatter3d', name: 'Glider', hoverinfo: 'skip'
                     });
 
                     // ==========================================
