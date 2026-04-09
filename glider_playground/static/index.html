@@ -224,17 +224,19 @@
 
 
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
-                    <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
+                <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
                     <div class="flex justify-between items-center">
                         <span class="font-bold text-gray-600 uppercase tracking-wider">Shared Dimension</span>
                         <span id="dimInfo" class="font-medium text-googleBlue">--</span>
                     </div>
                     <div id="timeStatsContainer" class="hidden flex-col gap-1 mt-1 text-[9px] text-gray-700 bg-white p-1.5 rounded border border-gray-300 shadow-inner"></div>
                 </div>
-                <div class="px-3 py-1 bg-gray-50 border-b border-gray-200 text-[9px] font-bold text-gray-400 uppercase tracking-wider flex justify-between shrink-0">
-                    <span>Variables</span>
+                <div class="flex border-b border-gray-200 bg-gray-50 text-[9px] font-bold uppercase tracking-wider shrink-0">
+                    <button id="tabVariables" class="flex-1 py-1 px-3 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">Variables</button>
+                    <button id="tabAttributes" class="flex-1 py-1 px-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
                 </div>
                 <div id="varList" class="flex flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+                <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
             </div>
         </div>
         
@@ -330,6 +332,9 @@
     </div>
 
     <script>
+        const tabVariables = document.getElementById('tabVariables');
+        const tabAttributes = document.getElementById('tabAttributes');
+        const attrList = document.getElementById('attrList');
         const ZOOM_DRAG_THRESHOLD = 10; 
         const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
         const applyQcCheck = document.getElementById('applyQc');
@@ -411,7 +416,8 @@
             preset_density: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true, delta: false },
             preset_chla: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true, delta: false },
             preset_doxy: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true, delta: false },
-            preset_bbp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true, delta: false }
+            preset_bbp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true, delta: false },
+            preset_ts: { x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false, delta: false }
         };
 
         const defaultPresetDefinitions = [
@@ -420,8 +426,79 @@
             { value: 'preset_density', text: 'Density Profile' },
             { value: 'preset_chla', text: 'Chlorophyll Profile' },
             { value: 'preset_doxy', text: 'Oxygen Profile' },
-            { value: 'preset_bbp', text: 'Optical Backscatter' }
+            { value: 'preset_bbp', text: 'Optical Backscatter' },
+            { value: 'preset_ts', text: 'T-S Diagram' }
         ];
+        let isFirstLoad = true;
+
+        function updateUrlState() {
+            const params = new URLSearchParams();
+            params.set('dataset', datasetSelect.value);
+            params.set('preset', plotPreset.value);
+            params.set('x', xSelect.value);
+            params.set('y', ySelect.value);
+            params.set('c', cVarSelect.value);
+            params.set('cmap', cmapInput.value);
+            params.set('delta', deltaCheck.checked);
+            params.set('dAxis', deltaAxis.value);
+            params.set('invY', document.getElementById('invertY').checked);
+            params.set('qc', applyQcCheck.checked);
+            params.set('qcFlags', qcFlagsInput.value);
+            params.set('filtTime', filterTimeCheck.checked);
+            params.set('all', plotAllCheck.checked);
+
+            if (trimStartInput.value) params.set('xMin', trimStartInput.value);
+            if (trimEndInput.value) params.set('xMax', trimEndInput.value);
+            if (yTrimMinInput.value) params.set('yMin', yTrimMinInput.value);
+            if (yTrimMaxInput.value) params.set('yMax', yTrimMaxInput.value);
+            if (cTrimMinInput.value) params.set('cMin', cTrimMinInput.value);
+            if (cTrimMaxInput.value) params.set('cMax', cTrimMaxInput.value);
+
+            const newUrl = `${window.location.pathname}?${params.toString()}`;
+            window.history.replaceState({}, '', newUrl);
+        }
+
+        function applyUrlState() {
+            const params = new URLSearchParams(window.location.search);
+            if (!params.has('x')) return; // No detailed state to apply
+
+            const setVal = (id, param) => { if (params.has(param)) document.getElementById(id).value = params.get(param); };
+            const setCheck = (id, param) => { if (params.has(param)) document.getElementById(id).checked = params.get(param) === 'true'; };
+
+            if (params.has('preset')) {
+                plotPreset.value = params.get('preset');
+                togglePresetUI();
+            }
+
+            setVal('xVar', 'x');
+            setVal('yVar', 'y');
+            setVal('cVar', 'c');
+            setVal('cmap', 'cmap');
+            updateCmapGradient(cmapInput.value);
+
+            setCheck('plotDelta', 'delta');
+            setVal('deltaAxis', 'dAxis');
+            deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none';
+
+            setCheck('invertY', 'invY');
+            setCheck('applyQc', 'qc');
+            setVal('qcFlags', 'qcFlags');
+            setCheck('filterTimeCheck', 'filtTime');
+            setCheck('plotAll', 'all');
+
+            qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
+
+            setVal('trimStartInput', 'xMin');
+            setVal('trimEndInput', 'xMax');
+            setVal('yTrimMinInput', 'yMin');
+            setVal('yTrimMaxInput', 'yMax');
+            setVal('cTrimMinInput', 'cMin');
+            setVal('cTrimMaxInput', 'cMax');
+
+            updateMetadataLabels();
+            const xInfo = variableCache.find(v => v.name === xSelect.value);
+            if (xInfo) isXDateTime = xInfo.type === 'datetime';
+        }
 
         function getCustomPresets() {
             try { return JSON.parse(localStorage.getItem(CUSTOM_PRESETS_KEY)) || {}; } 
@@ -922,6 +999,32 @@ function resetPlotState(fullReset = true) {
 
         let variableCache = [];
 
+        tabVariables.addEventListener('click', () => {
+            tabVariables.classList.replace('border-transparent', 'border-googleBlue');
+            tabVariables.classList.replace('text-gray-400', 'text-googleBlue');
+            tabVariables.classList.remove('hover:text-gray-600');
+            
+            tabAttributes.classList.replace('border-googleBlue', 'border-transparent');
+            tabAttributes.classList.replace('text-googleBlue', 'text-gray-400');
+            tabAttributes.classList.add('hover:text-gray-600');
+            
+            varList.classList.replace('hidden', 'flex');
+            attrList.classList.replace('flex', 'hidden');
+        });
+
+        tabAttributes.addEventListener('click', () => {
+            tabAttributes.classList.replace('border-transparent', 'border-googleBlue');
+            tabAttributes.classList.replace('text-gray-400', 'text-googleBlue');
+            tabAttributes.classList.remove('hover:text-gray-600');
+            
+            tabVariables.classList.replace('border-googleBlue', 'border-transparent');
+            tabVariables.classList.replace('text-googleBlue', 'text-gray-400');
+            tabVariables.classList.add('hover:text-gray-600');
+            
+            attrList.classList.replace('hidden', 'flex');
+            varList.classList.replace('flex', 'hidden');
+        });
+
         async function init() {
             try {
                 const cfgRes = await fetch('/api/config');
@@ -937,15 +1040,6 @@ function resetPlotState(fullReset = true) {
             await checkFilesAndTogglePrompt();
         }
 
-        async function handleDatasetChange() {
-            resetPlotState(true);
-            const filename = datasetSelect.value;
-            if (!filename) return;
-
-            await loadDatasetInfo(filename);
-            await loadMapImage();
-            await loadVariables();
-        }
 
         datasetSelect.addEventListener('change', handleDatasetChange);
 
@@ -975,7 +1069,7 @@ function resetPlotState(fullReset = true) {
                     }
                     
                     if (!ts.is_monotonic) {
-                        html += `<div class="mt-1 p-1.5 bg-red-50 text-googleRed border border-red-200 rounded flex items-start gap-1.5"><span class="material-symbols-outlined text-[14px]">warning</span><span class="leading-tight">Warning: TIME is not monotonically increasing (even after filtering).</span></div>`;
+                        html += `<div class="mt-1 p-1.5 bg-red-50 text-googleRed border border-red-200 rounded flex items-start gap-1.5"><span class="material-symbols-outlined text-[14px]">warning</span><span class="leading-tight">Warning: TIME is not monotonically increasing.</span></div>`;
                     }
                     tsContainer.innerHTML = html;
                 } else {
@@ -1015,12 +1109,26 @@ function resetPlotState(fullReset = true) {
                     });
                     icon.addEventListener('mouseleave', () => { customTooltip.style.opacity = '0'; });
                 });
+
+                attrList.innerHTML = '';
+                if (data.global_attributes && Object.keys(data.global_attributes).length > 0) {
+                    Object.entries(data.global_attributes).forEach(([key, val]) => {
+                        const row = document.createElement('div');
+                        row.className = 'flex flex-col px-3 py-1.5 border-b border-gray-100 text-[10px] hover:bg-blue-50/50 transition-colors';
+                        row.innerHTML = `
+                            <span class="text-gray-800 font-medium break-all">${key}</span>
+                            <span class="text-gray-500 break-words mt-0.5">${val}</span>
+                        `;
+                        attrList.appendChild(row);
+                    });
+                } else {
+                    attrList.innerHTML = '<div class="p-4 text-center text-gray-400 text-[10px]">No attributes found.</div>';
+                }
                 
                 datasetInfoContainer.classList.remove('hidden');
                 statsEmptyState.classList.add('hidden');
             } catch (e) { console.error("Failed to load dataset info:", e); }
         }
-
         async function fetchSparkline() {
             const dataset = datasetSelect.value;
             const x = xSelect.value; const y = ySelect.value;
@@ -1131,22 +1239,30 @@ function resetPlotState(fullReset = true) {
                     if (plotPreset.value === def.value) currentValid = true;
                 }
             });
+            
+            // Check if we are loading state from a shared URL
+            const params = new URLSearchParams(window.location.search);
+            const hasUrlState = isFirstLoad && params.has('x');
 
-            if (!currentValid || plotPreset.value === 'custom') {
-                plotPreset.value = firstValid || 'custom';
+            if (!hasUrlState) {
+                if (!currentValid || plotPreset.value === 'custom') {
+                    plotPreset.value = firstValid || 'custom';
+                }
+                
+                if (plotPreset.value !== 'custom') {
+                    applyPreset(plotPreset.value);
+                } else {
+                    xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
+                    ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
+                    cVarSelect.value = '';
+                    cmapInput.value = 'viridis';
+                    updateCmapGradient('viridis');
+                    document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
+                    updateMetadataLabels();
+                }
             }
             
-            if (plotPreset.value !== 'custom') {
-                applyPreset(plotPreset.value);
-            } else {
-                xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
-                ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
-                cVarSelect.value = '';
-                cmapInput.value = 'viridis';
-                updateCmapGradient('viridis');
-                document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
-                updateMetadataLabels();
-            }
+            togglePresetUI();
             
             togglePresetUI();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
@@ -1326,24 +1442,61 @@ function resetPlotState(fullReset = true) {
             datasetSelect.innerHTML = '';
             
             if (fileData.files.length === 0) {
-                // Show Demo Prompt, Hide the standard "Select Variables" message
                 demoPrompt.classList.remove('hidden');
                 emptyState.classList.add('hidden');
-                
                 datasetSelect.disabled = true;
                 plotBtn.disabled = true;
                 plotBtn.classList.add('opacity-50');
             } else {
-                // Hide Demo Prompt, Restore standard "Select Variables" message
                 demoPrompt.classList.add('hidden');
                 emptyState.classList.remove('hidden');
-                
                 datasetSelect.disabled = false;
                 plotBtn.disabled = false;
                 plotBtn.classList.remove('opacity-50');
                 
                 fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
+                
+                // Catch the dataset from the URL on first load
+                const params = new URLSearchParams(window.location.search);
+                if (isFirstLoad && params.has('dataset')) {
+                    const requestedFile = params.get('dataset');
+                    if (fileData.files.includes(requestedFile)) {
+                        datasetSelect.value = requestedFile;
+                    } else {
+                        // FIX: File is missing! Wipe the URL clean immediately.
+                        window.history.replaceState({}, '', window.location.pathname);
+                    }
+                }
+                
                 await handleDatasetChange();
+            }
+        }
+
+        async function handleDatasetChange() {
+            resetPlotState(true);
+            const filename = datasetSelect.value;
+            if (!filename) return;
+
+            await loadDatasetInfo(filename);
+            await loadMapImage();
+            await loadVariables();
+            
+            // Re-read params in case we just wiped them due to a missing file
+            const params = new URLSearchParams(window.location.search);
+            
+            if (isFirstLoad) {
+                isFirstLoad = false;
+                
+                if (params.has('x')) {
+                    // Valid URL state exists, apply it and auto-plot
+                    applyUrlState();
+                    updatePlot();
+                } else {
+                    // No URL state (or it was invalid and wiped), just push the default state to URL
+                    updateUrlState(); 
+                }
+            } else {
+                updateUrlState(); 
             }
         }
 
@@ -1373,7 +1526,8 @@ function resetPlotState(fullReset = true) {
 
         async function updatePlot() {
         if (isPlotting) { plotQueued = true; return; }
-
+        
+        updateUrlState();
         setLoading(true); 
         resetInspectorState(); 
         

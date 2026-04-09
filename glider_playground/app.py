@@ -87,7 +87,8 @@ def get_files():
     data_dir = state["DATA_DIR"]
     if not data_dir.exists():
         return {"files": []}
-    return {"files": [f for f in os.listdir(data_dir) if f.endswith('.nc')]}
+        
+    return {"files": [f.relative_to(data_dir).as_posix() for f in data_dir.rglob('*.nc')]}
 
 @app.get("/api/variables")
 def get_variables(filename: str):
@@ -121,7 +122,7 @@ def get_plot(
     trim_start: str = None, trim_end: str = None, 
     y_trim_min: str = None, y_trim_max: str = None,
     c_trim_min: str = None, c_trim_max: str = None,
-    apply_qc: bool = False, qc_flags: str = "1,2,5,8",
+    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False,
     plot_all: bool = False, filter_time: bool = True
 ):
     return plot_logic.generate_plot(
@@ -130,7 +131,8 @@ def get_plot(
         trim_start=trim_start, trim_end=trim_end,
         y_trim_min=y_trim_min, y_trim_max=y_trim_max,
         c_trim_min=c_trim_min, c_trim_max=c_trim_max,
-        apply_qc=apply_qc, qc_flags=qc_flags, plot_all=plot_all, filter_time=filter_time
+        apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, 
+        plot_all=plot_all, filter_time=filter_time
     )
 
 import httpx # You may need to: pip install httpx

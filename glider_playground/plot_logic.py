@@ -204,7 +204,8 @@ def get_dataset_info(filepath):
         "dimension_name": main_dim_name,
         "dimension_size": main_dim_size,
         "variables": variables,
-        "time_stats": time_stats
+        "time_stats": time_stats,
+        "global_attributes": {str(k): str(v) for k, v in ds.attrs.items()}
     }
 
 def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max):
@@ -287,8 +288,8 @@ def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_dt, x_min,
     except Exception as e:
         return {"error": str(e)}
     
-    
-def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", plot_all=False, filter_time=True):
+
+def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, plot_all=False, filter_time=True):
     if c_var == "None":
         c_var = ""
 
@@ -332,6 +333,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         return {"error": "No data found for selected variables."}
 
     valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
+    qc_pass_mask = np.ones(len(x_vals), dtype=bool)
 
     if apply_qc:
         try:
@@ -342,7 +344,10 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         for v in [actual_plot_x_var, y_var, x_var, c_var]:
             if v and f"{v}_QC" in data_dict:
                 qc_vals = data_dict[f"{v}_QC"]
-                valid_mask &= np.isin(qc_vals, allowed_flags)
+                qc_pass_mask &= np.isin(qc_vals, allowed_flags)
+
+        if not highlight_qc:
+            valid_mask &= qc_pass_mask
 
     if filter_time and actual_time_var in data_dict:
         t_vals = data_dict[actual_time_var]
@@ -372,7 +377,8 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             
         valid_mask &= ~np.isnan(c_vals)
 
-    global_valid_c = c_vals[valid_mask] if c_vals is not None else None
+    # Base the colorbar purely on data that passes QC to prevent outliers destroying the scale
+    global_valid_c = c_vals[valid_mask & qc_pass_mask] if c_vals is not None else None
 
     is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
     try:
@@ -396,6 +402,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     plot_x = x_vals[valid_mask]
     plot_y = y_vals[valid_mask]
     plot_c = c_vals[valid_mask] if c_vals is not None else None
+    plot_qc_pass = qc_pass_mask[valid_mask]
 
     total_valid_points = len(plot_x)
     
@@ -406,6 +413,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     if not plot_all and total_valid_points > MAX_RENDER_POINTS:
         step = total_valid_points // MAX_RENDER_POINTS
         plot_x, plot_y = plot_x[::step], plot_y[::step]
+        plot_qc_pass = plot_qc_pass[::step]
         if plot_c is not None: plot_c = plot_c[::step]
     
     rendered_points = len(plot_x)
@@ -422,9 +430,21 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     fig, ax = plt.subplots(figsize=(18, 8))
     clim_bounds = None
     c_used = None
+
+    if apply_qc and highlight_qc:
+        bad_x = plot_x[~plot_qc_pass]
+        bad_y = plot_y[~plot_qc_pass]
+        
+        plot_x = plot_x[plot_qc_pass]
+        plot_y = plot_y[plot_qc_pass]
+        if plot_c is not None: 
+            plot_c = plot_c[plot_qc_pass]
+
+        if len(bad_x) > 0:
+            ax.scatter(bad_x, bad_y, s=safe_marker_size**2, color='#b0b0b0', marker='o', alpha=0.5, zorder=1)
     
     if cmap == 'black':
-        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color='black', marker='o')
+        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color='black', marker='o', zorder=2)
     elif plot_c is not None:
         valid_c = plot_c[~np.isnan(plot_c)]
         valid_global_c = global_valid_c[~np.isnan(global_valid_c)]
@@ -452,17 +472,17 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             custom_colors = orig_cmap(x_norm)
             new_cmap = matplotlib.colors.ListedColormap(custom_colors)
             
-            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max, marker='o')
+            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max, marker='o', zorder=2)
             plt.colorbar(scatter, label=c_var) 
             
             clim_bounds = [track_min, track_max]
             c_used = [c_min, c_max]
         else:
             c_min, c_max = 0.0, 1.0
-            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max, marker='o')
+            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max, marker='o', zorder=2)
             plt.colorbar(scatter, label=c_var)
     else:
-        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color=LINE_COLOUR, marker='o')
+        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color=LINE_COLOUR, marker='o', zorder=2)
 
     info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
     ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10, verticalalignment='bottom', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.5', facecolor=TEXT_BOX_BG, edgecolor='none'))
