@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Ocean Chunk</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body { 
+            margin: 0; padding: 0; overflow: hidden; 
+            background-color: #f8f9fa; font-family: sans-serif;
+        }
+        #plot3d { width: 100vw; height: 100vh; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #1a73e8; font-size: 14px; font-weight: bold;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Awaiting Dataset...</div>
+    <div id="plot3d"></div>
+
+    <script>
+        // ==========================================
+        // CONFIGURATION VARIABLES
+        // ==========================================
+        const earthColour = '#c2b2a4';
+        const earthGradientEnd = '#e5d9cc';
+        const waterTopColour = '#90e0ef';
+        const waterBottomColour = '#004e89'; 
+        const waterOpacity = 0.4;
+        
+        const verticalExaggeration = 100;
+        
+        const idleDelayMs = 4000; // Resumes spinning 4s after you stop panning
+        const orbitSpeed = 0.0015;
+
+        // Parse the filename passed from the main app
+        const urlParams = new URLSearchParams(window.location.search);
+        const filename = urlParams.get('filename');
+
+        if (filename) {
+            document.getElementById('loading').textContent = "Rendering Ocean...";
+            
+            fetch(`/api/3d_data?filename=${encodeURIComponent(filename)}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+
+                    const traces = [];
+                    const minZ = Math.min(...data.bathy_z.flat());
+                    const baseZ = minZ - (Math.abs(minZ) * 0.15); 
+
+                    const xLen = data.bathy_lon.length;
+                    const yLen = data.bathy_lat.length;
+
+                    // ==========================================
+                    // GEOMETRY CALCULATION (Flush Boundaries)
+                    // ==========================================
+                    const tiny = 0.00001; 
+                    
+                    const lon0 = data.bathy_lon[0];
+                    const lon1 = data.bathy_lon[xLen - 1];
+                    const lat0 = data.bathy_lat[0];
+                    const lat1 = data.bathy_lat[yLen - 1];
+                    
+                    const zSouth = data.bathy_z[0];
+                    const zNorth = data.bathy_z[yLen - 1];
+                    const zWest = data.bathy_z.map(row => row[0]);
+                    const zEast = data.bathy_z.map(row => row[xLen - 1]);
+
+                    const noContours = { contours: { x: {show: false}, y: {show: false}, z: {show: false} } };
+
+                    // ==========================================
+                    // 1. THE SOLID EARTH BASE
+                    // ==========================================
+                    traces.push({
+                        x: data.bathy_lon, y: data.bathy_lat, z: data.bathy_z,
+                        type: 'surface', colorscale: [[0, earthColour], [1, earthGradientEnd]], 
+                        showscale: false, hoverinfo: 'skip',
+                        lighting: { ambient: 0.6, diffuse: 0.8, specular: 0.1, roughness: 0.6 },
+                        ...noContours
+                    });
+
+                    const earthWallConfig = {
+                        type: 'surface', colorscale: [[0, earthColour], [1, earthColour]],
+                        showscale: false, hoverinfo: 'skip',
+                        lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
+                        ...noContours
+                    };
+
+                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(baseZ), zSouth] });
+                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(baseZ)] });
+                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [baseZ, z]) });
+                    traces.push({ ...earthWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, baseZ]) });
+                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[baseZ, baseZ], [baseZ, baseZ]] });
+
+                    // ==========================================
+                    // 2. THE TRANSPARENT WATER COLUMN
+                    // ==========================================
+                    const waterWallConfig = {
+                        type: 'surface', 
+                        colorscale: [[0, waterBottomColour], [1, waterTopColour]], 
+                        cmin: baseZ, cmax: 0,
+                        opacity: waterOpacity, showscale: false, hoverinfo: 'skip',
+                        lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
+                        ...noContours
+                    };
+
+                    traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[0, 0], [0, 0]] });
+                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(0), zSouth] });
+                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(0)] });
+                    traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [0, z]) });
+                    traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, 0]) });
+
+                    // ==========================================
+                    // 3. THE GLIDER PATH
+                    // ==========================================
+                    traces.push({
+                        x: data.lon, y: data.lat, z: data.elevation, 
+                        mode: 'lines',
+                        line: { 
+                            color: data.elevation, 
+                            colorscale: 'Portland',
+                            width: 5,
+                            reversescale: true
+                        },
+                        type: 'scatter3d', name: 'Glider', hoverinfo: 'skip' 
+                    });
+
+                    // ==========================================
+                    // 4. TRUE-SCALE CALCULATION
+                    // ==========================================
+                    const METERS_PER_DEGREE = 111111;
+                    const avgLat = (data.bounds.max_lat + data.bounds.min_lat) / 2;
+                    
+                    const distY = (data.bounds.max_lat - data.bounds.min_lat) * METERS_PER_DEGREE;
+                    const distX = (data.bounds.max_lon - data.bounds.min_lon) * METERS_PER_DEGREE * Math.cos(avgLat * Math.PI / 180);
+                    const distZ = Math.abs(baseZ); 
+                    
+                    const maxHoriz = Math.max(distX, distY);
+                    const aspectX = distX / maxHoriz;
+                    const aspectY = distY / maxHoriz;
+                    const aspectZ = (distZ / maxHoriz) * verticalExaggeration;
+
+                    const noAxis = { showgrid: false, zeroline: false, showline: false, showticklabels: false, showbackground: false, title: '', visible: false };
+                    const layout = {
+                        hovermode: false,
+                        margin: { l: 0, r: 0, b: 0, t: 0 },
+                        paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                        scene: { xaxis: noAxis, yaxis: noAxis, zaxis: noAxis, aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { x: 2.5, y: -2.5, z: 1.5 } } },
+                        showlegend: false
+                    };
+
+                    const config = { displayModeBar: false, responsive: true };
+
+                    Plotly.newPlot('plot3d', traces, layout, config).then(() => {
+                        const plotDiv = document.getElementById('plot3d');
+                        
+                        // ==========================================
+                        // 5. SMART IDLE CAMERA ORBIT
+                        // ==========================================
+                        let lastInteractionTime = 0; // Starts at 0 to trigger immediately
+                        let currentEye = { x: 2.5, y: -2.5, z: 1.5 };
+
+                        const resetIdle = () => { lastInteractionTime = Date.now(); };
+                        
+                        plotDiv.on('plotly_relayout', (e) => {
+                            if (e && e['scene.camera'] && e['scene.camera'].eye) {
+                                currentEye = { ...currentEye, ...e['scene.camera'].eye };
+                            } else if (e && e['scene.camera.eye']) {
+                                currentEye = { ...currentEye, ...e['scene.camera.eye'] };
+                            }
+                        });
+
+                        // Note: mousemove is intentionally excluded here so hovering does not pause the spin
+                        plotDiv.addEventListener('mousedown', resetIdle, true);
+                        plotDiv.addEventListener('wheel', resetIdle, true);
+                        plotDiv.addEventListener('touchstart', resetIdle, true);
+                        plotDiv.addEventListener('touchmove', resetIdle, true); 
+
+                        let lastFrameTime = 0;
+
+                        function animate(time) {
+                            requestAnimationFrame(animate);
+                            
+                            if (Date.now() - lastInteractionTime < idleDelayMs) return; 
+                            if (time - lastFrameTime < 30) return; 
+                            
+                            lastFrameTime = time;
+
+                            const cx = currentEye.x;
+                            const cy = currentEye.y;
+                            const cz = currentEye.z;
+                            
+                            const r = Math.sqrt(cx*cx + cy*cy);
+                            let theta = Math.atan2(cy, cx);
+                            theta += orbitSpeed; 
+                            
+                            currentEye = {
+                                x: r * Math.cos(theta),
+                                y: r * Math.sin(theta),
+                                z: cz 
+                            };
+                            
+                            Plotly.relayout('plot3d', { 'scene.camera.eye': currentEye });
+                        }
+                        
+                        requestAnimationFrame(animate);
+                    });
+                })
+                .catch(err => {
+                    document.getElementById('loading').textContent = "Failed to load 3D data.";
+                    console.error(err);
+                });
+        }
+    </script>
+</body>
+</html>

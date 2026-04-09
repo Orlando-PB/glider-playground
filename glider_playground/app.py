@@ -10,13 +10,13 @@ from pathlib import Path
 
 from . import plot_logic
 from . import map_logic
+from . import ocean_3d
 
 app = FastAPI()
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-# Use a dictionary to store the current directory state dynamically
 state = {
     "DATA_DIR": Path.cwd() / "data"
 }
@@ -36,8 +36,7 @@ def open_data_folder():
     folder_path = ""
     
     try:
-        if system == "Darwin":  # macOS Native Dialog
-            # This AppleScript forces the native Mac folder picker to appear in front of the browser
+        if system == "Darwin":  
             cmd = [
                 "osascript", "-e", 
                 "tell application (path to frontmost application as text) to return POSIX path of (choose folder)"
@@ -45,7 +44,7 @@ def open_data_folder():
             result = subprocess.run(cmd, capture_output=True, text=True)
             folder_path = result.stdout.strip()
             
-        elif system == "Windows":  # Windows Tkinter Dialog
+        elif system == "Windows":  
             cmd = [
                 sys.executable, "-c",
                 "import tkinter as tk; from tkinter import filedialog; "
@@ -55,7 +54,7 @@ def open_data_folder():
             result = subprocess.run(cmd, capture_output=True, text=True)
             folder_path = result.stdout.strip()
             
-        else:  # Linux (Try Zenity, fallback to Tkinter)
+        else:  
             try:
                 result = subprocess.run(["zenity", "--file-selection", "--directory"], capture_output=True, text=True)
                 folder_path = result.stdout.strip()
@@ -135,7 +134,12 @@ def get_plot(
         plot_all=plot_all, filter_time=filter_time
     )
 
-import httpx # You may need to: pip install httpx
+@app.get("/api/3d_data")
+def get_3d_data(filename: str):
+    """Fetches the downsampled 3D bathymetry and glider path data."""
+    return ocean_3d.generate_3d_data(str(state["DATA_DIR"] / filename))
+
+import httpx
 
 @app.post("/api/download_demo")
 async def download_demo_files():
@@ -162,5 +166,6 @@ async def download_demo_files():
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8420, reload=True)

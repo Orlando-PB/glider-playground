@@ -117,6 +117,9 @@
                 <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1">
                     <input type="checkbox" id="applyQc" class="w-3.5 h-3.5 accent-googleBlue" checked> Apply QC Flags
                 </label>
+                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1" id="highlightQcLabel" style="display: none;">
+                    <input type="checkbox" id="highlightQcCheck" class="w-3.5 h-3.5 accent-googleBlue"> Highlight QC
+                </label>
                 <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1" title="Filters out NaNs, pre-deployment, and future dates">
                     <input type="checkbox" id="filterTimeCheck" class="w-3.5 h-3.5 accent-googleBlue" checked> Filter Bad Times
                 </label>
@@ -226,7 +229,6 @@
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
                 <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
                     <div class="flex justify-between items-center">
-                        <span class="font-bold text-gray-600 uppercase tracking-wider">Shared Dimension</span>
                         <span id="dimInfo" class="font-medium text-googleBlue">--</span>
                     </div>
                     <div id="timeStatsContainer" class="hidden flex-col gap-1 mt-1 text-[9px] text-gray-700 bg-white p-1.5 rounded border border-gray-300 shadow-inner"></div>
@@ -234,9 +236,13 @@
                 <div class="flex border-b border-gray-200 bg-gray-50 text-[9px] font-bold uppercase tracking-wider shrink-0">
                     <button id="tabVariables" class="flex-1 py-1 px-3 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">Variables</button>
                     <button id="tabAttributes" class="flex-1 py-1 px-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
+                    <button id="tab3D" class="flex-1 py-1 px-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">3D View</button>
                 </div>
                 <div id="varList" class="flex flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
                 <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+                <div id="view3DContainer" class="hidden flex-col w-full overflow-hidden bg-white flex-grow relative">
+                    <iframe id="iframe3D" src="/static/3d_view.html" class="w-full h-full border-none"></iframe>
+                </div>
             </div>
         </div>
         
@@ -334,10 +340,14 @@
     <script>
         const tabVariables = document.getElementById('tabVariables');
         const tabAttributes = document.getElementById('tabAttributes');
+        const tab3D = document.getElementById('tab3D');
         const attrList = document.getElementById('attrList');
+        const view3DContainer = document.getElementById('view3DContainer');
         const ZOOM_DRAG_THRESHOLD = 10; 
         const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
         const applyQcCheck = document.getElementById('applyQc');
+        const highlightQcCheck = document.getElementById('highlightQcCheck');
+        const highlightQcLabel = document.getElementById('highlightQcLabel');
         const filterTimeCheck = document.getElementById('filterTimeCheck');
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
@@ -443,6 +453,7 @@
             params.set('dAxis', deltaAxis.value);
             params.set('invY', document.getElementById('invertY').checked);
             params.set('qc', applyQcCheck.checked);
+            params.set('hlQc', highlightQcCheck.checked);
             params.set('qcFlags', qcFlagsInput.value);
             params.set('filtTime', filterTimeCheck.checked);
             params.set('all', plotAllCheck.checked);
@@ -482,6 +493,7 @@
 
             setCheck('invertY', 'invY');
             setCheck('applyQc', 'qc');
+            setCheck('highlightQcCheck', 'hlQc');
             setVal('qcFlags', 'qcFlags');
             setCheck('filterTimeCheck', 'filtTime');
             setCheck('plotAll', 'all');
@@ -999,31 +1011,31 @@ function resetPlotState(fullReset = true) {
 
         let variableCache = [];
 
-        tabVariables.addEventListener('click', () => {
-            tabVariables.classList.replace('border-transparent', 'border-googleBlue');
-            tabVariables.classList.replace('text-gray-400', 'text-googleBlue');
-            tabVariables.classList.remove('hover:text-gray-600');
-            
-            tabAttributes.classList.replace('border-googleBlue', 'border-transparent');
-            tabAttributes.classList.replace('text-googleBlue', 'text-gray-400');
-            tabAttributes.classList.add('hover:text-gray-600');
-            
-            varList.classList.replace('hidden', 'flex');
-            attrList.classList.replace('flex', 'hidden');
-        });
+        function switchTab(activeTabId) {
+            const tabs = [
+                { tab: tabVariables, content: varList },
+                { tab: tabAttributes, content: attrList },
+                { tab: tab3D, content: view3DContainer }
+            ];
 
-        tabAttributes.addEventListener('click', () => {
-            tabAttributes.classList.replace('border-transparent', 'border-googleBlue');
-            tabAttributes.classList.replace('text-gray-400', 'text-googleBlue');
-            tabAttributes.classList.remove('hover:text-gray-600');
-            
-            tabVariables.classList.replace('border-googleBlue', 'border-transparent');
-            tabVariables.classList.replace('text-googleBlue', 'text-gray-400');
-            tabVariables.classList.add('hover:text-gray-600');
-            
-            attrList.classList.replace('hidden', 'flex');
-            varList.classList.replace('flex', 'hidden');
-        });
+            tabs.forEach(t => {
+                if (t.tab.id === activeTabId) {
+                    t.tab.classList.replace('border-transparent', 'border-googleBlue');
+                    t.tab.classList.replace('text-gray-400', 'text-googleBlue');
+                    t.tab.classList.remove('hover:text-gray-600');
+                    t.content.classList.replace('hidden', 'flex');
+                } else {
+                    t.tab.classList.replace('border-googleBlue', 'border-transparent');
+                    t.tab.classList.replace('text-googleBlue', 'text-gray-400');
+                    t.tab.classList.add('hover:text-gray-600');
+                    t.content.classList.replace('flex', 'hidden');
+                }
+            });
+        }
+
+        tabVariables.addEventListener('click', () => switchTab('tabVariables'));
+        tabAttributes.addEventListener('click', () => switchTab('tabAttributes'));
+        tab3D.addEventListener('click', () => switchTab('tab3D'));
 
         async function init() {
             try {
@@ -1201,15 +1213,26 @@ function resetPlotState(fullReset = true) {
                 return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
             });
             
+            const params = new URLSearchParams(window.location.search);
+            const hasUrlState = isFirstLoad && params.has('x');
+
             if (!hasAnyQc) {
                 applyQcCheck.checked = false;
                 applyQcCheck.disabled = true;
                 applyQcCheck.parentElement.classList.add('opacity-40', 'cursor-not-allowed');
                 qcFlagsContainer.style.display = 'none';
+                
+                highlightQcCheck.checked = false;
+                highlightQcLabel.style.display = 'none';
             } else {
                 applyQcCheck.disabled = false;
                 applyQcCheck.parentElement.classList.remove('opacity-40', 'cursor-not-allowed');
                 qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
+                highlightQcLabel.style.display = applyQcCheck.checked ? 'flex' : 'none';
+                
+                if (!hasUrlState && isFirstLoad) {
+                    highlightQcCheck.checked = false;
+                }
             }
 
             const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
@@ -1241,9 +1264,6 @@ function resetPlotState(fullReset = true) {
             });
             
             // Check if we are loading state from a shared URL
-            const params = new URLSearchParams(window.location.search);
-            const hasUrlState = isFirstLoad && params.has('x');
-
             if (!hasUrlState) {
                 if (!currentValid || plotPreset.value === 'custom') {
                     plotPreset.value = firstValid || 'custom';
@@ -1261,8 +1281,6 @@ function resetPlotState(fullReset = true) {
                     updateMetadataLabels();
                 }
             }
-            
-            togglePresetUI();
             
             togglePresetUI();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
@@ -1310,8 +1328,10 @@ function resetPlotState(fullReset = true) {
 
         applyQcCheck.addEventListener('change', () => { 
             qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
+            highlightQcLabel.style.display = applyQcCheck.checked ? 'flex' : 'none';
             resetPlotState(false); 
         });
+        highlightQcCheck.addEventListener('change', () => resetPlotState(false));
 
         filterTimeCheck.addEventListener('change', () => { 
             resetPlotState(true); 
@@ -1481,18 +1501,25 @@ function resetPlotState(fullReset = true) {
             await loadMapImage();
             await loadVariables();
             
-            // Re-read params in case we just wiped them due to a missing file
+            // Set 3D View as the default active tab
+            switchTab('tab3D');
+
+            // Load the 3D Viewer iframe
+            const iframe3D = document.getElementById('iframe3D');
+            if (iframe3D) {
+                iframe3D.src = `/static/3d_view.html?filename=${encodeURIComponent(filename)}`;
+            }
+            
+            // Handle URL state and auto-plotting
             const params = new URLSearchParams(window.location.search);
             
             if (isFirstLoad) {
                 isFirstLoad = false;
                 
                 if (params.has('x')) {
-                    // Valid URL state exists, apply it and auto-plot
                     applyUrlState();
                     updatePlot();
                 } else {
-                    // No URL state (or it was invalid and wiped), just push the default state to URL
                     updateUrlState(); 
                 }
             } else {
@@ -1549,7 +1576,7 @@ function resetPlotState(fullReset = true) {
                 y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
                 c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
                 apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
-                plot_all: plotAllCheck.checked,
+                highlight_qc: highlightQcCheck.checked,
                 plot_all: plotAllCheck.checked,
                 filter_time: filterTimeCheck.checked
             });
@@ -1707,7 +1734,7 @@ function resetPlotState(fullReset = true) {
             }
         }
 
-        [xSelect, ySelect, cVarSelect, deltaCheck, deltaAxis, applyQcCheck, qcFlagsInput, plotAllCheck].forEach(el => {
+        [xSelect, ySelect, cVarSelect, deltaCheck, deltaAxis, applyQcCheck, highlightQcCheck, qcFlagsInput, plotAllCheck].forEach(el => {
             el.addEventListener('change', () => {
                 setCustomMode();
                 if (el === xSelect || el === ySelect) {
