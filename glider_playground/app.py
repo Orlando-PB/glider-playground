@@ -9,12 +9,11 @@ import os
 from pathlib import Path
 import time
 import logging
+import threading
+import httpx
 
 from . import plot_logic
-from . import map_logic
-from . import ocean_3d
-
-
+from . import spatial_logic
 
 app = FastAPI()
 
@@ -37,6 +36,9 @@ STATIC_DIR = BASE_DIR / "static"
 state = {
     "DATA_DIR": Path.cwd() / "data"
 }
+
+# This lock ensures only one thread can read from the NC files or use Matplotlib at a time
+data_lock = threading.Lock()
 
 STATIC_DIR.mkdir(exist_ok=True)
 state["DATA_DIR"].mkdir(exist_ok=True)
@@ -96,7 +98,13 @@ def open_data_folder():
 
 @app.get("/api/map")
 def get_map(filename: str):
-    return map_logic.generate_map_image(str(state["DATA_DIR"] / filename))
+    with data_lock:
+        return spatial_logic.generate_map_image(str(state["DATA_DIR"] / filename))
+
+@app.get("/api/3d_data")
+def get_3d_data(filename: str):
+    with data_lock:
+        return spatial_logic.generate_3d_data(str(state["DATA_DIR"] / filename))
 
 @app.get("/api/files")
 def get_files():
@@ -108,15 +116,18 @@ def get_files():
 
 @app.get("/api/variables")
 def get_variables(filename: str):
-    return {"variables": plot_logic.get_variables(str(state["DATA_DIR"] / filename))}
+    with data_lock:
+        return {"variables": plot_logic.get_variables(str(state["DATA_DIR"] / filename))}
 
 @app.get("/api/dataset_info")
 def get_dataset_info(filename: str):
-    return plot_logic.get_dataset_info(str(state["DATA_DIR"] / filename))
+    with data_lock:
+        return plot_logic.get_dataset_info(str(state["DATA_DIR"] / filename))
 
 @app.get("/api/sparkline")
 def get_sparkline(filename: str, x_var: str, y_var: str):
-    return plot_logic.generate_sparkline(str(state["DATA_DIR"] / filename), x_var, y_var)
+    with data_lock:
+        return plot_logic.generate_sparkline(str(state["DATA_DIR"] / filename), x_var, y_var)
     
 @app.get("/api/config")
 def get_config():
@@ -129,7 +140,8 @@ def get_hover(
     y_min: float = 0.0, y_max: float = 0.0
 ):
     is_dt = is_x_dt.lower() == 'true'
-    return plot_logic.get_nearest_point(str(state["DATA_DIR"] / filename), x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max)
+    with data_lock:
+        return plot_logic.get_nearest_point(str(state["DATA_DIR"] / filename), x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max)
 
 @app.get("/api/plot")
 def get_plot(
@@ -141,22 +153,16 @@ def get_plot(
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False,
     plot_all: bool = False, filter_time: bool = True
 ):
-    return plot_logic.generate_plot(
-        str(state["DATA_DIR"] / filename), x_var, y_var, c_var, cmap=cmap, 
-        plot_delta=plot_delta, delta_axis=delta_axis, invert_y=invert_y, 
-        trim_start=trim_start, trim_end=trim_end,
-        y_trim_min=y_trim_min, y_trim_max=y_trim_max,
-        c_trim_min=c_trim_min, c_trim_max=c_trim_max,
-        apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, 
-        plot_all=plot_all, filter_time=filter_time
-    )
-
-@app.get("/api/3d_data")
-def get_3d_data(filename: str):
-    """Fetches the downsampled 3D bathymetry and glider path data."""
-    return ocean_3d.generate_3d_data(str(state["DATA_DIR"] / filename))
-
-import httpx
+    with data_lock:
+        return plot_logic.generate_plot(
+            str(state["DATA_DIR"] / filename), x_var, y_var, c_var, cmap=cmap, 
+            plot_delta=plot_delta, delta_axis=delta_axis, invert_y=invert_y, 
+            trim_start=trim_start, trim_end=trim_end,
+            y_trim_min=y_trim_min, y_trim_max=y_trim_max,
+            c_trim_min=c_trim_min, c_trim_max=c_trim_max,
+            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, 
+            plot_all=plot_all, filter_time=filter_time
+        )
 
 @app.post("/api/download_demo")
 async def download_demo_files():

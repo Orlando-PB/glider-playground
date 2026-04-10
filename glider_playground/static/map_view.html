@@ -13,7 +13,6 @@
         #map { width: 100vw; height: 100vh; z-index: 1; }
         .leaflet-container { background: #a1cae6; }
         #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: #f8f9fa; }
-        #timings { position: absolute; bottom: 8px; right: 8px; z-index: 50; background: rgba(255, 255, 255, 0.9); padding: 4px 8px; border-radius: 4px; font-size: 9px; color: #555; box-shadow: 0 1px 3px rgba(0,0,0,0.2); pointer-events: none; border: 1px solid #e5e7eb; display: none; }
     </style>
 </head>
 <body>
@@ -23,20 +22,35 @@
     </div>
     
     <div id="map"></div>
-    
-    <div id="timings" class="flex flex-col gap-0.5">
-        <div class="flex justify-between gap-4"><span>Load:</span><span id="tLoad" class="font-bold"></span></div>
-        <div class="flex justify-between gap-4"><span>QC:</span><span id="tQc" class="font-bold"></span></div>
-        <div class="flex justify-between gap-4"><span>Format:</span><span id="tFormat" class="font-bold"></span></div>
-        <div class="w-full h-px bg-gray-200 my-0.5"></div>
-        <div class="flex justify-between gap-4 text-gray-800"><span>Total:</span><span id="tTotal" class="font-bold"></span></div>
-    </div>
 
     <script>
+        // --- Shared Console Logging ---
+        const consoleStyles = {
+            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
+            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
+        };
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(...args) {
+            const response = await originalFetch.apply(this, args);
+            const processTime = response.headers.get('X-Process-Time');
+            if (processTime) {
+                const timeInSeconds = parseFloat(processTime).toFixed(4);
+                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
+                const path = new URL(url, window.location.origin).pathname;
+                console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
+            }
+            return response;
+        };
+        // ------------------------------
+
         let map = null;
         let pathLine = null;
 
         async function initMap() {
+            const startTime = performance.now();
             const params = new URLSearchParams(window.location.search);
             const filename = params.get('filename');
             
@@ -57,8 +71,6 @@
 
                 if (!map) {
                     map = L.map('map', { zoomControl: false, attributionControl: false });
-                    
-                    // Swapped to Esri Ocean Basemap for lovely underwater contours
                     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
                         maxZoom: 13
                     }).addTo(map);
@@ -66,29 +78,21 @@
 
                 if (pathLine) map.removeLayer(pathLine);
 
-                // Add the shadow/border first
                 L.polyline(data.path, {
                     color: '#333333', weight: 5, opacity: 0.8, lineJoin: 'round'
                 }).addTo(map);
 
-                // Add the bright yellow path on top
                 pathLine = L.polyline(data.path, {
                     color: '#ffeb3b', weight: 2, opacity: 1, lineJoin: 'round'
                 }).addTo(map);
 
-                // The Magic Fix: maxZoom prevents it from zooming into the blue void
                 map.fitBounds(pathLine.getBounds(), { 
                     padding: [30, 30],
                     maxZoom: 6 
                 });
 
-                if (data.timings_seconds) {
-                    document.getElementById('tLoad').textContent = `${data.timings_seconds.load_data}s`;
-                    document.getElementById('tQc').textContent = `${data.timings_seconds.qc_processing}s`;
-                    document.getElementById('tFormat').textContent = `${data.timings_seconds.json_formatting}s`;
-                    document.getElementById('tTotal').textContent = `${data.timings_seconds.total}s`;
-                    document.getElementById('timings').style.display = 'flex';
-                }
+                const endTime = performance.now();
+                console.log(`%cRENDER%c2D Map Frontend%c${((endTime - startTime) / 1000).toFixed(4)}s`, consoleStyles.renderBadge, consoleStyles.path, consoleStyles.time);
 
             } catch (err) {
                 document.getElementById('loadingIcon').textContent = 'error';

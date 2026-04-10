@@ -10,21 +10,55 @@
             background-color: #f8f9fa; font-family: sans-serif;
         }
         #plot3d { width: 100vw; height: 100vh; }
-        #loading {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #1a73e8; font-size: 14px; font-weight: bold;
-            text-transform: uppercase; letter-spacing: 1px;
+        
+        #overlay { 
+            position: absolute; inset: 0; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px;
+            background: #f8f9fa; z-index: 50; 
+            transition: opacity 0.5s ease-in-out;
+            color: #6b7280; font-size: 11px;
         }
+        .spinner {
+            width: 24px; height: 24px;
+            border: 3px solid #e5e7eb;
+            border-top: 3px solid #1a73e8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div id="loading">Awaiting Dataset...</div>
+    <div id="overlay">
+        <div class="spinner" id="loadingIcon"></div>
+        <span id="statusText">Awaiting Dataset...</span>
+    </div>
+
     <div id="plot3d"></div>
 
     <script>
-        // ==========================================
-        // CONFIGURATION VARIABLES
-        // ==========================================
+        // --- Shared Console Logging ---
+        const consoleStyles = {
+            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
+            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
+        };
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(...args) {
+            const response = await originalFetch.apply(this, args);
+            const processTime = response.headers.get('X-Process-Time');
+            if (processTime) {
+                const timeInSeconds = parseFloat(processTime).toFixed(4);
+                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
+                const path = new URL(url, window.location.origin).pathname;
+                console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
+            }
+            return response;
+        };
+        // ------------------------------
+
         const earthColour = '#c2b2a4';
         const earthGradientEnd = '#e5d9cc';
         const waterTopColour = '#90e0ef';
@@ -33,21 +67,19 @@
         
         const verticalExaggeration = 100;
         
-        const idleDelayMs = 4000; // Resumes spinning 4s after you stop panning
+        const idleDelayMs = 4000; 
         const orbitSpeed = 0.0015;
 
-        // Parse the filename passed from the main app
         const urlParams = new URLSearchParams(window.location.search);
         const filename = urlParams.get('filename');
 
         if (filename) {
-            document.getElementById('loading').textContent = "Rendering Ocean...";
+            document.getElementById('statusText').textContent = "Rendering Ocean...";
+            const startTime = performance.now();
             
             fetch(`/api/3d_data?filename=${encodeURIComponent(filename)}`)
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('loading').style.display = 'none';
-
                     const traces = [];
                     const minZ = Math.min(...data.bathy_z.flat());
                     const baseZ = minZ - (Math.abs(minZ) * 0.15); 
@@ -55,9 +87,6 @@
                     const xLen = data.bathy_lon.length;
                     const yLen = data.bathy_lat.length;
 
-                    // ==========================================
-                    // GEOMETRY CALCULATION (Flush Boundaries)
-                    // ==========================================
                     const tiny = 0.00001; 
                     
                     const lon0 = data.bathy_lon[0];
@@ -72,9 +101,6 @@
 
                     const noContours = { contours: { x: {show: false}, y: {show: false}, z: {show: false} } };
 
-                    // ==========================================
-                    // 1. THE SOLID EARTH BASE
-                    // ==========================================
                     traces.push({
                         x: data.bathy_lon, y: data.bathy_lat, z: data.bathy_z,
                         type: 'surface', colorscale: [[0, earthColour], [1, earthGradientEnd]], 
@@ -96,9 +122,6 @@
                     traces.push({ ...earthWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, baseZ]) });
                     traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[baseZ, baseZ], [baseZ, baseZ]] });
 
-                    // ==========================================
-                    // 2. THE TRANSPARENT WATER COLUMN
-                    // ==========================================
                     const waterWallConfig = {
                         type: 'surface', 
                         colorscale: [[0, waterBottomColour], [1, waterTopColour]], 
@@ -114,9 +137,6 @@
                     traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [0, z]) });
                     traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, 0]) });
 
-                    // ==========================================
-                    // 3. THE GLIDER PATH
-                    // ==========================================
                     const hasTemp = data.temp && data.temp.length > 0;
 
                     traces.push({
@@ -125,11 +145,11 @@
                         line: {
                             color: hasTemp ? data.temp : data.elevation,
                             colorscale: hasTemp ? [
-                                [0, '#313695'],   // cold — deep blue
+                                [0, '#313695'],   
                                 [0.25, '#74add1'],
-                                [0.5, '#ffffbf'],  // mid — pale yellow
+                                [0.5, '#ffffbf'],  
                                 [0.75, '#f46d43'],
-                                [1, '#a50026']    // warm — deep red
+                                [1, '#a50026']    
                             ] : 'Portland',
                             width: 5,
                             reversescale: hasTemp ? false : true,
@@ -138,9 +158,6 @@
                         type: 'scatter3d', name: 'Glider', hoverinfo: 'skip'
                     });
 
-                    // ==========================================
-                    // 4. TRUE-SCALE CALCULATION
-                    // ==========================================
                     const METERS_PER_DEGREE = 111111;
                     const avgLat = (data.bounds.max_lat + data.bounds.min_lat) / 2;
                     
@@ -165,12 +182,17 @@
                     const config = { displayModeBar: false, responsive: true };
 
                     Plotly.newPlot('plot3d', traces, layout, config).then(() => {
+                        const endTime = performance.now();
+                        console.log(`%cRENDER%c3D Map Frontend%c${((endTime - startTime) / 1000).toFixed(4)}s`, consoleStyles.renderBadge, consoleStyles.path, consoleStyles.time);
+
+                        // Fade out the loading overlay
+                        const overlay = document.getElementById('overlay');
+                        overlay.style.opacity = '0';
+                        setTimeout(() => overlay.style.display = 'none', 500);
+
                         const plotDiv = document.getElementById('plot3d');
                         
-                        // ==========================================
-                        // 5. SMART IDLE CAMERA ORBIT
-                        // ==========================================
-                        let lastInteractionTime = 0; // Starts at 0 to trigger immediately
+                        let lastInteractionTime = 0;
                         let currentEye = { x: 2.5, y: -2.5, z: 1.5 };
 
                         const resetIdle = () => { lastInteractionTime = Date.now(); };
@@ -183,7 +205,6 @@
                             }
                         });
 
-                        // Note: mousemove is intentionally excluded here so hovering does not pause the spin
                         plotDiv.addEventListener('mousedown', resetIdle, true);
                         plotDiv.addEventListener('wheel', resetIdle, true);
                         plotDiv.addEventListener('touchstart', resetIdle, true);
@@ -220,7 +241,9 @@
                     });
                 })
                 .catch(err => {
-                    document.getElementById('loading').textContent = "Failed to load 3D data.";
+                    document.getElementById('loadingIcon').style.display = 'none';
+                    document.getElementById('statusText').style.color = '#ef4444';
+                    document.getElementById('statusText').textContent = "Failed to load 3D data.";
                     console.error(err);
                 });
         }
