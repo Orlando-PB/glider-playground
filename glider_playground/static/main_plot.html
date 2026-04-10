@@ -132,7 +132,6 @@
                 document.getElementById('statusText').style.color = '#ef4444';
                 document.getElementById('statusText').textContent = err.message || "Failed to load plot data.";
                 console.error(err);
-                // Send the error back to the parent to unlock the UI
                 window.parent.postMessage({ type: 'plotError', message: err.message }, '*');
             }
         }
@@ -153,10 +152,18 @@
             if (xRange) {
                 layout.xaxis.range = xRange;
                 layout.xaxis.autorange = false;
+            } else if (urlParams.has('zXmin') && urlParams.has('zXmax')) {
+                layout.xaxis.range = [urlParams.get('zXmin'), urlParams.get('zXmax')];
+                layout.xaxis.autorange = false;
             }
 
             if (yRange) {
                 layout.yaxis.range = isInverted ? [yRange[1], yRange[0]] : yRange;
+                layout.yaxis.autorange = false;
+            } else if (urlParams.has('zYmin') && urlParams.has('zYmax')) {
+                const zYmin = urlParams.get('zYmin');
+                const zYmax = urlParams.get('zYmax');
+                layout.yaxis.range = isInverted ? [zYmax, zYmin] : [zYmin, zYmax];
                 layout.yaxis.autorange = false;
             } else {
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
@@ -165,38 +172,63 @@
             return layout;
         }
 
-        function renderPlot() {
+        function createTraces(data) {
             const cmapName = urlParams.get('cmap') || 'viridis';
-            const isXDate = plotData.is_x_dt;
+            let traces = [];
 
+            if (data.qc_applied && urlParams.get('highlight_qc') === 'true') {
+                const gx=[], gy=[], gc=[], bx=[], by=[], bc=[];
+                for(let i=0; i<data.x.length; i++) {
+                    if(data.qc_pass[i]) {
+                        gx.push(data.x[i]); gy.push(data.y[i]); 
+                        gc.push(data.c ? data.c[i] : null);
+                    } else {
+                        bx.push(data.x[i]); by.push(data.y[i]);
+                        bc.push(data.c ? data.c[i] : null);
+                    }
+                }
+                
+                traces.push({
+                    x: bx, y: by, mode: 'markers', type: 'scattergl',
+                    marker: { size: plotConfig.defaultMarkerSize, color: '#9ca3af', opacity: 0.6 },
+                    hoverinfo: 'none', customdata: bc, name: 'Failed QC'
+                });
+                
+                traces.push({
+                    x: gx, y: gy, mode: 'markers', type: 'scattergl',
+                    marker: { 
+                        size: plotConfig.defaultMarkerSize, 
+                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: 0.8, 
+                        colorscale: gc.length && data.c ? (customColorscales[cmapName]||cmapName) : undefined, 
+                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false 
+                    },
+                    hoverinfo: 'none', customdata: gc, name: 'Passed QC'
+                });
+            } else {
+                traces.push({
+                    x: data.x, y: data.y, mode: 'markers', type: 'scattergl',
+                    marker: { 
+                        size: plotConfig.defaultMarkerSize, 
+                        color: data.c && data.c.length ? data.c : (cmapName === 'black' ? 'black' : plotConfig.defaultColour), 
+                        opacity: 0.8, 
+                        colorscale: data.c && data.c.length ? (customColorscales[cmapName]||cmapName) : undefined, 
+                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false 
+                    },
+                    hoverinfo: 'none', customdata: data.c || []
+                });
+            }
+            return traces;
+        }
+
+        function renderPlot() {
             _originalPlotData = plotData;
 
-            const mainTrace = {
-                x: plotData.x,
-                y: plotData.y,
-                mode: 'markers',
-                type: 'scattergl',
-                marker: { size: plotConfig.defaultMarkerSize, color: plotConfig.defaultColour, opacity: 0.8 },
-                hoverinfo: 'none' 
-            };
-
-            if (plotData.c && plotData.c.length > 0) {
-                mainTrace.marker.color = plotData.c;
-                mainTrace.marker.colorscale = customColorscales[cmapName] || cmapName;
-                mainTrace.marker.cauto = false; 
-                mainTrace.marker.showscale = false; 
-                mainTrace.marker.cmin = plotData.c_min;
-                mainTrace.marker.cmax = plotData.c_max;
-            } else if (cmapName === 'black') {
-                mainTrace.marker.color = 'black';
-            }
-
-            Plotly.newPlot('plotDiv', [mainTrace], buildLayout(null, null), { displayModeBar: false, responsive: true }).then(function(plotDiv) {
+            Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true }).then(function(plotDiv) {
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
 
-                if (isXDate) {
+                if (plotData.is_x_dt) {
                     let minTime = Infinity, maxTime = -Infinity;
                     for (let i = 0; i < plotData.x.length; i++) {
                         if (plotData.x[i] !== null) {
@@ -224,7 +256,7 @@
                         const pt = data.points[0];
                         window.parent.postMessage({
                             type: 'plotHover',
-                            point: { x: pt.x, y: pt.y, c: plotData.c ? plotData.c[pt.pointIndex] : null }
+                            point: { x: pt.x, y: pt.y, c: pt.customdata !== undefined ? pt.customdata : null }
                         }, '*');
                     }
                 });
@@ -261,24 +293,7 @@
                     clearTimeout(_pendingBounds);
                     if (_originalPlotData) {
                         plotData = _originalPlotData;
-                        const cmapName = urlParams.get('cmap') || 'viridis';
-                        const trace = {
-                            x: plotData.x, y: plotData.y,
-                            mode: 'markers', type: 'scattergl',
-                            marker: { size: plotConfig.defaultMarkerSize, color: plotConfig.defaultColour, opacity: 0.8 },
-                            hoverinfo: 'none'
-                        };
-                        if (plotData.c && plotData.c.length > 0) {
-                            trace.marker.color = plotData.c;
-                            trace.marker.colorscale = customColorscales[cmapName] || cmapName;
-                            trace.marker.cauto = false;
-                            trace.marker.showscale = false;
-                            trace.marker.cmin = plotData.c_min;
-                            trace.marker.cmax = plotData.c_max;
-                        } else if (cmapName === 'black') {
-                            trace.marker.color = 'black';
-                        }
-                        Plotly.react('plotDiv', [trace], buildLayout(null, null));
+                        Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
                         window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max }, '*');
                     }
                     return;
@@ -315,26 +330,11 @@
 
                 plotData = newData;
 
-                const cmapName = urlParams.get('cmap') || 'viridis';
-                const trace = {
-                    x: newData.x, y: newData.y,
-                    mode: 'markers', type: 'scattergl',
-                    marker: {
-                        size: plotConfig.defaultMarkerSize,
-                        color: newData.c && newData.c.length > 0 ? newData.c : plotConfig.defaultColour,
-                        colorscale: newData.c && newData.c.length > 0 ? (customColorscales[cmapName] || cmapName) : undefined,
-                        cauto: false, showscale: false,
-                        cmin: newData.c_min, cmax: newData.c_max,
-                        opacity: 0.8
-                    },
-                    hoverinfo: 'none'
-                };
-
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
                 const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
 
-                Plotly.react('plotDiv', [trace], buildLayout(xRange, yRange));
+                Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange));
 
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max }, '*');
 
@@ -362,7 +362,9 @@
             }
             
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
-                Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [0]);
+                // If dual trace, update the second trace (Passed QC)
+                const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
+                Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [traceIdx]);
             }
             
             if (msg.type === 'downloadPlot') {
@@ -404,7 +406,8 @@
                 const newCMin = calcCMin !== Infinity ? calcCMin : plotData.c_min;
                 const newCMax = calcCMax !== -Infinity ? calcCMax : plotData.c_max;
 
-                Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [0]);
+                const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
+                Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [traceIdx]);
                 window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
             }
         });

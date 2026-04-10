@@ -11,7 +11,13 @@ MAX_RENDER_POINTS = 200000
 def get_variables(filepath):
     if not os.path.exists(filepath):
         return []
-    glider_data = xr.open_dataset(filepath)
+    
+    try:
+        glider_data = xr.open_dataset(filepath)
+    except Exception as e:
+        print(f"Error opening {filepath}: {e}")
+        return []
+        
     variables = []
     for name, var in glider_data.variables.items():
         if len(var.dims) > 0:
@@ -32,7 +38,10 @@ def get_dataset_info(filepath):
     if not os.path.exists(filepath):
         return {"error": "File not found"}
     
-    nc = Dataset(filepath, 'r')
+    try:
+        nc = Dataset(filepath, 'r')
+    except Exception as e:
+        return {"error": f"Unable to read file: {e}"}
     
     dims = nc.dimensions
     main_dim_name = next(iter(dims)) if dims else "None"
@@ -53,11 +62,18 @@ def get_dataset_info(filepath):
         "variables": variables,
         "global_attributes": global_attrs
     }
+
 def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True):
     if c_var == "None":
         c_var = ""
 
-    glider_data = xr.open_dataset(filepath)
+    if not os.path.exists(filepath):
+        return {"error": "File not found"}
+
+    try:
+        glider_data = xr.open_dataset(filepath)
+    except Exception as e:
+        return {"error": f"Failed to read dataset: {e}"}
     
     data_dict = {}
     vars_to_extract = {x_var, y_var}
@@ -108,7 +124,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
             c_vals = c_vals.astype(float)
         current_mask &= ~np.isnan(c_vals)
         
-    # Cast to int to prevent FastAPI jsonable_encoder crash
     stats["nan_removed"] = int(stats["total"] - current_mask.sum())
 
     if filter_time and actual_time_var in data_dict:
@@ -134,7 +149,9 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
                 qc_vals = data_dict[f"{v}_QC"]
                 qc_pass_mask &= np.isin(qc_vals, allowed_flags)
 
-        if not highlight_qc:
+        if highlight_qc:
+            stats["qc_removed"] = int((current_mask & ~qc_pass_mask).sum())
+        else:
             old_sum = current_mask.sum()
             current_mask &= qc_pass_mask
             stats["qc_removed"] = int(old_sum - current_mask.sum())
@@ -185,15 +202,23 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "c_min": c_min,
         "c_max": c_max,
         "qc_applied": apply_qc,
+        "qc_pass": plot_qc.tolist() if apply_qc else [],
         "stats": stats
     }
+
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", 
                           highlight_qc=False, filter_time=True,
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False):
     if c_var == "None":
         c_var = ""
 
-    glider_data = xr.open_dataset(filepath)
+    if not os.path.exists(filepath):
+        return {"error": "File not found"}
+
+    try:
+        glider_data = xr.open_dataset(filepath)
+    except Exception as e:
+        return {"error": f"Failed to read dataset: {e}"}
     
     data_dict = {}
     vars_to_extract = {x_var, y_var}
@@ -302,5 +327,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
             c_max = float(np.nanpercentile(valid_c, 99.9))
 
     glider_data.close()
-    return {"x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
-            "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc}
+    return {
+        "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
+        "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,
+        "qc_pass": plot_qc.tolist() if apply_qc else []
+    }

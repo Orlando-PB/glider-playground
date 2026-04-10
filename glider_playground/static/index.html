@@ -41,19 +41,24 @@
             position: fixed; background-color: #202124; color: #ffffff; padding: 6px 10px;
             border-radius: 4px; font-size: 11px; pointer-events: none; opacity: 0;
             transition: opacity 0.15s ease-in-out; z-index: 9999; white-space: normal;
-            max-width: 220px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); line-height: 1.4;
+            max-width: 220px; line-height: 1.4; border: 1px solid #5f6368;
         }
 
         .toggle-btn {
-            background-color: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db;
+            background-color: #f1f3f4; color: #5f6368; border: none; transition: background-color 0.2s, color 0.2s;
+        }
+        .toggle-btn:hover {
+            background-color: #e8eaed; color: #202124;
         }
         .toggle-btn.active {
-            background-color: #1a73e8; color: #ffffff; border-color: #1a73e8;
+            background-color: #1a73e8; color: #ffffff;
         }
 
-        .preset-btn { opacity: 0.8; transition: opacity 0.2s, transform 0.1s; }
-        .preset-btn:hover { opacity: 1; }
-        .preset-btn.active { opacity: 1; ring: 2px; ring-color: #1a73e8; transform: scale(1.05); font-weight: bold;}
+        .preset-btn { transition: filter 0.2s, transform 0.2s; cursor: pointer; }
+        .preset-btn:not(:disabled):hover { filter: brightness(0.95); }
+        .preset-btn:not(:disabled).active { transform: scale(1.05); }
+        .preset-btn:not(:disabled).active .preset-text { text-decoration: underline; text-underline-offset: 2px; }
+        .preset-btn:disabled { opacity: 0.35 !important; filter: grayscale(100%); cursor: not-allowed; }
     </style>
 </head>
 <body class="overflow-hidden">
@@ -61,12 +66,12 @@
 
     <nav class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
         <div class="flex flex-wrap items-center justify-between px-4 py-1.5 gap-3 w-full border-b border-gray-200/60">
-            <div class="flex items-center gap-3 flex-wrap">
-                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300">
+            <div class="flex items-center gap-3 flex-wrap flex-1 min-w-0">
+                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 mr-1 pr-3 border-r border-gray-300 shrink-0">
                     <img src="/static/icon.png" alt="Logo" class="w-5 h-5"> Glider Playground
                 </div>
 
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-1 shrink-0">
                     <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Dataset</label>
                     <select id="dataset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-44 outline-none transition-all"></select>
                     <button id="openFolderBtn" class="p-1.5 text-gray-400 hover:text-googleBlue transition-colors flex items-center" title="Open Data Folder">
@@ -74,15 +79,17 @@
                     </button>
                 </div>
 
-                <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1 overflow-hidden">
+                <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1 overflow-hidden flex-1 min-w-0">
                     <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider shrink-0">Views</label>
-                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto pb-1 max-w-[400px]"></div>
+                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto flex-nowrap py-1 flex-1 min-w-0 custom-scrollbar transition-opacity duration-200"></div>
                 </div>
             </div>
 
-            <div class="flex gap-2 items-center ml-auto">
-                <button id="plotBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm"><span class="material-symbols-outlined text-[14px]">scatter_plot</span> Plot</button>
-                <button id="downloadBtn" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm transition-colors hidden" title="Download Plot">
+            <div class="flex gap-2 items-center ml-auto shrink-0">
+                <button id="resetBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 border-none px-3 py-1.5 font-medium flex items-center gap-1 transition-colors rounded" title="Reset to Default Thermal Plot">
+                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset Plot
+                </button>
+                <button id="downloadBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 border-none px-3 py-1.5 font-medium flex items-center gap-1 transition-colors rounded hidden" title="Download Plot">
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
             </div>
@@ -99,20 +106,20 @@
             </div>
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
-                <button id="invertYBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm">Invert Y</button>
+                <button id="invertYBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded">Invert Y</button>
 
                 <div class="border-l border-gray-300 pl-3 ml-1 flex items-center gap-2">
-                    <button id="filterTimeBtn" class="toggle-btn active px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm" title="Filters out NaNs, pre-deployment, and future dates">Filter Bad Time</button>
+                    <button id="filterTimeBtn" class="toggle-btn active px-3 py-1.5 text-[10px] font-bold uppercase rounded" title="Filters out NaNs, pre-deployment, and future dates">Filter Bad Time</button>
                     
-                    <button id="applyQcBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm">Apply QC</button>
+                    <button id="applyQcBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded">Apply QC</button>
                     
-                    <button id="highlightQcBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm" style="display: none;">Highlight</button>
+                    <button id="highlightQcBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded" style="display: none;">Highlight Bad QC</button>
                     
                     <div id="qcFlagsContainer" class="flex items-center gap-1 relative group" style="display: none;">
                         <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
                             Flags <span class="material-symbols-outlined text-[12px]">info</span>
                         </span>
-                        <div class="absolute top-[120%] left-0 hidden group-hover:block bg-[#202124] text-white text-[10px] p-3 rounded shadow-xl w-[340px]">
+                        <div class="absolute top-[120%] left-0 hidden group-hover:block bg-[#202124] text-white text-[10px] p-3 rounded w-[340px] border border-gray-700 z-50">
                             <table class="w-full text-left border-collapse leading-tight">
                                 <tbody>
                                     <tr><td class="font-bold pr-2 py-0.5 align-top">0</td><td class="py-0.5 text-gray-300">No QC performed.</td></tr>
@@ -128,7 +135,7 @@
                                 </tbody>
                             </table>
                         </div>
-                        <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors" title="Comma-separated list of allowed QC flags">
+                        <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors rounded" title="Comma-separated list of allowed QC flags">
                     </div>
                 </div>
             </div>
@@ -140,22 +147,22 @@
                 </select>
                 
                 <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border border-gray-200 flex items-center px-1 cursor-pointer focus:ring-1 ring-googleBlue" style="background: linear-gradient(to right, #440154, #21918c, #fde725);" aria-haspopup="true" aria-expanded="false"></button>
-                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-24 max-h-48 overflow-y-auto bg-white border border-gray-200 shadow-xl hidden z-50 py-1 flex-col custom-scrollbar">
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="viridis" style="background: linear-gradient(to right, #440154, #482878, #3e4a89, #31688e, #26828e, #1f9e89, #35b779, #6ece58, #b5de2b, #fde725);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="viridis_r" style="background: linear-gradient(to right, #fde725, #b5de2b, #6ece58, #35b779, #1f9e89, #26828e, #31688e, #3e4a89, #482878, #440154);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="plasma" style="background: linear-gradient(to right, #0d0887, #46039f, #7201a8, #9c179e, #bd3786, #d8576b, #ed7953, #fb9f3a, #fdca26, #f0f921);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="plasma_r" style="background: linear-gradient(to right, #f0f921, #fdca26, #fb9f3a, #ed7953, #d8576b, #bd3786, #9c179e, #7201a8, #46039f, #0d0887);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="inferno" style="background: linear-gradient(to right, #000004, #1b0c41, #4a0c6b, #781c6d, #a52c60, #cf4446, #ed6925, #fb9b06, #f7d03c, #fcffa4);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="magma" style="background: linear-gradient(to right, #000004, #180f3d, #440f76, #721f81, #9e2f7f, #cd4071, #f1605d, #fd9668, #feca8d, #fcfdbf);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="cividis" style="background: linear-gradient(to right, #00204d, #00336f, #39486b, #575c6d, #707173, #8a8779, #a69d75, #c4b56c, #e4ce5b, #ffea46);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="YlGnBu" style="background: linear-gradient(to right, #ffffd9, #edf8b1, #c7e9b4, #7fcdbb, #41b6c4, #1d91c0, #225ea8, #253494, #081d58);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="YlGnBu_r" style="background: linear-gradient(to right, #081d58, #253494, #225ea8, #1d91c0, #41b6c4, #7fcdbb, #c7e9b4, #edf8b1, #ffffd9);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="Spectral_r" style="background: linear-gradient(to right, #5e4fa2, #3288bd, #66c2a5, #abdda4, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d53e4f, #9e0142);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="coolwarm" style="background: linear-gradient(to right, #3b4cc0, #6788ee, #9abbff, #c9d7f0, #edd1c2, #f7a889, #e26952, #b40426);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="coolwarm_r" style="background: linear-gradient(to right, #b40426, #e26952, #f7a889, #edd1c2, #c9d7f0, #9abbff, #6788ee, #3b4cc0);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="RdBu_r" style="background: linear-gradient(to right, #053061, #2166ac, #4393c3, #92c5de, #d1e5f0, #f7f7f7, #fddbc7, #f4a582, #d6604d, #b2182b, #67001f);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer hover:ring-1 ring-googleBlue outline-none focus:ring-1" data-val="black" style="background: #000000;"></button>
+                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #440154, #21918c, #fde725);" aria-haspopup="true" aria-expanded="false"></button>
+                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-24 max-h-48 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded">
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="viridis" style="background: linear-gradient(to right, #440154, #482878, #3e4a89, #31688e, #26828e, #1f9e89, #35b779, #6ece58, #b5de2b, #fde725);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="viridis_r" style="background: linear-gradient(to right, #fde725, #b5de2b, #6ece58, #35b779, #1f9e89, #26828e, #31688e, #3e4a89, #482878, #440154);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="plasma" style="background: linear-gradient(to right, #0d0887, #46039f, #7201a8, #9c179e, #bd3786, #d8576b, #ed7953, #fb9f3a, #fdca26, #f0f921);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="plasma_r" style="background: linear-gradient(to right, #f0f921, #fdca26, #fb9f3a, #ed7953, #d8576b, #bd3786, #9c179e, #7201a8, #46039f, #0d0887);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="inferno" style="background: linear-gradient(to right, #000004, #1b0c41, #4a0c6b, #781c6d, #a52c60, #cf4446, #ed6925, #fb9b06, #f7d03c, #fcffa4);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="magma" style="background: linear-gradient(to right, #000004, #180f3d, #440f76, #721f81, #9e2f7f, #cd4071, #f1605d, #fd9668, #feca8d, #fcfdbf);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="cividis" style="background: linear-gradient(to right, #00204d, #00336f, #39486b, #575c6d, #707173, #8a8779, #a69d75, #c4b56c, #e4ce5b, #ffea46);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="YlGnBu" style="background: linear-gradient(to right, #ffffd9, #edf8b1, #c7e9b4, #7fcdbb, #41b6c4, #1d91c0, #225ea8, #253494, #081d58);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="YlGnBu_r" style="background: linear-gradient(to right, #081d58, #253494, #225ea8, #1d91c0, #41b6c4, #7fcdbb, #c7e9b4, #edf8b1, #ffffd9);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="Spectral_r" style="background: linear-gradient(to right, #5e4fa2, #3288bd, #66c2a5, #abdda4, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d53e4f, #9e0142);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="coolwarm" style="background: linear-gradient(to right, #3b4cc0, #6788ee, #9abbff, #c9d7f0, #edd1c2, #f7a889, #e26952, #b40426);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="coolwarm_r" style="background: linear-gradient(to right, #b40426, #e26952, #f7a889, #edd1c2, #c9d7f0, #9abbff, #6788ee, #3b4cc0);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="RdBu_r" style="background: linear-gradient(to right, #053061, #2166ac, #4393c3, #92c5de, #d1e5f0, #f7f7f7, #fddbc7, #f4a582, #d6604d, #b2182b, #67001f);"></button>
+                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="black" style="background: #000000;"></button>
                     </div>
                 </div>
                 <input type="hidden" id="cmap" value="viridis">
@@ -179,7 +186,7 @@
                     <div class="flex items-center gap-1">
                         <span class="text-[9px] font-bold text-googleBlue uppercase tracking-wider">Inspector</span>
                     </div>
-                    <button id="resetInspectorBtn" class="text-[9px] bg-white border border-gray-200 hover:bg-gray-50 px-1.5 py-0.5 shadow-sm text-gray-600 hidden">Reset</button>
+                    <button id="resetInspectorBtn" class="text-[9px] bg-white hover:bg-gray-50 px-1.5 py-0.5 text-gray-600 hidden rounded border-none">Reset</button>
                 </div>
                 <div class="grid grid-cols-2 gap-x-2 gap-y-1">
                     <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hxLabel">X Value</span><span id="hxVal" class="font-medium text-gray-800 truncate transition-opacity">--</span></div>
@@ -195,17 +202,18 @@
 
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
                 
-                <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700 bg-white border-b border-gray-200 shadow-sm shrink-0">
-                    </div>
+                <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700 bg-white border-b border-gray-200 shrink-0"></div>
 
                 <div class="flex border-b border-gray-200 bg-gray-50 text-[9px] font-bold uppercase tracking-wider shrink-0">
-                    <button id="tab3D" class="flex-1 py-1 px-2 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">3D View</button>
-                    <button id="tabVariables" class="flex-1 py-1 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Variables</button>
-                    <button id="tabAttributes" class="flex-1 py-1 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
+                    <button id="tab3D" class="flex-1 py-2 px-2 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">3D View</button>
+                    <button id="tabVariables" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Variables</button>
+                    <button id="tabAttributes" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
                 </div>
                 
-                <div id="view3DContainer" class="flex flex-col w-full overflow-hidden bg-gray-900 flex-grow relative aspect-square">
-                    <iframe id="iframe3D" src="/static/3d_view.html" class="w-full h-full border-none"></iframe>
+                <div id="view3DContainer" class="flex flex-col w-full flex-grow overflow-visible items-center justify-center">
+                    <div style="aspect-ratio: 1/1; max-height: 100%; max-width: 100%; display: flex;" class="w-full">
+                        <iframe id="iframe3D" src="/static/3d_view.html" class="w-full h-full border-none"></iframe>
+                    </div>
                 </div>
                 <div id="varList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
                 <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
@@ -224,37 +232,37 @@
                             <p class="text-sm text-gray-500 mt-2">No NetCDF (.nc) files found.</p>
                             <p class="text-[10px] text-gray-400">Select a different folder or try the demo data.</p>
                         </div>
-                        <button id="downloadDemoBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-6 py-2.5 rounded text-xs font-medium transition-colors flex items-center gap-2 shadow-sm">
+                        <button id="downloadDemoBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-6 py-2.5 rounded text-xs font-medium transition-colors flex items-center gap-2 border-none">
                             <span class="material-symbols-outlined text-sm">cloud_download</span>
                             Download Demo Files
                         </button>
                     </div>
 
-                    <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border border-green-200 text-[10px] font-bold px-2 py-1 rounded shadow-sm z-30 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
+                    <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border-none text-[10px] font-bold px-3 py-1.5 rounded flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
                         <span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied
                     </div>
 
                     <div id="emptyState" class="text-gray-400 flex flex-col items-center gap-2 absolute inset-0 m-auto h-fit pointer-events-none">
                         <span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span>
-                        <p class="text-sm">Select variables and click Plot</p>
+                        <p class="text-sm">Select variables to Plot</p>
                     </div>
                 </div>
 
                 <div id="cTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
                     <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Colour</span>
-                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Max">
+                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
                         <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
                         <div class="absolute h-full w-full cursor-pointer z-10" id="cTrimTrack">
                             <div class="absolute w-full opacity-100 rounded-t" id="cTrimTopMask" style="top: 0%; height: 0%; background: #fde725;"></div>
                             <div class="absolute w-full opacity-100 rounded-b" id="cTrimBottomMask" style="bottom: 0%; height: 0%; background: #440154;"></div>
-                            <div class="absolute w-6 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="cTrimTopHandle" style="left: 50%; top: 0%; transform: translate(-50%, -50%); border-radius: 4px;"></div>
-                            <div class="absolute w-6 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="cTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%); border-radius: 4px;"></div>
+                            <div class="absolute w-6 h-3 bg-gray-400 cursor-grab transition-colors z-20 rounded border-none" id="cTrimTopHandle" style="left: 50%; top: 0%; transform: translate(-50%, -50%);"></div>
+                            <div class="absolute w-6 h-3 bg-gray-400 cursor-grab transition-colors z-20 rounded border-none" id="cTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%);"></div>
                         </div>
                     </div>
-                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Min">
-                    <button id="autoColorBtn" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 px-1 py-1 text-[9px] font-medium transition-colors rounded shadow-sm w-full">Auto</button>
-                    <button id="resetColorBtn" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 px-1 py-1 text-[9px] font-medium transition-colors rounded shadow-sm w-full">Reset</button>
+                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center rounded" placeholder="Min">
+                    <button id="autoColorBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-1 py-1 text-[9px] font-medium transition-colors rounded w-full border-none">Auto</button>
+                    <button id="resetColorBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-1 py-1 text-[9px] font-medium transition-colors rounded w-full border-none">Reset</button>
                 </div>
 
             </div>
@@ -278,7 +286,7 @@
         const qcFlagsInput = document.getElementById('qcFlags');
         const downloadBtn = document.getElementById('downloadBtn');
         
-        const datasetSelect = document.getElementById('dataset'), plotBtn = document.getElementById('plotBtn');
+        const datasetSelect = document.getElementById('dataset'), resetBtn = document.getElementById('resetBtn');
         const plotIframe = document.getElementById('plotIframe');
         const plotAreaWrapper = document.getElementById('plotAreaWrapper');
         const qcBadge = document.getElementById('qcBadge');
@@ -314,18 +322,18 @@
         
         let isPlotting = false;
         let plotQueued = false;
-        let currentPreset = 'custom';
+        let currentPreset = 'preset_temp';
         
         let isDraggingCTop = false, isDraggingCBottom = false;
 
         const OceanPresets = {
-            preset_temp: { text: 'Thermal', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
-            preset_sal: { text: 'Salinity', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
-            preset_density: { text: 'Density', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
-            preset_chla: { text: 'Chlorophyll', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
-            preset_doxy: { text: 'Oxygen', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
-            preset_bbp: { text: 'Backscatter', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true },
-            preset_ts: { text: 'T-S Diagram', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false }
+            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
+            preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false },
+            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
+            preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
+            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
+            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true }
         };
 
         let isFirstLoad = true;
@@ -340,7 +348,6 @@
             
             if (msg.type === 'plotLoaded') {
                 setLoading(false);
-                currentZoomBounds = null;
 
                 if (plotQueued) { plotQueued = false; updatePlot(); return; }
 
@@ -352,8 +359,15 @@
                     cTrimContainer.classList.replace('flex', 'hidden');
                 }
 
-                if (msg.qc_applied) qcBadge.classList.remove('hidden');
-                else qcBadge.classList.add('hidden');
+                if (msg.qc_applied && highlightQcBtn.classList.contains('active')) {
+                    qcBadge.innerHTML = `<span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Highlighted`;
+                    qcBadge.classList.remove('hidden');
+                } else if (msg.qc_applied) {
+                    qcBadge.innerHTML = `<span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied`;
+                    qcBadge.classList.remove('hidden');
+                } else {
+                    qcBadge.classList.add('hidden');
+                }
                 
                 if (msg.stats) {
                     plotStatsContainer.classList.remove('hidden');
@@ -362,7 +376,7 @@
                     if (msg.stats.nan_removed > 0 || msg.stats.qc_removed > 0 || msg.stats.time_removed > 0) {
                         html += `<div class="border-t border-gray-100 my-0.5"></div>`;
                         if (msg.stats.nan_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>NaNs removed:</span> <span>${msg.stats.nan_removed.toLocaleString()}</span></div>`;
-                        if (msg.stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad flags removed:</span> <span>${msg.stats.qc_removed.toLocaleString()}</span></div>`;
+                        if (msg.stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Failed QC:</span> <span>${msg.stats.qc_removed.toLocaleString()}</span></div>`;
                         if (msg.stats.time_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad times removed:</span> <span>${msg.stats.time_removed.toLocaleString()}</span></div>`;
                     }
                     plotStatsContainer.innerHTML = html;
@@ -375,7 +389,6 @@
                 if (msg.hasC) updateHandlesFromInputs('c');
                 if (params.has('cMin') && !isNaN(params.get('cMin'))) sendColourLimitsToIframe();
             }
-            // NEW ERROR HANDLER HERE:
             else if (msg.type === 'plotError') {
                 setLoading(false);
                 plotQueued = false;
@@ -414,6 +427,7 @@
                 } else {
                     currentZoomBounds = null;
                 }
+                updateUrlState();
             }
             else if (msg.type === 'autoColourResult') {
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
@@ -443,7 +457,7 @@
         function updateUrlState() {
             const params = new URLSearchParams();
             params.set('dataset', datasetSelect.value);
-            params.set('preset', currentPreset);
+            if (currentPreset) params.set('preset', currentPreset);
             params.set('x', xSelect.value);
             params.set('y', ySelect.value);
             params.set('c', cVarSelect.value);
@@ -456,6 +470,13 @@
 
             if (cTrimMinInput.value && !isNaN(cTrimMinInput.value) && baseCMin !== null) params.set('cMin', cTrimMinInput.value);
             if (cTrimMaxInput.value && !isNaN(cTrimMaxInput.value) && baseCMax !== null) params.set('cMax', cTrimMaxInput.value);
+
+            if (currentZoomBounds) {
+                params.set('zXmin', currentZoomBounds.xMin);
+                params.set('zXmax', currentZoomBounds.xMax);
+                params.set('zYmin', currentZoomBounds.yMin);
+                params.set('zYmax', currentZoomBounds.yMax);
+            }
 
             const newUrl = `${window.location.pathname}?${params.toString()}`;
             window.history.replaceState({}, '', newUrl);
@@ -482,12 +503,46 @@
             toggleBtn(filterTimeBtn, 'filtTime');
 
             qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
+            highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
 
             setVal('cTrimMinInput', 'cMin');
             setVal('cTrimMaxInput', 'cMax');
 
+            if (params.has('zXmin') && params.has('zXmax') && params.has('zYmin') && params.has('zYmax')) {
+                currentZoomBounds = {
+                    xMin: params.get('zXmin'), xMax: params.get('zXmax'),
+                    yMin: params.get('zYmin'), yMax: params.get('zYmax')
+                };
+            }
+
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
+            updatePresetUI();
+        }
+
+        function detectCurrentPreset() {
+            const currentX = xSelect.value;
+            const currentY = ySelect.value;
+            const currentC = cVarSelect.value;
+            const currentCmap = cmapInput.value;
+            const currentInvert = invertYBtn.classList.contains('active');
+
+            for (const [key, p] of Object.entries(OceanPresets)) {
+                const matchX = p.x.includes(currentX);
+                const matchY = p.y.includes(currentY);
+                const matchC = p.c.includes(currentC) || (!currentC && p.c.length === 0);
+                const matchCmap = p.cmap === currentCmap;
+                const matchInvert = p.invert === currentInvert;
+
+                if (matchX && matchY && matchC && matchCmap && matchInvert) {
+                    return key;
+                }
+            }
+            return '';
+        }
+
+        function checkAndUpdatePreset() {
+            currentPreset = detectCurrentPreset();
             updatePresetUI();
         }
 
@@ -496,15 +551,12 @@
             
             Object.entries(OceanPresets).forEach(([key, p]) => {
                 const btn = document.createElement('button');
-                btn.className = 'preset-btn px-3 py-1 rounded text-[10px] font-medium text-white shadow-sm shrink-0 outline-none focus:ring-2 focus:ring-googleBlue';
-                btn.textContent = p.text;
+                btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap ${p.bg} ${p.textCol}`;
+                btn.innerHTML = `<span class="material-symbols-outlined text-[14px]">${p.icon}</span> <span class="preset-text">${p.text}</span>`;
                 btn.dataset.preset = key;
                 
-                const match = cmapOptions.find(b => b.dataset.val === p.cmap);
-                if(match) btn.style.background = match.style.background;
-                else btn.style.backgroundColor = '#6b7280';
-                
                 btn.addEventListener('click', () => {
+                    if (btn.disabled) return;
                     currentPreset = key;
                     updatePresetUI();
                     applyPreset(key);
@@ -527,14 +579,14 @@
         function resetPlotState(fullReset = true) {
             plotIframe.classList.add('hidden');
             emptyState.classList.remove('hidden');
-            // Reset the empty state text back to default
-            emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
+            emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables to Plot</p>`;
             qcBadge.classList.add('hidden');
             downloadBtn.classList.add('hidden');
 
             if (fullReset) {
                 cTrimContainer.classList.replace('flex', 'hidden');
                 baseCMin = null; baseCMax = null;
+                currentZoomBounds = null;
                 
                 cTrimMinInput.value = ''; cTrimMaxInput.value = '';
                 cTrimTopHandle.style.top = '0%'; cTrimBottomHandle.style.bottom = '0%';
@@ -688,7 +740,7 @@
                 updateCmapGradient(btn.dataset.val);
                 cmapMenu.classList.add('hidden');
                 
-                setCustomMode();
+                checkAndUpdatePreset();
                 resetPlotState(false); 
                 updatePlot(); 
             });
@@ -798,7 +850,7 @@
         }
 
         function applyPreset(presetKey) {
-            if (presetKey === 'custom') return;
+            if (!presetKey) return;
 
             let p = OceanPresets[presetKey];
             if (!p) return;
@@ -855,7 +907,7 @@
                 applyQcBtn.disabled = false;
                 applyQcBtn.classList.remove('opacity-40', 'cursor-not-allowed');
                 
-                if (!hasUrlState && isFirstLoad) {
+                if (!hasUrlState) {
                     updateToggleBtn(applyQcBtn, true);
                     updateToggleBtn(filterTimeBtn, false);
                     updateToggleBtn(highlightQcBtn, false);
@@ -882,27 +934,23 @@
                 const hasY = p.y.some(v => isValid(v));
                 const hasC = p.c.some(v => isValid(v));
                 
-                if (hasX && hasY && hasC) {
+                const isValidPreset = hasX && hasY && hasC;
+                
+                const btn = presetContainer.querySelector(`[data-preset="${key}"]`);
+                if (btn) btn.disabled = !isValidPreset;
+
+                if (isValidPreset) {
                     if (!firstValid) firstValid = key;
                     if (currentPreset === key) currentValid = true;
                 }
             });
             
             if (!hasUrlState) {
-                if (!currentValid || currentPreset === 'custom') {
-                    currentPreset = firstValid || 'custom';
-                }
-                
-                if (currentPreset !== 'custom') {
-                    applyPreset(currentPreset);
-                } else {
-                    xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
-                    ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
-                    cVarSelect.value = '';
-                    cmapInput.value = 'viridis';
-                    updateCmapGradient('viridis');
-                    updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase()));
-                }
+                currentPreset = firstValid || 'preset_temp';
+                applyPreset(currentPreset);
+            } else if (currentPreset && !currentValid) {
+                currentPreset = firstValid || 'preset_temp';
+                applyPreset(currentPreset);
             }
             
             updatePresetUI();
@@ -912,6 +960,7 @@
 
         const handleToggle = (btn, requiresFullReset = false) => {
             btn.classList.toggle('active');
+            checkAndUpdatePreset();
             resetPlotState(requiresFullReset);
             updatePlot();
         };
@@ -930,11 +979,13 @@
         highlightQcBtn.addEventListener('click', () => handleToggle(highlightQcBtn, false));
 
         cVarSelect.addEventListener('change', () => { 
+            checkAndUpdatePreset();
             resetPlotState(false); 
             updatePlot(); 
         });
 
         xSelect.addEventListener('change', () => { 
+            checkAndUpdatePreset();
             resetPlotState(true);
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
@@ -942,6 +993,7 @@
         });
         
         ySelect.addEventListener('change', () => { 
+            checkAndUpdatePreset();
             resetPlotState(true);
             updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase()));
             updatePlot();
@@ -985,14 +1037,14 @@
                 demoPrompt.classList.remove('hidden');
                 emptyState.classList.add('hidden');
                 datasetSelect.disabled = true;
-                plotBtn.disabled = true;
-                plotBtn.classList.add('opacity-50');
+                resetBtn.disabled = true;
+                resetBtn.classList.add('opacity-50');
             } else {
                 demoPrompt.classList.add('hidden');
                 emptyState.classList.remove('hidden');
                 datasetSelect.disabled = false;
-                plotBtn.disabled = false;
-                plotBtn.classList.remove('opacity-50');
+                resetBtn.disabled = false;
+                resetBtn.classList.remove('opacity-50');
                 
                 fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
                 
@@ -1032,13 +1084,10 @@
                 isFirstLoad = false;
                 if (params.has('x')) {
                     applyUrlState();
-                    updatePlot();
-                } else {
-                    updateUrlState(); 
                 }
-            } else {
-                updateUrlState(); 
             }
+            
+            updatePlot();
         }
 
         downloadDemoBtn.addEventListener('click', async () => {
@@ -1078,6 +1127,13 @@
                     highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active')
                 });
 
+                if (currentZoomBounds) {
+                    params.set('zXmin', currentZoomBounds.xMin);
+                    params.set('zXmax', currentZoomBounds.xMax);
+                    params.set('zYmin', currentZoomBounds.yMin);
+                    params.set('zYmax', currentZoomBounds.yMax);
+                }
+
                 plotIframe.src = `/static/main_plot.html?${params.toString()}`;
                 
                 plotIframe.classList.remove('hidden');
@@ -1092,8 +1148,12 @@
 
         function setLoading(isLoading) {
             isPlotting = isLoading;
-            [plotBtn, datasetSelect].forEach(b => b.disabled = isLoading);
-            Array.from(presetContainer.children).forEach(b => b.disabled = isLoading);
+            [resetBtn, datasetSelect].forEach(b => b.disabled = isLoading);
+            if (isLoading) {
+                presetContainer.classList.add('opacity-50', 'pointer-events-none');
+            } else {
+                presetContainer.classList.remove('opacity-50', 'pointer-events-none');
+            }
         }
 
         window.addEventListener('keydown', (e) => {
@@ -1121,14 +1181,12 @@
             }
         });
 
-        plotBtn.addEventListener('click', updatePlot);
-
-        function setCustomMode() {
-            if (currentPreset !== 'custom') {
-                currentPreset = 'custom';
-                updatePresetUI();
-            }
-        }
+        resetBtn.addEventListener('click', () => {
+            currentPreset = 'preset_temp';
+            applyPreset(currentPreset);
+            resetPlotState(true);
+            updatePlot();
+        });
 
         init();
 

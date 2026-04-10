@@ -175,7 +175,7 @@
                         hovermode: false,
                         margin: { l: 0, r: 0, b: 0, t: 0 },
                         paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-                        scene: { xaxis: noAxis, yaxis: noAxis, zaxis: noAxis, aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { x: 2.0, y: -2.0, z: 1.0 } } },
+                        scene: { xaxis: noAxis, yaxis: noAxis, zaxis: noAxis, aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { x: 1.25, y: -1.25, z: 0.6 } }},
                         showlegend: false
                     };
 
@@ -193,7 +193,7 @@
                         const plotDiv = document.getElementById('plot3d');
                         
                         let lastInteractionTime = 0;
-                        let currentEye = { x: 2.0, y: -2.0, z: 1.0 };
+                        let currentEye = { x: 1.25, y: -1.25, z: 0.6 };
 
                         const resetIdle = () => { lastInteractionTime = Date.now(); };
                         
