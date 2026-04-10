@@ -27,7 +27,7 @@
     <style>
         body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #202124; margin: 0; display: flex; flex-direction: column; height: 100vh; }
         .material-symbols-outlined { font-size: 16px; vertical-align: middle; }
-        select, input[type="text"], input[type="datetime-local"], input[type="number"], button { outline: none; transition: background-color 0.2s; border-radius: 4px; }
+        select, input[type="text"], input[type="datetime-local"], input[type="number"], button { outline: none; transition: all 0.2s; border-radius: 4px; }
         select:focus, input[type="text"]:focus, input[type="datetime-local"]:focus, input[type="number"]:focus { border-color: #1a73e8; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -43,6 +43,17 @@
             transition: opacity 0.15s ease-in-out; z-index: 9999; white-space: normal;
             max-width: 220px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); line-height: 1.4;
         }
+
+        .toggle-btn {
+            background-color: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db;
+        }
+        .toggle-btn.active {
+            background-color: #1a73e8; color: #ffffff; border-color: #1a73e8;
+        }
+
+        .preset-btn { opacity: 0.8; transition: opacity 0.2s, transform 0.1s; }
+        .preset-btn:hover { opacity: 1; }
+        .preset-btn.active { opacity: 1; ring: 2px; ring-color: #1a73e8; transform: scale(1.05); font-weight: bold;}
     </style>
 </head>
 <body class="overflow-hidden">
@@ -63,18 +74,9 @@
                     </button>
                 </div>
 
-                <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
-                    <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">View</label>
-                    <div class="flex items-center gap-1">
-                        <select id="plotPreset" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-48 outline-none transition-all font-medium">
-                            <optgroup label="Default Views" id="defaultOptGroup"></optgroup>
-                            <optgroup label="Custom Views" id="customOptGroup" style="display: none;"></optgroup>
-                            <option value="custom">Custom Plot...</option>
-                        </select>
-                        <button id="deletePresetBtn" class="hidden text-gray-400 hover:text-googleRed transition-colors p-1" title="Delete Custom Preset">
-                            <span class="material-symbols-outlined text-[16px]">delete</span>
-                        </button>
-                    </div>
+                <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1 overflow-hidden">
+                    <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider shrink-0">Views</label>
+                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto pb-1 max-w-[400px]"></div>
                 </div>
             </div>
 
@@ -97,40 +99,37 @@
             </div>
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium">
-                    <input type="checkbox" id="invertY" class="w-3.5 h-3.5 accent-googleBlue"> Invert
-                </label>
+                <button id="invertYBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm">Invert Y</button>
 
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1">
-                    <input type="checkbox" id="applyQc" class="w-3.5 h-3.5 accent-googleBlue" checked> Apply QC Flags
-                </label>
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1" id="highlightQcLabel" style="display: none;">
-                    <input type="checkbox" id="highlightQcCheck" class="w-3.5 h-3.5 accent-googleBlue"> Highlight QC
-                </label>
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1" title="Filters out NaNs, pre-deployment, and future dates">
-                    <input type="checkbox" id="filterTimeCheck" class="w-3.5 h-3.5 accent-googleBlue" checked> Filter Bad Times
-                </label>
-                <div id="qcFlagsContainer" class="flex items-center gap-1 relative group">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
-                        Flags <span class="material-symbols-outlined text-[12px]">info</span>
-                    </span>
-                    <div class="absolute top-[120%] left-0 hidden group-hover:block bg-[#202124] text-white text-[10px] p-3 rounded shadow-xl w-[340px]">
-                        <table class="w-full text-left border-collapse leading-tight">
-                            <tbody>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">0</td><td class="py-0.5 text-gray-300">No QC performed.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">1</td><td class="py-0.5">Good data. Passed all tests.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-yellow-400">2</td><td class="py-0.5 text-yellow-300">Probably good. Valid but not all tests applied.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-400">3</td><td class="py-0.5 text-red-300">Bad data that are potentially correctable.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-500">4</td><td class="py-0.5 text-red-400">Bad data. Definitely erroneous.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-blue-300">5</td><td class="py-0.5 text-blue-200">Value changed. Interpolated or adjusted.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">6</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">7</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-purple-300">8</td><td class="py-0.5 text-purple-200">Interpolated value.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">9</td><td class="py-0.5 text-gray-300">Missing value.</td></tr>
-                            </tbody>
-                        </table>
+                <div class="border-l border-gray-300 pl-3 ml-1 flex items-center gap-2">
+                    <button id="filterTimeBtn" class="toggle-btn active px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm" title="Filters out NaNs, pre-deployment, and future dates">Filter Bad Time</button>
+                    
+                    <button id="applyQcBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm">Apply QC</button>
+                    
+                    <button id="highlightQcBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold uppercase rounded shadow-sm" style="display: none;">Highlight</button>
+                    
+                    <div id="qcFlagsContainer" class="flex items-center gap-1 relative group" style="display: none;">
+                        <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
+                            Flags <span class="material-symbols-outlined text-[12px]">info</span>
+                        </span>
+                        <div class="absolute top-[120%] left-0 hidden group-hover:block bg-[#202124] text-white text-[10px] p-3 rounded shadow-xl w-[340px]">
+                            <table class="w-full text-left border-collapse leading-tight">
+                                <tbody>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top">0</td><td class="py-0.5 text-gray-300">No QC performed.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top">1</td><td class="py-0.5">Good data. Passed all tests.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-yellow-400">2</td><td class="py-0.5 text-yellow-300">Probably good. Valid but not all tests applied.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-red-400">3</td><td class="py-0.5 text-red-300">Bad data that are potentially correctable.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-red-500">4</td><td class="py-0.5 text-red-400">Bad data. Definitely erroneous.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-blue-300">5</td><td class="py-0.5 text-blue-200">Value changed. Interpolated or adjusted.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">6</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">7</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top text-purple-300">8</td><td class="py-0.5 text-purple-200">Interpolated value.</td></tr>
+                                    <tr><td class="font-bold pr-2 py-0.5 align-top">9</td><td class="py-0.5 text-gray-300">Missing value.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors" title="Comma-separated list of allowed QC flags">
                     </div>
-                    <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors" title="Comma-separated list of allowed QC flags">
                 </div>
             </div>
 
@@ -162,10 +161,6 @@
                 <input type="hidden" id="cmap" value="viridis">
             </div>
 
-            <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1">
-                <input type="text" id="presetNameInput" placeholder="Save preset as..." class="p-1.5 border border-gray-300 bg-white w-32 text-[10px] outline-none focus:border-googleBlue">
-                <button id="savePresetBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1.5 text-[10px] font-medium transition-colors">Save</button>
-            </div>
         </div>
     </nav>
 
@@ -176,15 +171,6 @@
                 <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0">
                     <span id="mapEmptyText" class="text-[10px] text-gray-400 absolute text-center px-4">Load data to see map</span>
                     <iframe id="gliderMap" src="" class="w-full h-full border-none hidden"></iframe>
-                </div>
-            </div>
-
-            <div id="progressWrapper" class="w-full bg-blue-50 border-b border-blue-100 hidden flex-col px-4 py-2 gap-1 shrink-0">
-                <div class="flex justify-between items-center text-[10px] font-medium text-googleBlue">
-                    <span id="progressText">Initiating...</span>
-                </div>
-                <div class="w-full bg-blue-200 h-1 overflow-hidden">
-                    <div id="progressFill" class="h-full w-0 transition-all duration-300 ease-out bg-googleBlue"></div>
                 </div>
             </div>
 
@@ -208,22 +194,21 @@
             </div>
 
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
-                <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
-                    <div class="flex justify-between items-center">
-                        <span id="dimInfo" class="font-medium text-googleBlue">--</span>
+                
+                <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700 bg-white border-b border-gray-200 shadow-sm shrink-0">
                     </div>
-                    <div id="timeStatsContainer" class="hidden flex-col gap-1 mt-1 text-[9px] text-gray-700 bg-white p-1.5 rounded border border-gray-300 shadow-inner"></div>
-                </div>
+
                 <div class="flex border-b border-gray-200 bg-gray-50 text-[9px] font-bold uppercase tracking-wider shrink-0">
-                    <button id="tabVariables" class="flex-1 py-1 px-3 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">Variables</button>
-                    <button id="tabAttributes" class="flex-1 py-1 px-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
-                    <button id="tab3D" class="flex-1 py-1 px-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">3D View</button>
+                    <button id="tab3D" class="flex-1 py-1 px-2 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">3D View</button>
+                    <button id="tabVariables" class="flex-1 py-1 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Variables</button>
+                    <button id="tabAttributes" class="flex-1 py-1 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
                 </div>
-                <div id="varList" class="flex flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
-                <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
-                <div id="view3DContainer" class="hidden flex-col w-full overflow-hidden bg-white flex-grow relative">
+                
+                <div id="view3DContainer" class="flex flex-col w-full overflow-hidden bg-gray-900 flex-grow relative aspect-square">
                     <iframe id="iframe3D" src="/static/3d_view.html" class="w-full h-full border-none"></iframe>
                 </div>
+                <div id="varList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+                <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
             </div>
         </div>
         
@@ -282,11 +267,13 @@
         const tab3D = document.getElementById('tab3D');
         const attrList = document.getElementById('attrList');
         const view3DContainer = document.getElementById('view3DContainer');
-        const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
-        const applyQcCheck = document.getElementById('applyQc');
-        const highlightQcCheck = document.getElementById('highlightQcCheck');
-        const highlightQcLabel = document.getElementById('highlightQcLabel');
-        const filterTimeCheck = document.getElementById('filterTimeCheck');
+        const plotStatsContainer = document.getElementById('plotStatsContainer');
+        
+        const invertYBtn = document.getElementById('invertYBtn');
+        const applyQcBtn = document.getElementById('applyQcBtn');
+        const highlightQcBtn = document.getElementById('highlightQcBtn');
+        const filterTimeBtn = document.getElementById('filterTimeBtn');
+        
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
         const downloadBtn = document.getElementById('downloadBtn');
@@ -303,9 +290,7 @@
         const varList = document.getElementById('varList');
         const customTooltip = document.getElementById('customTooltip');
         
-        const plotPreset = document.getElementById('plotPreset');
-        const presetNameInput = document.getElementById('presetNameInput'), savePresetBtn = document.getElementById('savePresetBtn');
-        const deletePresetBtn = document.getElementById('deletePresetBtn'), customOptGroup = document.getElementById('customOptGroup');
+        const presetContainer = document.getElementById('presetContainer');
         
         const inspectorContainer = document.getElementById('inspectorContainer');
         const mapEmptyText = document.getElementById('mapEmptyText'), resetInspectorBtn = document.getElementById('resetInspectorBtn');
@@ -315,46 +300,40 @@
         const cmapInput = document.getElementById('cmap'), cmapOptions = Array.from(document.querySelectorAll('.cmap-option'));
 
         const cTrimContainer = document.getElementById('cTrimContainer');
-        
         const cTrimTrack = document.getElementById('cTrimTrack');
         const cTrimTopMask = document.getElementById('cTrimTopMask'), cTrimBottomMask = document.getElementById('cTrimBottomMask');
         const cTrimTopHandle = document.getElementById('cTrimTopHandle'), cTrimBottomHandle = document.getElementById('cTrimBottomHandle');
         const cTrimMinInput = document.getElementById('cTrimMinInput'), cTrimMaxInput = document.getElementById('cTrimMaxInput');
 
-        let progressInterval;
         let trimTimeout;
         let currentMapDataset = "";
         let currentZoomBounds = null;
 
-        
         let baseCMin = null, baseCMax = null;
         let isXDateTime = false;
         
         let isPlotting = false;
         let plotQueued = false;
+        let currentPreset = 'custom';
         
         let isDraggingCTop = false, isDraggingCBottom = false;
 
         const OceanPresets = {
-            preset_temp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
-            preset_sal: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
-            preset_density: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
-            preset_chla: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
-            preset_doxy: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
-            preset_bbp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true },
-            preset_ts: { x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false }
+            preset_temp: { text: 'Thermal', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
+            preset_sal: { text: 'Salinity', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
+            preset_density: { text: 'Density', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
+            preset_chla: { text: 'Chlorophyll', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
+            preset_doxy: { text: 'Oxygen', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
+            preset_bbp: { text: 'Backscatter', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true },
+            preset_ts: { text: 'T-S Diagram', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false }
         };
 
-        const defaultPresetDefinitions = [
-            { value: 'preset_temp', text: 'Thermal Structure' },
-            { value: 'preset_sal', text: 'Salinity Profile' },
-            { value: 'preset_density', text: 'Density Profile' },
-            { value: 'preset_chla', text: 'Chlorophyll Profile' },
-            { value: 'preset_doxy', text: 'Oxygen Profile' },
-            { value: 'preset_bbp', text: 'Optical Backscatter' },
-            { value: 'preset_ts', text: 'T-S Diagram' }
-        ];
         let isFirstLoad = true;
+
+        function updateToggleBtn(btn, isActive) {
+            if (isActive) { btn.classList.add('active'); } 
+            else { btn.classList.remove('active'); }
+        }
 
         window.addEventListener('message', function(event) {
             const msg = event.data;
@@ -375,13 +354,42 @@
 
                 if (msg.qc_applied) qcBadge.classList.remove('hidden');
                 else qcBadge.classList.add('hidden');
+                
+                if (msg.stats) {
+                    plotStatsContainer.classList.remove('hidden');
+                    plotStatsContainer.classList.add('flex');
+                    let html = `<div class="flex justify-between font-medium"><span>Plotted Points:</span> <span class="text-googleBlue font-bold">${msg.stats.valid.toLocaleString()}</span></div>`;
+                    if (msg.stats.nan_removed > 0 || msg.stats.qc_removed > 0 || msg.stats.time_removed > 0) {
+                        html += `<div class="border-t border-gray-100 my-0.5"></div>`;
+                        if (msg.stats.nan_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>NaNs removed:</span> <span>${msg.stats.nan_removed.toLocaleString()}</span></div>`;
+                        if (msg.stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad flags removed:</span> <span>${msg.stats.qc_removed.toLocaleString()}</span></div>`;
+                        if (msg.stats.time_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad times removed:</span> <span>${msg.stats.time_removed.toLocaleString()}</span></div>`;
+                    }
+                    plotStatsContainer.innerHTML = html;
+                }
 
                 const params = new URLSearchParams(window.location.search);
-                if (params.has('cMin')) cTrimMinInput.value = params.get('cMin');
-                if (params.has('cMax')) cTrimMaxInput.value = params.get('cMax');
+                if (params.has('cMin') && !isNaN(params.get('cMin'))) cTrimMinInput.value = params.get('cMin');
+                if (params.has('cMax') && !isNaN(params.get('cMax'))) cTrimMaxInput.value = params.get('cMax');
                 
                 if (msg.hasC) updateHandlesFromInputs('c');
-                if (params.has('cMin')) sendColourLimitsToIframe();
+                if (params.has('cMin') && !isNaN(params.get('cMin'))) sendColourLimitsToIframe();
+            }
+            // NEW ERROR HANDLER HERE:
+            else if (msg.type === 'plotError') {
+                setLoading(false);
+                plotQueued = false;
+                plotIframe.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                emptyState.innerHTML = `
+                    <span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">error</span>
+                    <p class="text-sm font-medium text-gray-800">${msg.message}</p>
+                    <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
+                `;
+                downloadBtn.classList.add('hidden');
+                qcBadge.classList.add('hidden');
+                cTrimContainer.classList.replace('flex', 'hidden');
+                plotStatsContainer.classList.add('hidden');
             }
             else if (msg.type === 'plotHover') {
                 inspectorContainer.classList.remove('hidden');
@@ -407,29 +415,27 @@
                     currentZoomBounds = null;
                 }
             }
-
             else if (msg.type === 'autoColourResult') {
-                if (baseCMin !== null) {
+                if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     cTrimMinInput.value = parseFloat(msg.cMin).toFixed(4);
                     cTrimMaxInput.value = parseFloat(msg.cMax).toFixed(4);
                     updateHandlesFromInputs('c');
                 }
             }
             else if (msg.type === 'bgFetchComplete') {
-                // Silently update colour slider to reflect the denser zoomed data
-                if (baseCMin !== null) {
+                if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     cTrimMinInput.value = parseFloat(msg.cMin).toFixed(4);
                     cTrimMaxInput.value = parseFloat(msg.cMax).toFixed(4);
                     updateHandlesFromInputs('c');
                 }
             }
-
         });
 
         function sendColourLimitsToIframe() {
             if (!plotIframe.contentWindow || !cVarSelect.value) return;
             const c1 = parseFloat(cTrimMinInput.value);
             const c2 = parseFloat(cTrimMaxInput.value);
+            if(isNaN(c1) || isNaN(c2)) return;
             plotIframe.contentWindow.postMessage({ type: 'updateColour', limits: { cMin: c1, cMax: c2 } }, '*');
             updateUrlState();
         }
@@ -437,19 +443,19 @@
         function updateUrlState() {
             const params = new URLSearchParams();
             params.set('dataset', datasetSelect.value);
-            params.set('preset', plotPreset.value);
+            params.set('preset', currentPreset);
             params.set('x', xSelect.value);
             params.set('y', ySelect.value);
             params.set('c', cVarSelect.value);
             params.set('cmap', cmapInput.value);
-            params.set('invY', document.getElementById('invertY').checked);
-            params.set('qc', applyQcCheck.checked);
-            params.set('hlQc', highlightQcCheck.checked);
+            params.set('invY', invertYBtn.classList.contains('active'));
+            params.set('qc', applyQcBtn.classList.contains('active'));
+            params.set('hlQc', highlightQcBtn.classList.contains('active'));
             params.set('qcFlags', qcFlagsInput.value);
-            params.set('filtTime', filterTimeCheck.checked);
+            params.set('filtTime', filterTimeBtn.classList.contains('active'));
 
-            if (cTrimMinInput.value && baseCMin !== null) params.set('cMin', cTrimMinInput.value);
-            if (cTrimMaxInput.value && baseCMax !== null) params.set('cMax', cTrimMaxInput.value);
+            if (cTrimMinInput.value && !isNaN(cTrimMinInput.value) && baseCMin !== null) params.set('cMin', cTrimMinInput.value);
+            if (cTrimMaxInput.value && !isNaN(cTrimMaxInput.value) && baseCMax !== null) params.set('cMax', cTrimMaxInput.value);
 
             const newUrl = `${window.location.pathname}?${params.toString()}`;
             window.history.replaceState({}, '', newUrl);
@@ -460,110 +466,68 @@
             if (!params.has('x')) return;
 
             const setVal = (id, param) => { if (params.has(param)) document.getElementById(id).value = params.get(param); };
-            const setCheck = (id, param) => { if (params.has(param)) document.getElementById(id).checked = params.get(param) === 'true'; };
+            const toggleBtn = (btn, param) => { if (params.has(param)) updateToggleBtn(btn, params.get(param) === 'true'); };
 
             if (params.has('preset')) {
-                plotPreset.value = params.get('preset');
-                togglePresetUI();
+                currentPreset = params.get('preset');
             }
 
             setVal('xVar', 'x'); setVal('yVar', 'y'); setVal('cVar', 'c'); setVal('cmap', 'cmap');
             updateCmapGradient(cmapInput.value);
 
-            setCheck('invertY', 'invY'); setCheck('applyQc', 'qc'); setCheck('highlightQcCheck', 'hlQc');
-            setVal('qcFlags', 'qcFlags'); setCheck('filterTimeCheck', 'filtTime');
+            toggleBtn(invertYBtn, 'invY');
+            toggleBtn(applyQcBtn, 'qc');
+            toggleBtn(highlightQcBtn, 'hlQc');
+            setVal('qcFlags', 'qcFlags'); 
+            toggleBtn(filterTimeBtn, 'filtTime');
 
-            qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
+            qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
 
             setVal('cTrimMinInput', 'cMin');
             setVal('cTrimMaxInput', 'cMax');
 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
-        }
-
-        function getCustomPresets() {
-            try { return JSON.parse(localStorage.getItem(CUSTOM_PRESETS_KEY)) || {}; } 
-            catch { return {}; }
+            updatePresetUI();
         }
 
         function renderPresetsDropdown() {
-            const presets = getCustomPresets();
-            const currentVal = plotPreset.value;
+            presetContainer.innerHTML = '';
             
-            customOptGroup.innerHTML = '';
-            const keys = Object.keys(presets);
-            if (keys.length > 0) {
-                keys.forEach(k => {
-                    const opt = document.createElement('option');
-                    opt.value = 'custom_' + k;
-                    opt.textContent = k;
-                    customOptGroup.appendChild(opt);
+            Object.entries(OceanPresets).forEach(([key, p]) => {
+                const btn = document.createElement('button');
+                btn.className = 'preset-btn px-3 py-1 rounded text-[10px] font-medium text-white shadow-sm shrink-0 outline-none focus:ring-2 focus:ring-googleBlue';
+                btn.textContent = p.text;
+                btn.dataset.preset = key;
+                
+                const match = cmapOptions.find(b => b.dataset.val === p.cmap);
+                if(match) btn.style.background = match.style.background;
+                else btn.style.backgroundColor = '#6b7280';
+                
+                btn.addEventListener('click', () => {
+                    currentPreset = key;
+                    updatePresetUI();
+                    applyPreset(key);
+                    resetPlotState(true);
+                    updatePlot();
                 });
-                customOptGroup.style.display = '';
-            } else {
-                customOptGroup.style.display = 'none';
-            }
-            
-            if (Array.from(plotPreset.options).some(o => o.value === currentVal)) {
-                plotPreset.value = currentVal;
-            } else {
-                plotPreset.value = 'custom';
-            }
-            togglePresetUI();
+                
+                presetContainer.appendChild(btn);
+            });
+            updatePresetUI();
         }
 
-        function saveCurrentAsPreset() {
-            const name = presetNameInput.value.trim();
-            if (!name) return;
-            
-            const presets = getCustomPresets();
-            presets[name] = {
-                x: [xSelect.value], y: [ySelect.value], c: [cVarSelect.value],
-                cmap: cmapInput.value, invert: document.getElementById('invertY').checked
-            };
-            localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(presets));
-            
-            renderPresetsDropdown();
-            plotPreset.value = 'custom_' + name;
-            togglePresetUI();
+        function updatePresetUI() {
+            Array.from(presetContainer.children).forEach(btn => {
+                if (btn.dataset.preset === currentPreset) btn.classList.add('active');
+                else btn.classList.remove('active');
+            });
         }
-
-        function deleteCurrentPreset() {
-            const val = plotPreset.value;
-            if (!val.startsWith('custom_')) return;
-            
-            const name = val.replace('custom_', '');
-            if (confirm(`Are you sure you want to delete the custom preset "${name}"?`)) {
-                const presets = getCustomPresets();
-                delete presets[name];
-                localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(presets));
-                plotPreset.value = 'custom';
-                renderPresetsDropdown();
-                resetPlotState(true);
-            }
-        }
-
-        function togglePresetUI() {
-            const val = plotPreset.value;
-            if (val.startsWith('custom_')) {
-                deletePresetBtn.classList.remove('hidden');
-                presetNameInput.value = val.replace('custom_', '');
-            } else {
-                deletePresetBtn.classList.add('hidden');
-                presetNameInput.value = '';
-            }
-        }
-
-        presetNameInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); saveCurrentAsPreset(); }
-        });
-        savePresetBtn.addEventListener('click', saveCurrentAsPreset);
-        deletePresetBtn.addEventListener('click', deleteCurrentPreset);
 
         function resetPlotState(fullReset = true) {
             plotIframe.classList.add('hidden');
             emptyState.classList.remove('hidden');
+            // Reset the empty state text back to default
             emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
             qcBadge.classList.add('hidden');
             downloadBtn.classList.add('hidden');
@@ -575,48 +539,9 @@
                 cTrimMinInput.value = ''; cTrimMaxInput.value = '';
                 cTrimTopHandle.style.top = '0%'; cTrimBottomHandle.style.bottom = '0%';
                 cTrimTopMask.style.height = '0%'; cTrimBottomMask.style.height = '0%';
+                plotStatsContainer.classList.add('hidden');
             }
             resetInspectorState();
-        }
-
-        function updateInputsFromNativeZoom(limits) {
-            if (limits.xMin !== undefined && limits.xMin !== 'auto') {
-                if (isXDateTime) {
-                    trimStartInput.value = formatDateTimeLocal(new Date(limits.xMin).getTime());
-                    trimEndInput.value = formatDateTimeLocal(new Date(limits.xMax).getTime());
-                } else {
-                    trimStartInput.value = parseFloat(limits.xMin).toFixed(4);
-                    trimEndInput.value = parseFloat(limits.xMax).toFixed(4);
-                }
-            } else if (limits.xMin === 'auto') {
-                if (isXDateTime) {
-                    trimStartInput.value = formatDateTimeLocal(baseXMin); trimEndInput.value = formatDateTimeLocal(baseXMax);
-                } else {
-                    trimStartInput.value = baseXMin.toFixed(4); trimEndInput.value = baseXMax.toFixed(4);
-                }
-            }
-
-            if (limits.yMin !== undefined && limits.yMin !== 'auto') {
-                const invY = document.getElementById('invertY').checked;
-                let y1 = parseFloat(limits.yMin); let y2 = parseFloat(limits.yMax);
-                yTrimMinInput.value = Math.min(y1, y2).toFixed(4);
-                yTrimMaxInput.value = Math.max(y1, y2).toFixed(4);
-            } else if (limits.yMin === 'auto') {
-                yTrimMinInput.value = baseYMin.toFixed(4); yTrimMaxInput.value = baseYMax.toFixed(4);
-            }
-
-            // Sync the physical colour sliders to the new zoomed plot data
-            if (limits.cMin !== undefined && limits.cMin !== 'auto') {
-                cTrimMinInput.value = parseFloat(limits.cMin).toFixed(4);
-                cTrimMaxInput.value = parseFloat(limits.cMax).toFixed(4);
-            } else if (limits.xMin === 'auto' && baseCMin !== null && baseCMax !== null) {
-                cTrimMinInput.value = baseCMin.toFixed(4);
-                cTrimMaxInput.value = baseCMax.toFixed(4);
-            }
-
-            updateHandlesFromInputs('x');
-            updateHandlesFromInputs('y');
-            if (baseCMin !== null) updateHandlesFromInputs('c');
         }
 
         const updateHandlesFromInputs = (axis) => {
@@ -649,37 +574,6 @@
                 
                 cTrimTopMask.style.height = `${topPxPct}%`; cTrimBottomMask.style.height = `${bottomPxPct}%`;
             }
-            if (axis === 'y' && baseYMin !== null && baseYMax !== null) {
-                let startV = parseFloat(yTrimMinInput.value); if(isNaN(startV)) startV = baseYMin;
-                let endV = parseFloat(yTrimMaxInput.value); if(isNaN(endV)) endV = baseYMax;
-
-                // Constrain values to base limits
-                startV = Math.max(baseYMin, startV);
-                endV = Math.min(baseYMax, endV);
-
-                const total = baseYMax - baseYMin;
-                let startPct = ((startV - baseYMin) / total) * 100;
-                let endPct = ((endV - baseYMin) / total) * 100;
-                
-                startPct = Math.max(0, Math.min(100, startPct)); endPct = Math.max(0, Math.min(100, endPct));
-                if (startPct > endPct) { let temp = startPct; startPct = endPct; endPct = temp; }
-
-                const isInverted = document.getElementById('invertY').checked;
-                let topPxPct, bottomPxPct;
-
-                if (isInverted) { 
-                    // Inverted: Min value (e.g. 0m) is at the TOP (0% down)
-                    topPxPct = startPct; 
-                    bottomPxPct = 100 - endPct; 
-                } else { 
-                    // Standard: Max value (e.g. 25C) is at the TOP (0% down)
-                    topPxPct = 100 - endPct; 
-                    bottomPxPct = startPct; 
-                }
-                
-                yTrimTopHandle.style.top = `${topPxPct}%`; yTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
-                yTrimFill.style.top = `${topPxPct}%`; yTrimFill.style.bottom = `${bottomPxPct}%`;
-            }
         };
 
         const updateInputsFromHandles = (axis, p1, p2) => {
@@ -688,21 +582,6 @@
                 const calcMax = baseCMax - (p1 / 100) * total; 
                 const calcMin = baseCMin + (p2 / 100) * total;
                 cTrimMinInput.value = calcMin.toFixed(4); cTrimMaxInput.value = calcMax.toFixed(4);
-            }
-            if (axis === 'y' && baseYMin !== null && baseYMax !== null) {
-                const total = baseYMax - baseYMin;
-                const isInverted = document.getElementById('invertY').checked;
-                let calcMin, calcMax;
-
-                if (isInverted) {
-                    calcMin = baseYMin + (p1 / 100) * total; 
-                    calcMax = baseYMax - (p2 / 100) * total;
-                } else {
-                    calcMax = baseYMax - (p1 / 100) * total; 
-                    calcMin = baseYMin + (p2 / 100) * total;
-                }
-                yTrimMinInput.value = calcMin.toFixed(4); 
-                yTrimMaxInput.value = calcMax.toFixed(4);
             }
         };
 
@@ -765,15 +644,14 @@
         });
         document.getElementById('autoColorBtn').addEventListener('click', () => {
             if (!plotIframe.contentWindow) return;
-            // Read current axis bounds from the iframe's last known zoom, or pass null for full dataset
             plotIframe.contentWindow.postMessage({ 
                 type: 'autoColour', 
-                bounds: currentZoomBounds  // null = use full dataset
+                bounds: currentZoomBounds 
             }, '*');
         });
 
         function updateCmapGradient(cmapVal) {
-            const match = Array.from(document.querySelectorAll('.cmap-option')).find(b => b.dataset.val === cmapVal);
+            const match = cmapOptions.find(b => b.dataset.val === cmapVal);
             if (match) {
                 cmapTrigger.style.background = match.style.background;
                 const bg = match.style.background.replace('to right', 'to top');
@@ -820,9 +698,9 @@
 
         function switchTab(activeTabId) {
             const tabs = [
+                { tab: tab3D, content: view3DContainer },
                 { tab: tabVariables, content: varList },
-                { tab: tabAttributes, content: attrList },
-                { tab: tab3D, content: view3DContainer }
+                { tab: tabAttributes, content: attrList }
             ];
 
             tabs.forEach(t => {
@@ -866,35 +744,6 @@
                 const res = await fetch(`/api/dataset_info?filename=${encodeURIComponent(filename)}`);
                 const data = await res.json();
                 
-                document.getElementById('dimInfo').textContent = `${data.dimension_name} (${data.dimension_size.toLocaleString()})`;
-                
-                const ts = data.time_stats;
-                const tsContainer = document.getElementById('timeStatsContainer');
-                if (ts && ts.has_time) {
-                    tsContainer.classList.remove('hidden');
-                    tsContainer.classList.add('flex');
-                    let html = `<div class="flex justify-between"><span>Total Measurements:</span> <span class="font-bold">${ts.n_measurements.toLocaleString()}</span></div>`;
-                    
-                    if (ts.removed_nan > 0 || ts.removed_before > 0 || ts.removed_after > 0) {
-                        html += `<div class="flex justify-between text-googleRed"><span>Valid Measurements:</span> <span class="font-bold">${ts.n_valid.toLocaleString()}</span></div>`;
-                        if (ts.removed_nan > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>NaNs removed:</span> <span>${ts.removed_nan.toLocaleString()}</span></div>`;
-                        
-                        const deployStr = ts.deploy_time ? ts.deploy_time.split(' ')[0] : '1990-01-01';
-                        if (ts.removed_before > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>Removed before ${deployStr}:</span> <span>${ts.removed_before.toLocaleString()}</span></div>`;
-                        if (ts.removed_after > 0) html += `<div class="flex justify-between text-gray-500 pl-2"><span>Removed after now:</span> <span>${ts.removed_after.toLocaleString()}</span></div>`;
-                    } else {
-                        html += `<div class="flex justify-between text-googleGreen"><span>No bad times detected.</span></div>`;
-                    }
-                    
-                    if (!ts.is_monotonic) {
-                        html += `<div class="mt-1 p-1.5 bg-red-50 text-googleRed border border-red-200 rounded flex items-start gap-1.5"><span class="material-symbols-outlined text-[14px]">warning</span><span class="leading-tight">Warning: TIME is not monotonically increasing.</span></div>`;
-                    }
-                    tsContainer.innerHTML = html;
-                } else {
-                    tsContainer.classList.add('hidden');
-                    tsContainer.classList.remove('flex');
-                }
-
                 varList.innerHTML = '';
                 
                 data.variables.sort((a, b) => {
@@ -951,12 +800,7 @@
         function applyPreset(presetKey) {
             if (presetKey === 'custom') return;
 
-            let p;
-            if (presetKey.startsWith('custom_')) {
-                p = getCustomPresets()[presetKey.replace('custom_', '')];
-            } else {
-                p = OceanPresets[presetKey];
-            }
+            let p = OceanPresets[presetKey];
             if (!p) return;
 
             const findBest = (arr) => {
@@ -973,7 +817,7 @@
             cmapInput.value = p.cmap;
             updateCmapGradient(p.cmap);
             
-            document.getElementById('invertY').checked = p.invert;
+            updateToggleBtn(invertYBtn, p.invert);
 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
@@ -998,22 +842,27 @@
             const hasUrlState = isFirstLoad && params.has('x');
 
             if (!hasAnyQc) {
-                applyQcCheck.checked = false;
-                applyQcCheck.disabled = true;
-                applyQcCheck.parentElement.classList.add('opacity-40', 'cursor-not-allowed');
+                updateToggleBtn(applyQcBtn, false);
+                applyQcBtn.disabled = true;
+                applyQcBtn.classList.add('opacity-40', 'cursor-not-allowed');
                 qcFlagsContainer.style.display = 'none';
                 
-                highlightQcCheck.checked = false;
-                highlightQcLabel.style.display = 'none';
+                updateToggleBtn(highlightQcBtn, false);
+                highlightQcBtn.style.display = 'none';
+                
+                if (!hasUrlState) updateToggleBtn(filterTimeBtn, true);
             } else {
-                applyQcCheck.disabled = false;
-                applyQcCheck.parentElement.classList.remove('opacity-40', 'cursor-not-allowed');
-                qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
-                highlightQcLabel.style.display = applyQcCheck.checked ? 'flex' : 'none';
+                applyQcBtn.disabled = false;
+                applyQcBtn.classList.remove('opacity-40', 'cursor-not-allowed');
                 
                 if (!hasUrlState && isFirstLoad) {
-                    highlightQcCheck.checked = false;
+                    updateToggleBtn(applyQcBtn, true);
+                    updateToggleBtn(filterTimeBtn, false);
+                    updateToggleBtn(highlightQcBtn, false);
                 }
+
+                qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
+                highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
             }
 
             const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
@@ -1025,48 +874,60 @@
                 });
             });
             
-            const defaultOptGroup = document.getElementById('defaultOptGroup');
-            defaultOptGroup.innerHTML = '';
             let firstValid = null;
             let currentValid = false;
 
-            defaultPresetDefinitions.forEach(def => {
-                const p = OceanPresets[def.value];
+            Object.entries(OceanPresets).forEach(([key, p]) => {
                 const hasX = p.x.some(v => isValid(v));
                 const hasY = p.y.some(v => isValid(v));
                 const hasC = p.c.some(v => isValid(v));
                 
                 if (hasX && hasY && hasC) {
-                    const opt = new Option(def.text, def.value);
-                    defaultOptGroup.appendChild(opt);
-                    if (!firstValid) firstValid = def.value;
-                    if (plotPreset.value === def.value) currentValid = true;
+                    if (!firstValid) firstValid = key;
+                    if (currentPreset === key) currentValid = true;
                 }
             });
             
             if (!hasUrlState) {
-                if (!currentValid || plotPreset.value === 'custom') {
-                    plotPreset.value = firstValid || 'custom';
+                if (!currentValid || currentPreset === 'custom') {
+                    currentPreset = firstValid || 'custom';
                 }
                 
-                if (plotPreset.value !== 'custom') {
-                    applyPreset(plotPreset.value);
+                if (currentPreset !== 'custom') {
+                    applyPreset(currentPreset);
                 } else {
                     xSelect.value = isValid('TIME') ? 'TIME' : (variableCache[0]?.name || '');
                     ySelect.value = isValid('PRES') ? 'PRES' : (variableCache[0]?.name || '');
                     cVarSelect.value = '';
                     cmapInput.value = 'viridis';
                     updateCmapGradient('viridis');
-                    document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
+                    updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase()));
                 }
             }
             
-            togglePresetUI();
+            updatePresetUI();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
         }
 
-        ['invertY'].forEach(id => document.getElementById(id).addEventListener('change', () => { resetPlotState(false); updatePlot(); }));
+        const handleToggle = (btn, requiresFullReset = false) => {
+            btn.classList.toggle('active');
+            resetPlotState(requiresFullReset);
+            updatePlot();
+        };
+
+        invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
+        filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
+        
+        applyQcBtn.addEventListener('click', () => {
+            applyQcBtn.classList.toggle('active');
+            qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
+            highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
+            resetPlotState(false); 
+            updatePlot();
+        });
+        
+        highlightQcBtn.addEventListener('click', () => handleToggle(highlightQcBtn, false));
 
         cVarSelect.addEventListener('change', () => { 
             resetPlotState(false); 
@@ -1082,20 +943,8 @@
         
         ySelect.addEventListener('change', () => { 
             resetPlotState(true);
-            document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
+            updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase()));
             updatePlot();
-        });
-
-        applyQcCheck.addEventListener('change', () => { 
-            qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
-            highlightQcLabel.style.display = applyQcCheck.checked ? 'flex' : 'none';
-            resetPlotState(false); updatePlot(); 
-        });
-        highlightQcCheck.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
-
-        filterTimeCheck.addEventListener('change', () => { 
-            resetPlotState(true); 
-            updatePlot(); 
         });
         
         qcFlagsInput.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
@@ -1194,9 +1043,6 @@
 
         downloadDemoBtn.addEventListener('click', async () => {
             setLoading(true);
-            const pt = document.getElementById('progressText');
-            pt.textContent = "Downloading demo datasets...";
-            
             try {
                 const res = await fetch('/api/download_demo', { method: 'POST' });
                 const data = await res.json();
@@ -1227,9 +1073,9 @@
                 
                 const params = new URLSearchParams({
                     filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
-                    c_var: cVarSelect.value, cmap: cmapInput.value, invert_y: document.getElementById('invertY').checked,
-                    apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
-                    highlight_qc: highlightQcCheck.checked, filter_time: filterTimeCheck.checked
+                    c_var: cVarSelect.value, cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
+                    apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
+                    highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active')
                 });
 
                 plotIframe.src = `/static/main_plot.html?${params.toString()}`;
@@ -1246,27 +1092,8 @@
 
         function setLoading(isLoading) {
             isPlotting = isLoading;
-            const pw = document.getElementById('progressWrapper'), pf = document.getElementById('progressFill'), pt = document.getElementById('progressText');
-            [plotBtn, datasetSelect, plotPreset].forEach(b => b.disabled = isLoading);
-            if (progressInterval) clearInterval(progressInterval);
-            
-            if (isLoading) {
-                pw.classList.replace('hidden', 'flex');
-                pf.className = 'h-full w-0 transition-all duration-300 ease-out bg-googleBlue';
-                pt.textContent = "Loading data...";
-                let width = 0;
-                
-                progressInterval = setInterval(() => {
-                    if (width < 60) { width += Math.random() * 5 + 5; }
-                    else if (width < 95) { width += Math.random() * 2 + 1; pt.textContent = "Rendering WebGL..."; }
-                    if (width > 95) width = 95;
-                    pf.style.width = width + '%';
-                }, 300);
-            } else {
-                pf.classList.remove('bg-googleBlue'); pf.classList.add('bg-googleGreen');
-                pt.textContent = "Complete!"; pf.style.width = '100%';
-                setTimeout(() => { pw.classList.replace('flex', 'hidden'); pf.style.width = '0%'; }, 800);
-            }
+            [plotBtn, datasetSelect].forEach(b => b.disabled = isLoading);
+            Array.from(presetContainer.children).forEach(b => b.disabled = isLoading);
         }
 
         window.addEventListener('keydown', (e) => {
@@ -1275,9 +1102,7 @@
             }
             if (e.key === 'Enter' && !cmapMenu.classList.contains('hidden')) return;
             
-            if (e.key === 'Enter' && 
-                document.activeElement !== presetNameInput &&
-                !e.target.closest('#qcDropdown')) updatePlot();
+            if (e.key === 'Enter' && !e.target.closest('#qcDropdown')) updatePlot();
                 
             if (e.key === 'Escape') { 
                 resetPlotState(false); setLoading(false);
@@ -1297,20 +1122,11 @@
         });
 
         plotBtn.addEventListener('click', updatePlot);
-        plotPreset.addEventListener('change', () => {
-            const val = plotPreset.value;
-            if (val !== 'custom') {
-                applyPreset(val);
-                resetPlotState(true);
-                updatePlot();
-            }
-            togglePresetUI();
-        });
 
         function setCustomMode() {
-            if (plotPreset.value !== 'custom') {
-                plotPreset.value = 'custom';
-                togglePresetUI();
+            if (currentPreset !== 'custom') {
+                currentPreset = 'custom';
+                updatePresetUI();
             }
         }
 

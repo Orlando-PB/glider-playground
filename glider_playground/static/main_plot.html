@@ -39,7 +39,6 @@
     </div>
     <div id="bgSpinner"></div>
 
-    
     <div id="plotDiv"></div>
 
     <script>
@@ -47,7 +46,7 @@
         let _bgFetchController = null;
         let _pendingBounds = null;
         let _originalPlotData = null;
-        let _currentZoom = null; // tracks current zoom range for Plotly.react
+        let _currentZoom = null;
 
         const plotConfig = {
             defaultMarkerSize: 4,
@@ -133,6 +132,8 @@
                 document.getElementById('statusText').style.color = '#ef4444';
                 document.getElementById('statusText').textContent = err.message || "Failed to load plot data.";
                 console.error(err);
+                // Send the error back to the parent to unlock the UI
+                window.parent.postMessage({ type: 'plotError', message: err.message }, '*');
             }
         }
 
@@ -168,7 +169,6 @@
             const cmapName = urlParams.get('cmap') || 'viridis';
             const isXDate = plotData.is_x_dt;
 
-            // Store original data for double-click reset
             _originalPlotData = plotData;
 
             const mainTrace = {
@@ -215,7 +215,8 @@
                     type: 'plotLoaded',
                     globalLimits: { xMin, xMax, yMin, yMax, cMin: plotData.c_min, cMax: plotData.c_max },
                     hasC: plotData.c && plotData.c.length > 0,
-                    qc_applied: plotData.qc_applied
+                    qc_applied: plotData.qc_applied,
+                    stats: plotData.stats
                 }, '*');
 
                 plotDiv.on('plotly_hover', function(data){
@@ -258,7 +259,6 @@
 
                 if (isAuto) {
                     clearTimeout(_pendingBounds);
-                    // Restore original full-dataset points
                     if (_originalPlotData) {
                         plotData = _originalPlotData;
                         const cmapName = urlParams.get('cmap') || 'viridis';
@@ -330,7 +330,6 @@
                     hoverinfo: 'none'
                 };
 
-                // Preserve the current zoom range so the view doesn't jump
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
                 const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
