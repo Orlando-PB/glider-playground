@@ -37,7 +37,6 @@ state = {
     "DATA_DIR": Path.cwd() / "data"
 }
 
-# This lock ensures only one thread can read from the NC files or use Matplotlib at a time
 data_lock = threading.Lock()
 
 STATIC_DIR.mkdir(exist_ok=True)
@@ -123,47 +122,35 @@ def get_variables(filename: str):
 def get_dataset_info(filename: str):
     with data_lock:
         return plot_logic.get_dataset_info(str(state["DATA_DIR"] / filename))
-
-@app.get("/api/sparkline")
-def get_sparkline(filename: str, x_var: str, y_var: str):
-    with data_lock:
-        return plot_logic.generate_sparkline(str(state["DATA_DIR"] / filename), x_var, y_var)
     
 @app.get("/api/config")
 def get_config():
     return {"is_server": os.getenv("IS_SERVER") == "True"}
 
-@app.get("/api/hover")
-def get_hover(
-    filename: str, x_var: str, y_var: str, x_val: float, y_val: float, 
-    c_var: str = "", is_x_dt: str = 'false', x_min: float = 0.0, x_max: float = 0.0, 
-    y_min: float = 0.0, y_max: float = 0.0
-):
-    is_dt = is_x_dt.lower() == 'true'
-    with data_lock:
-        return plot_logic.get_nearest_point(str(state["DATA_DIR"] / filename), x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max)
-
-@app.get("/api/plot")
-def get_plot(
-    filename: str, x_var: str, y_var: str, c_var: str = "", cmap: str = "viridis", 
-    plot_delta: bool = False, delta_axis: str = "x", invert_y: bool = False, 
-    trim_start: str = None, trim_end: str = None, 
-    y_trim_min: str = None, y_trim_max: str = None,
-    c_trim_min: str = None, c_trim_max: str = None,
-    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False,
-    plot_all: bool = False, filter_time: bool = True
+@app.get("/api/plot_data")
+def get_plot_data(
+    filename: str, x_var: str, y_var: str, c_var: str = "", 
+    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True
 ):
     with data_lock:
-        return plot_logic.generate_plot(
-            str(state["DATA_DIR"] / filename), x_var, y_var, c_var, cmap=cmap, 
-            plot_delta=plot_delta, delta_axis=delta_axis, invert_y=invert_y, 
-            trim_start=trim_start, trim_end=trim_end,
-            y_trim_min=y_trim_min, y_trim_max=y_trim_max,
-            c_trim_min=c_trim_min, c_trim_max=c_trim_max,
-            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, 
-            plot_all=plot_all, filter_time=filter_time
+        return plot_logic.get_plot_data_json(
+            str(state["DATA_DIR"] / filename), x_var, y_var, c_var,  
+            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, filter_time=filter_time
         )
 
+@app.get("/api/plot_data_bounds")
+def get_plot_data_bounds(
+    filename: str, x_var: str, y_var: str, c_var: str = "",
+    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
+    x_min: float = None, x_max: float = None, y_min: float = None, y_max: float = None
+):
+    with data_lock:
+        return plot_logic.get_plot_data_bounds(
+            str(state["DATA_DIR"] / filename), x_var, y_var, c_var,
+            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, filter_time=filter_time,
+            x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max
+        )
+    
 @app.post("/api/download_demo")
 async def download_demo_files():
     demo_files = [

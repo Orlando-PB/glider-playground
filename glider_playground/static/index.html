@@ -35,7 +35,6 @@
         ::-webkit-scrollbar-thumb:hover { background: #bdc1c6; }
         .flat-border { border-bottom: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb; }
         .grab-handle { touch-action: none; }
-        #zoomBoxOverlay { position: absolute; border: 2px dashed #1a73e8; background-color: rgba(26, 115, 232, 0.1); pointer-events: none; display: none; z-index: 50; }
         .tooltip-icon { cursor: help; }
         
         #customTooltip {
@@ -80,9 +79,6 @@
             </div>
 
             <div class="flex gap-2 items-center ml-auto">
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium text-[10px] mr-2">
-                    <input type="checkbox" id="plotAll" class="w-3.5 h-3.5 accent-googleBlue"> Hi-res Plot
-                </label>
                 <button id="plotBtn" class="bg-googleBlue hover:bg-googleBlueHover text-white px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm"><span class="material-symbols-outlined text-[14px]">scatter_plot</span> Plot</button>
                 <button id="downloadBtn" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-1.5 font-medium flex items-center gap-1 shadow-sm transition-colors hidden" title="Download Plot">
                     <span class="material-symbols-outlined text-[14px]">download</span>
@@ -102,15 +98,6 @@
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
                 <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium">
-                    <input type="checkbox" id="plotDelta" class="w-3.5 h-3.5 accent-googleBlue"> Delta
-                </label>
-                <div id="deltaAxisGroup" class="hidden items-center gap-1">
-                    <select id="deltaAxis" class="p-1 border border-transparent bg-[#eee] text-[10px]">
-                        <option value="x">X Var</option><option value="y">Y Var</option><option value="time">Time</option>
-                    </select>
-                </div>
-                
-                <label class="flex items-center gap-1 cursor-pointer text-gray-700 font-medium border-l border-gray-300 pl-3 ml-1">
                     <input type="checkbox" id="invertY" class="w-3.5 h-3.5 accent-googleBlue"> Invert
                 </label>
 
@@ -189,7 +176,6 @@
                 <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0">
                     <span id="mapEmptyText" class="text-[10px] text-gray-400 absolute text-center px-4">Load data to see map</span>
                     <iframe id="gliderMap" src="" class="w-full h-full border-none hidden"></iframe>
-                    <div id="mapMarker" class="absolute w-2 h-2 bg-googleRed border border-white hidden shadow-sm transform -translate-x-1/2 -translate-y-1/2 transition-all duration-75 z-10" style="border-radius: 50%;"></div>
                 </div>
             </div>
 
@@ -206,7 +192,6 @@
                 <div class="flex justify-between items-center pb-1">
                     <div class="flex items-center gap-1">
                         <span class="text-[9px] font-bold text-googleBlue uppercase tracking-wider">Inspector</span>
-                        <span id="inspectorLoader" class="hidden material-symbols-outlined text-[12px] text-googleBlue animate-spin" style="animation-duration: 1s;">progress_activity</span>
                     </div>
                     <button id="resetInspectorBtn" class="text-[9px] bg-white border border-gray-200 hover:bg-gray-50 px-1.5 py-0.5 shadow-sm text-gray-600 hidden">Reset</button>
                 </div>
@@ -214,9 +199,6 @@
                     <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hxLabel">X Value</span><span id="hxVal" class="font-medium text-gray-800 truncate transition-opacity">--</span></div>
                     <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hyLabel">Y Value</span><span id="hyVal" class="font-bold text-googleBlue truncate transition-opacity">--</span></div>
                     <div class="flex flex-col text-[10px] hidden" id="hcContainer"><span class="text-gray-500 font-medium truncate" id="hcLabel">C Value</span><span id="hcVal" class="font-medium transition-opacity">--</span></div>
-                    <div class="flex flex-col text-[10px] hidden" id="htContainer"><span class="text-gray-500 font-medium truncate">TIME</span><span id="htVal" class="font-medium transition-opacity">--</span></div>
-                    <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium">Latitude</span><span id="hLat" class="font-medium transition-opacity">--</span></div>
-                    <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium">Longitude</span><span id="hLon" class="font-medium transition-opacity">--</span></div>
                 </div>
             </div>
 
@@ -224,7 +206,6 @@
                 <span class="material-symbols-outlined text-2xl">analytics</span>
                 Load data to see stats
             </div>
-
 
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
                 <div class="px-3 py-1.5 bg-gray-200 border-b border-gray-300 text-[10px] flex flex-col shrink-0 gap-1">
@@ -249,24 +230,10 @@
         <div class="flex-grow flex flex-col overflow-hidden relative">
             <div class="flex-grow flex overflow-hidden w-full relative">
                 
-                <div id="yTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-r border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Y Lims</span>
-                    <input type="number" step="any" id="yTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Max">
-                    <div class="flex-grow relative w-1 flex justify-center items-center my-1 h-full">
-                        <div class="absolute h-full w-1 bg-gray-200/50 cursor-pointer" id="yTrimTrack">
-                            <div class="absolute w-full bg-googleGreen" id="yTrimFill" style="bottom: 0%; top: 0%;"></div>
-                            <div class="absolute w-3 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="yTrimTopHandle" style="left: 50%; top: 0%; transform: translate(-50%, -50%); border-radius: 50%;"></div>
-                            <div class="absolute w-3 h-3 bg-white border border-gray-300 shadow cursor-grab transition-colors z-20" id="yTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%); border-radius: 50%;"></div>
-                        </div>
-                    </div>
-                    <input type="number" step="any" id="yTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Min">
-                </div>
+                <div id="plotAreaWrapper" class="flex-grow flex items-center justify-center p-4 overflow-hidden relative">
+                    <iframe id="plotIframe" src="" class="w-full h-full border-none hidden"></iframe>
 
-                <div class="flex-grow flex items-center justify-center p-4 overflow-hidden relative" id="plotAreaWrapper">
-                    <img id="plotImage" src="" alt="" class="max-w-full max-h-full object-contain hidden cursor-crosshair">
-                    <div id="zoomBoxOverlay"></div>
-
-                            <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
+                    <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
                         <div class="text-center">
                             <span class="material-symbols-outlined text-gray-300" style="font-size: 48px;">folder_off</span>
                             <p class="text-sm text-gray-500 mt-2">No NetCDF (.nc) files found.</p>
@@ -278,8 +245,6 @@
                         </button>
                     </div>
 
-
-                    
                     <div id="qcBadge" class="hidden absolute top-6 right-6 bg-green-50 text-googleGreen border border-green-200 text-[10px] font-bold px-2 py-1 rounded shadow-sm z-30 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
                         <span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied
                     </div>
@@ -291,7 +256,7 @@
                 </div>
 
                 <div id="cTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">C Lims</span>
+                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
                         <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
@@ -303,36 +268,10 @@
                         </div>
                     </div>
                     <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center" placeholder="Min">
+                    <button id="autoColorBtn" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 px-1 py-1 text-[9px] font-medium transition-colors rounded shadow-sm w-full">Auto</button>
+                    <button id="resetColorBtn" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 px-1 py-1 text-[9px] font-medium transition-colors rounded shadow-sm w-full">Reset</button>
                 </div>
 
-            </div>
-            
-            <div id="xTrimRow" class="hidden w-full border-t border-gray-200 bg-white shrink-0">
-                <div id="xTrimSpacer" class="w-[70px] shrink-0 bg-gray-50 border-r border-gray-200"></div>
-                <div id="xTrimContainer" class="flex-grow px-6 py-3 flex flex-col gap-2">
-                    <div class="flex flex-col gap-1 w-full">
-                        <div class="flex justify-between items-center text-xs text-gray-500 font-medium">
-                            <div class="flex items-center gap-1">
-                                <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">X Lims</span>
-                                <input type="text" id="trimStartInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white transition-colors w-32 text-center" placeholder="Min">
-                            </div>
-                            <div class="flex items-center gap-1">
-                                <button id="resetTrimBtn" class="bg-white border border-gray-300 shadow-sm rounded hover:bg-gray-100 text-gray-700 px-2 py-1 transition-colors text-[10px] flex items-center gap-0.5"><span class="material-symbols-outlined text-[12px]">refresh</span> Reset Lims</button>
-                            </div>
-                            <div class="flex items-center gap-1">
-                                <input type="text" id="trimEndInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white transition-colors w-32 text-center" placeholder="Max">
-                            </div>
-                        </div>
-                        <div class="relative w-full h-6 flex items-center">
-                            <img id="sparklineImg" src="" class="absolute inset-0 w-full h-full object-fill opacity-30 pointer-events-none hidden">
-                            <div class="relative w-full h-1 bg-gray-200/50 cursor-pointer z-10" id="trimTrack">
-                                <div class="absolute h-full bg-googleBlue" id="trimFill" style="left: 0%; right: 0%;"></div>
-                                <div class="absolute h-3 w-3 bg-white border border-gray-300 shadow cursor-grab top-1/2 grab-handle transition-colors" id="trimLeftHandle" style="left: 0%; transform: translate(-50%, -50%); border-radius: 50%;"></div>
-                                <div class="absolute h-3 w-3 bg-white border border-gray-300 shadow cursor-grab top-1/2 grab-handle transition-colors" id="trimRightHandle" style="left: 100%; transform: translate(-50%, -50%); border-radius: 50%;"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
@@ -343,7 +282,6 @@
         const tab3D = document.getElementById('tab3D');
         const attrList = document.getElementById('attrList');
         const view3DContainer = document.getElementById('view3DContainer');
-        const ZOOM_DRAG_THRESHOLD = 10; 
         const CUSTOM_PRESETS_KEY = 'glider_custom_presets';
         const applyQcCheck = document.getElementById('applyQc');
         const highlightQcCheck = document.getElementById('highlightQcCheck');
@@ -351,18 +289,15 @@
         const filterTimeCheck = document.getElementById('filterTimeCheck');
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
-        const plotAllCheck = document.getElementById('plotAll');
         const downloadBtn = document.getElementById('downloadBtn');
         
         const datasetSelect = document.getElementById('dataset'), plotBtn = document.getElementById('plotBtn');
-        const plotImage = document.getElementById('plotImage');
+        const plotIframe = document.getElementById('plotIframe');
         const plotAreaWrapper = document.getElementById('plotAreaWrapper');
-        const zoomBoxOverlay = document.getElementById('zoomBoxOverlay');
         const qcBadge = document.getElementById('qcBadge');
         
         const xSelect = document.getElementById('xVar'), ySelect = document.getElementById('yVar');
-        const deltaCheck = document.getElementById('plotDelta'), deltaAxisGroup = document.getElementById('deltaAxisGroup');
-        const deltaAxis = document.getElementById('deltaAxis'), cVarSelect = document.getElementById('cVar');
+        const cVarSelect = document.getElementById('cVar');
         const emptyState = document.getElementById('emptyState'), statsEmptyState = document.getElementById('statsEmptyState');
         const datasetInfoContainer = document.getElementById('datasetInfoContainer');
         const varList = document.getElementById('varList');
@@ -372,27 +307,15 @@
         const presetNameInput = document.getElementById('presetNameInput'), savePresetBtn = document.getElementById('savePresetBtn');
         const deletePresetBtn = document.getElementById('deletePresetBtn'), customOptGroup = document.getElementById('customOptGroup');
         
-        const inspectorContainer = document.getElementById('inspectorContainer'), inspectorLoader = document.getElementById('inspectorLoader');
+        const inspectorContainer = document.getElementById('inspectorContainer');
         const mapEmptyText = document.getElementById('mapEmptyText'), resetInspectorBtn = document.getElementById('resetInspectorBtn');
         
-        const gliderMap = document.getElementById('gliderMap'), mapMarker = document.getElementById('mapMarker');
+        const gliderMap = document.getElementById('gliderMap');
         const cmapTrigger = document.getElementById('cmapTrigger'), cmapMenu = document.getElementById('cmapMenu');
         const cmapInput = document.getElementById('cmap'), cmapOptions = Array.from(document.querySelectorAll('.cmap-option'));
 
-        const xTrimRow = document.getElementById('xTrimRow');
-        const yTrimContainer = document.getElementById('yTrimContainer');
         const cTrimContainer = document.getElementById('cTrimContainer');
-        const sparklineImg = document.getElementById('sparklineImg');
-        const resetTrimBtn = document.getElementById('resetTrimBtn');
         
-        const trimTrack = document.getElementById('trimTrack'), trimFill = document.getElementById('trimFill');
-        const trimLeftHandle = document.getElementById('trimLeftHandle'), trimRightHandle = document.getElementById('trimRightHandle');
-        const trimStartInput = document.getElementById('trimStartInput'), trimEndInput = document.getElementById('trimEndInput');
-
-        const yTrimTrack = document.getElementById('yTrimTrack'), yTrimFill = document.getElementById('yTrimFill');
-        const yTrimTopHandle = document.getElementById('yTrimTopHandle'), yTrimBottomHandle = document.getElementById('yTrimBottomHandle');
-        const yTrimMinInput = document.getElementById('yTrimMinInput'), yTrimMaxInput = document.getElementById('yTrimMaxInput');
-
         const cTrimTrack = document.getElementById('cTrimTrack');
         const cTrimTopMask = document.getElementById('cTrimTopMask'), cTrimBottomMask = document.getElementById('cTrimBottomMask');
         const cTrimTopHandle = document.getElementById('cTrimTopHandle'), cTrimBottomHandle = document.getElementById('cTrimBottomHandle');
@@ -401,33 +324,25 @@
         let progressInterval;
         let trimTimeout;
         let currentMapDataset = "";
+        let currentZoomBounds = null;
+
         
-        let baseXMin = null, baseXMax = null;
-        let baseYMin = null, baseYMax = null;
         let baseCMin = null, baseCMax = null;
         let isXDateTime = false;
         
-        let currentPlotController = null;
-        let inspectController = null;
-        let currentPlotMeta = null;
-        let currentMapBounds = null;
         let isPlotting = false;
         let plotQueued = false;
         
-        let isDraggingLeft = false, isDraggingRight = false;
-        let isDraggingYTop = false, isDraggingYBottom = false;
         let isDraggingCTop = false, isDraggingCBottom = false;
-        let dragStartX = 0, dragStartY = 0;
-        let isDraggingBox = false;
 
         const OceanPresets = {
-            preset_temp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true, delta: false },
-            preset_sal: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true, delta: false },
-            preset_density: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true, delta: false },
-            preset_chla: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true, delta: false },
-            preset_doxy: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true, delta: false },
-            preset_bbp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true, delta: false },
-            preset_ts: { x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false, delta: false }
+            preset_temp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
+            preset_sal: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
+            preset_density: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
+            preset_chla: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
+            preset_doxy: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
+            preset_bbp: { x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true },
+            preset_ts: { x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false }
         };
 
         const defaultPresetDefinitions = [
@@ -441,6 +356,76 @@
         ];
         let isFirstLoad = true;
 
+        window.addEventListener('message', function(event) {
+            const msg = event.data;
+            
+            if (msg.type === 'plotLoaded') {
+                setLoading(false);
+                currentZoomBounds = null;
+
+                if (plotQueued) { plotQueued = false; updatePlot(); return; }
+
+                if (msg.hasC) {
+                    baseCMin = msg.globalLimits.cMin;
+                    baseCMax = msg.globalLimits.cMax;
+                    cTrimContainer.classList.replace('hidden', 'flex');
+                } else {
+                    cTrimContainer.classList.replace('flex', 'hidden');
+                }
+
+                if (msg.qc_applied) qcBadge.classList.remove('hidden');
+                else qcBadge.classList.add('hidden');
+
+                const params = new URLSearchParams(window.location.search);
+                if (params.has('cMin')) cTrimMinInput.value = params.get('cMin');
+                if (params.has('cMax')) cTrimMaxInput.value = params.get('cMax');
+                
+                if (msg.hasC) updateHandlesFromInputs('c');
+                if (params.has('cMin')) sendColourLimitsToIframe();
+            }
+            else if (msg.type === 'plotHover') {
+                inspectorContainer.classList.remove('hidden');
+                document.getElementById('hxLabel').textContent = xSelect.value;
+                document.getElementById('hyLabel').textContent = ySelect.value;
+                
+                document.getElementById('hxVal').textContent = isXDateTime ? new Date(msg.point.x).toLocaleString() : Number(msg.point.x).toFixed(4);
+                document.getElementById('hyVal').textContent = Number(msg.point.y).toFixed(4);
+
+                if (msg.point.c !== null && msg.point.c !== undefined) {
+                    document.getElementById('hcLabel').textContent = cVarSelect.value;
+                    document.getElementById('hcVal').textContent = Number(msg.point.c).toFixed(4);
+                    document.getElementById('hcContainer').classList.remove('hidden');
+                } else {
+                    document.getElementById('hcContainer').classList.add('hidden');
+                }
+            }
+            else if (msg.type === 'plotZoomed') {
+                const limits = msg.limits;
+                if (limits.xMin !== 'auto' && limits.xMin !== undefined) {
+                    currentZoomBounds = { xMin: limits.xMin, xMax: limits.xMax, yMin: limits.yMin, yMax: limits.yMax };
+                } else {
+                    currentZoomBounds = null;
+                }
+            }
+
+            else if (msg.type === 'autoColourResult') {
+                if (baseCMin !== null) {
+                    cTrimMinInput.value = parseFloat(msg.cMin).toFixed(4);
+                    cTrimMaxInput.value = parseFloat(msg.cMax).toFixed(4);
+                    updateHandlesFromInputs('c');
+                }
+            }
+
+        });
+
+        function sendColourLimitsToIframe() {
+            if (!plotIframe.contentWindow || !cVarSelect.value) return;
+            const c1 = parseFloat(cTrimMinInput.value);
+            const c2 = parseFloat(cTrimMaxInput.value);
+            plotIframe.contentWindow.postMessage({ type: 'updateColour', limits: { cMin: c1, cMax: c2 } }, '*');
+            updateUrlState();
+        }
+
         function updateUrlState() {
             const params = new URLSearchParams();
             params.set('dataset', datasetSelect.value);
@@ -449,21 +434,14 @@
             params.set('y', ySelect.value);
             params.set('c', cVarSelect.value);
             params.set('cmap', cmapInput.value);
-            params.set('delta', deltaCheck.checked);
-            params.set('dAxis', deltaAxis.value);
             params.set('invY', document.getElementById('invertY').checked);
             params.set('qc', applyQcCheck.checked);
             params.set('hlQc', highlightQcCheck.checked);
             params.set('qcFlags', qcFlagsInput.value);
             params.set('filtTime', filterTimeCheck.checked);
-            params.set('all', plotAllCheck.checked);
 
-            if (trimStartInput.value) params.set('xMin', trimStartInput.value);
-            if (trimEndInput.value) params.set('xMax', trimEndInput.value);
-            if (yTrimMinInput.value) params.set('yMin', yTrimMinInput.value);
-            if (yTrimMaxInput.value) params.set('yMax', yTrimMaxInput.value);
-            if (cTrimMinInput.value) params.set('cMin', cTrimMinInput.value);
-            if (cTrimMaxInput.value) params.set('cMax', cTrimMaxInput.value);
+            if (cTrimMinInput.value && baseCMin !== null) params.set('cMin', cTrimMinInput.value);
+            if (cTrimMaxInput.value && baseCMax !== null) params.set('cMax', cTrimMaxInput.value);
 
             const newUrl = `${window.location.pathname}?${params.toString()}`;
             window.history.replaceState({}, '', newUrl);
@@ -471,7 +449,7 @@
 
         function applyUrlState() {
             const params = new URLSearchParams(window.location.search);
-            if (!params.has('x')) return; // No detailed state to apply
+            if (!params.has('x')) return;
 
             const setVal = (id, param) => { if (params.has(param)) document.getElementById(id).value = params.get(param); };
             const setCheck = (id, param) => { if (params.has(param)) document.getElementById(id).checked = params.get(param) === 'true'; };
@@ -481,33 +459,17 @@
                 togglePresetUI();
             }
 
-            setVal('xVar', 'x');
-            setVal('yVar', 'y');
-            setVal('cVar', 'c');
-            setVal('cmap', 'cmap');
+            setVal('xVar', 'x'); setVal('yVar', 'y'); setVal('cVar', 'c'); setVal('cmap', 'cmap');
             updateCmapGradient(cmapInput.value);
 
-            setCheck('plotDelta', 'delta');
-            setVal('deltaAxis', 'dAxis');
-            deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none';
-
-            setCheck('invertY', 'invY');
-            setCheck('applyQc', 'qc');
-            setCheck('highlightQcCheck', 'hlQc');
-            setVal('qcFlags', 'qcFlags');
-            setCheck('filterTimeCheck', 'filtTime');
-            setCheck('plotAll', 'all');
+            setCheck('invertY', 'invY'); setCheck('applyQc', 'qc'); setCheck('highlightQcCheck', 'hlQc');
+            setVal('qcFlags', 'qcFlags'); setCheck('filterTimeCheck', 'filtTime');
 
             qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none';
 
-            setVal('trimStartInput', 'xMin');
-            setVal('trimEndInput', 'xMax');
-            setVal('yTrimMinInput', 'yMin');
-            setVal('yTrimMaxInput', 'yMax');
             setVal('cTrimMinInput', 'cMin');
             setVal('cTrimMaxInput', 'cMax');
 
-            updateMetadataLabels();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
         }
@@ -550,8 +512,7 @@
             const presets = getCustomPresets();
             presets[name] = {
                 x: [xSelect.value], y: [ySelect.value], c: [cVarSelect.value],
-                cmap: cmapInput.value, invert: document.getElementById('invertY').checked,
-                delta: deltaCheck.checked, deltaAxis: deltaAxis.value
+                cmap: cmapInput.value, invert: document.getElementById('invertY').checked
             };
             localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(presets));
             
@@ -592,98 +553,69 @@
         savePresetBtn.addEventListener('click', saveCurrentAsPreset);
         deletePresetBtn.addEventListener('click', deleteCurrentPreset);
 
-        const formatDateTimeLocal = (ms) => {
-            const d = new Date(ms);
-            const pad = (n) => n.toString().padStart(2, '0');
-            return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-        };
-        const parseDateTimeLocal = (str) => { return new Date(str + 'Z').getTime(); };
+        function resetPlotState(fullReset = true) {
+            plotIframe.classList.add('hidden');
+            emptyState.classList.remove('hidden');
+            emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
+            qcBadge.classList.add('hidden');
+            downloadBtn.classList.add('hidden');
 
-function resetPlotState(fullReset = true) {
-        if (currentPlotController) currentPlotController.abort();
-        plotImage.classList.add('hidden');
-        emptyState.classList.remove('hidden');
-        emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables and click Plot</p>`;
-        qcBadge.classList.add('hidden');
-        downloadBtn.classList.add('hidden');
-
-        if (fullReset) {
-            xTrimRow.classList.replace('flex', 'hidden');
-            yTrimContainer.classList.replace('flex', 'hidden');
-            cTrimContainer.classList.replace('flex', 'hidden');
-            sparklineImg.classList.add('hidden');
-            
-            // Clear baseline values so they can be re-learned from the full dataset
-            baseXMin = null; baseXMax = null;
-            baseYMin = null; baseYMax = null;
-            baseCMin = null; baseCMax = null;
-            
-            // Clear all input boxes
-            [trimStartInput, trimEndInput, yTrimMinInput, yTrimMaxInput, cTrimMinInput, cTrimMaxInput].forEach(i => i.value = '');
-            
-            // Reset slider handle positions
-            trimLeftHandle.style.left = '0%'; trimRightHandle.style.left = '100%';
-            trimFill.style.left = '0%'; trimFill.style.right = '0%';
-            
-            yTrimTopHandle.style.top = '0%'; yTrimBottomHandle.style.bottom = '0%';
-            yTrimFill.style.top = '0%'; yTrimFill.style.bottom = '0%';
-            
-            cTrimTopHandle.style.top = '0%'; cTrimBottomHandle.style.bottom = '0%';
-            cTrimTopMask.style.height = '0%'; cTrimBottomMask.style.height = '0%';
+            if (fullReset) {
+                cTrimContainer.classList.replace('flex', 'hidden');
+                baseCMin = null; baseCMax = null;
+                
+                cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+                cTrimTopHandle.style.top = '0%'; cTrimBottomHandle.style.bottom = '0%';
+                cTrimTopMask.style.height = '0%'; cTrimBottomMask.style.height = '0%';
+            }
+            resetInspectorState();
         }
-        resetInspectorState();
-    }
+
+        function updateInputsFromNativeZoom(limits) {
+            if (limits.xMin !== undefined && limits.xMin !== 'auto') {
+                if (isXDateTime) {
+                    trimStartInput.value = formatDateTimeLocal(new Date(limits.xMin).getTime());
+                    trimEndInput.value = formatDateTimeLocal(new Date(limits.xMax).getTime());
+                } else {
+                    trimStartInput.value = parseFloat(limits.xMin).toFixed(4);
+                    trimEndInput.value = parseFloat(limits.xMax).toFixed(4);
+                }
+            } else if (limits.xMin === 'auto') {
+                if (isXDateTime) {
+                    trimStartInput.value = formatDateTimeLocal(baseXMin); trimEndInput.value = formatDateTimeLocal(baseXMax);
+                } else {
+                    trimStartInput.value = baseXMin.toFixed(4); trimEndInput.value = baseXMax.toFixed(4);
+                }
+            }
+
+            if (limits.yMin !== undefined && limits.yMin !== 'auto') {
+                const invY = document.getElementById('invertY').checked;
+                let y1 = parseFloat(limits.yMin); let y2 = parseFloat(limits.yMax);
+                yTrimMinInput.value = Math.min(y1, y2).toFixed(4);
+                yTrimMaxInput.value = Math.max(y1, y2).toFixed(4);
+            } else if (limits.yMin === 'auto') {
+                yTrimMinInput.value = baseYMin.toFixed(4); yTrimMaxInput.value = baseYMax.toFixed(4);
+            }
+
+            // Sync the physical colour sliders to the new zoomed plot data
+            if (limits.cMin !== undefined && limits.cMin !== 'auto') {
+                cTrimMinInput.value = parseFloat(limits.cMin).toFixed(4);
+                cTrimMaxInput.value = parseFloat(limits.cMax).toFixed(4);
+            } else if (limits.xMin === 'auto' && baseCMin !== null && baseCMax !== null) {
+                cTrimMinInput.value = baseCMin.toFixed(4);
+                cTrimMaxInput.value = baseCMax.toFixed(4);
+            }
+
+            updateHandlesFromInputs('x');
+            updateHandlesFromInputs('y');
+            if (baseCMin !== null) updateHandlesFromInputs('c');
+        }
 
         const updateHandlesFromInputs = (axis) => {
-            if (axis === 'x' && baseXMin !== null && baseXMax !== null) {
-                let startV, endV;
-                if (isXDateTime) {
-                    trimStartInput.type = "datetime-local"; trimEndInput.type = "datetime-local";
-                    startV = parseDateTimeLocal(trimStartInput.value); endV = parseDateTimeLocal(trimEndInput.value);
-                    if (isNaN(startV)) startV = baseXMin; if (isNaN(endV)) endV = baseXMax;
-                } else {
-                    trimStartInput.type = "number"; trimEndInput.type = "number";
-                    startV = parseFloat(trimStartInput.value); if(isNaN(startV)) startV = baseXMin;
-                    endV = parseFloat(trimEndInput.value); if(isNaN(endV)) endV = baseXMax;
-                }
-
-                const total = baseXMax - baseXMin;
-                let startPct = ((startV - baseXMin) / total) * 100;
-                let endPct = ((endV - baseXMin) / total) * 100;
-                
-                startPct = Math.max(0, Math.min(100, startPct)); endPct = Math.max(0, Math.min(100, endPct));
-                if (startPct > endPct) { let temp = startPct; startPct = endPct; endPct = temp; }
-
-                trimLeftHandle.style.left = `${startPct}%`; trimRightHandle.style.left = `${endPct}%`;
-                trimFill.style.left = `${startPct}%`; trimFill.style.right = `${100 - endPct}%`;
-            }
-            
-            if (axis === 'y' && baseYMin !== null && baseYMax !== null) {
-                let startV = parseFloat(yTrimMinInput.value); if(isNaN(startV)) startV = baseYMin;
-                let endV = parseFloat(yTrimMaxInput.value); if(isNaN(endV)) endV = baseYMax;
-
-                const total = baseYMax - baseYMin;
-                let startPct = ((startV - baseYMin) / total) * 100;
-                let endPct = ((endV - baseYMin) / total) * 100;
-                
-                startPct = Math.max(0, Math.min(100, startPct)); endPct = Math.max(0, Math.min(100, endPct));
-                if (startPct > endPct) { let temp = startPct; startPct = endPct; endPct = temp; }
-
-                const isInverted = document.getElementById('invertY').checked;
-                let topPxPct, bottomPxPct;
-
-                if (isInverted) { topPxPct = startPct; bottomPxPct = 100 - endPct; } 
-                else { topPxPct = 100 - endPct; bottomPxPct = startPct; }
-                
-                yTrimTopHandle.style.top = `${topPxPct}%`; yTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
-                yTrimFill.style.top = `${topPxPct}%`; yTrimFill.style.bottom = `${bottomPxPct}%`;
-            }
-
-        if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
+            if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
                 let startV = parseFloat(cTrimMinInput.value); if(isNaN(startV)) startV = baseCMin;
                 let endV = parseFloat(cTrimMaxInput.value); if(isNaN(endV)) endV = baseCMax;
 
-                // Prevent zooming out beyond the absolute data bounds
                 startV = Math.max(baseCMin, startV);
                 endV = Math.min(baseCMax, endV);
                 cTrimMinInput.value = startV.toFixed(4);
@@ -701,28 +633,53 @@ function resetPlotState(fullReset = true) {
                 
                 cTrimTopHandle.style.top = `${topPxPct}%`; cTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
                 
-                // Squash the gradient exactly between the handles
                 const gradEl = document.getElementById('cTrimGradient');
                 if (gradEl) {
                     gradEl.style.top = `${topPxPct}%`;
                     gradEl.style.bottom = `${bottomPxPct}%`;
                 }
                 
-                // Fill the out-of-bounds regions with clamped solid colours
                 cTrimTopMask.style.height = `${topPxPct}%`; cTrimBottomMask.style.height = `${bottomPxPct}%`;
+            }
+            if (axis === 'y' && baseYMin !== null && baseYMax !== null) {
+                let startV = parseFloat(yTrimMinInput.value); if(isNaN(startV)) startV = baseYMin;
+                let endV = parseFloat(yTrimMaxInput.value); if(isNaN(endV)) endV = baseYMax;
+
+                // Constrain values to base limits
+                startV = Math.max(baseYMin, startV);
+                endV = Math.min(baseYMax, endV);
+
+                const total = baseYMax - baseYMin;
+                let startPct = ((startV - baseYMin) / total) * 100;
+                let endPct = ((endV - baseYMin) / total) * 100;
+                
+                startPct = Math.max(0, Math.min(100, startPct)); endPct = Math.max(0, Math.min(100, endPct));
+                if (startPct > endPct) { let temp = startPct; startPct = endPct; endPct = temp; }
+
+                const isInverted = document.getElementById('invertY').checked;
+                let topPxPct, bottomPxPct;
+
+                if (isInverted) { 
+                    // Inverted: Min value (e.g. 0m) is at the TOP (0% down)
+                    topPxPct = startPct; 
+                    bottomPxPct = 100 - endPct; 
+                } else { 
+                    // Standard: Max value (e.g. 25C) is at the TOP (0% down)
+                    topPxPct = 100 - endPct; 
+                    bottomPxPct = startPct; 
+                }
+                
+                yTrimTopHandle.style.top = `${topPxPct}%`; yTrimBottomHandle.style.bottom = `${bottomPxPct}%`;
+                yTrimFill.style.top = `${topPxPct}%`; yTrimFill.style.bottom = `${bottomPxPct}%`;
             }
         };
 
         const updateInputsFromHandles = (axis, p1, p2) => {
-            if (axis === 'x' && baseXMin !== null && baseXMax !== null) {
-                const total = baseXMax - baseXMin;
-                const startV = baseXMin + (p1 / 100) * total;
-                const endV = baseXMin + (p2 / 100) * total;
-                if (isXDateTime) {
-                    trimStartInput.value = formatDateTimeLocal(startV); trimEndInput.value = formatDateTimeLocal(endV);
-                } else {
-                    trimStartInput.value = startV.toFixed(4); trimEndInput.value = endV.toFixed(4);
-                }
+            if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
+                const total = baseCMax - baseCMin;
+                const calcMax = baseCMax - (p1 / 100) * total; 
+                const calcMin = baseCMin + (p2 / 100) * total;
+                cTrimMinInput.value = calcMin.toFixed(4); cTrimMaxInput.value = calcMax.toFixed(4);
             }
             if (axis === 'y' && baseYMin !== null && baseYMax !== null) {
                 const total = baseYMax - baseYMin;
@@ -730,84 +687,22 @@ function resetPlotState(fullReset = true) {
                 let calcMin, calcMax;
 
                 if (isInverted) {
-                    calcMin = baseYMin + (p1 / 100) * total; calcMax = baseYMax - (p2 / 100) * total;
+                    calcMin = baseYMin + (p1 / 100) * total; 
+                    calcMax = baseYMax - (p2 / 100) * total;
                 } else {
-                    calcMax = baseYMax - (p1 / 100) * total; calcMin = baseYMin + (p2 / 100) * total;
+                    calcMax = baseYMax - (p1 / 100) * total; 
+                    calcMin = baseYMin + (p2 / 100) * total;
                 }
-                
-                yTrimMinInput.value = calcMin.toFixed(4); yTrimMaxInput.value = calcMax.toFixed(4);
-            }
-            if (axis === 'c' && baseCMin !== null && baseCMax !== null) {
-                const total = baseCMax - baseCMin;
-                const calcMax = baseCMax - (p1 / 100) * total; 
-                const calcMin = baseCMin + (p2 / 100) * total;
-                
-                cTrimMinInput.value = calcMin.toFixed(4); cTrimMaxInput.value = calcMax.toFixed(4);
-            }
-        };
-
-        const resetTrimUI = (axis = 'both') => {
-            if ((axis === 'both' || axis === 'x') && baseXMin !== null && baseXMax !== null) {
-                if (isXDateTime) {
-                    trimStartInput.type = "datetime-local"; trimEndInput.type = "datetime-local";
-                    trimStartInput.value = formatDateTimeLocal(baseXMin); trimEndInput.value = formatDateTimeLocal(baseXMax);
-                } else {
-                    trimStartInput.type = "number"; trimEndInput.type = "number";
-                    trimStartInput.value = baseXMin.toFixed(4); trimEndInput.value = baseXMax.toFixed(4);
-                }
-                updateHandlesFromInputs('x');
-            }
-            if ((axis === 'both' || axis === 'y') && baseYMin !== null && baseYMax !== null) {
-                yTrimMinInput.value = baseYMin.toFixed(4); yTrimMaxInput.value = baseYMax.toFixed(4);
-                updateHandlesFromInputs('y');
-            }
-            if ((axis === 'both' || axis === 'c') && baseCMin !== null && baseCMax !== null) {
-                cTrimMinInput.value = ''; cTrimMaxInput.value = ''; 
+                yTrimMinInput.value = calcMin.toFixed(4); 
+                yTrimMaxInput.value = calcMax.toFixed(4);
             }
         };
 
         const handleSliderDrag = (e) => {
-            if (!isDraggingLeft && !isDraggingRight && !isDraggingYTop && !isDraggingYBottom && !isDraggingCTop && !isDraggingCBottom) return;
-            const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX;
+            if (!isDraggingCTop && !isDraggingCBottom) return;
             const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY;
-            
-            if (isDraggingLeft || isDraggingRight) {
-                const rect = trimTrack.getBoundingClientRect();
-                let pct = ((clientX - rect.left) / rect.width) * 100;
-                pct = Math.max(0, Math.min(100, pct));
-                
-                let newStart = parseFloat(trimLeftHandle.style.left) || 0;
-                let newEnd = parseFloat(trimRightHandle.style.left) || 100;
-                
-                if (isDraggingLeft) newStart = Math.min(pct, newEnd - 1);
-                else if (isDraggingRight) newEnd = Math.max(pct, newStart + 1);
-                
-                trimLeftHandle.style.left = `${newStart}%`; trimRightHandle.style.left = `${newEnd}%`;
-                trimFill.style.left = `${newStart}%`; trimFill.style.right = `${100 - newEnd}%`;
-                updateInputsFromHandles('x', newStart, newEnd);
-            }
 
-            if (isDraggingYTop || isDraggingYBottom) {
-                const rect = yTrimTrack.getBoundingClientRect();
-                let pctFromTop = ((clientY - rect.top) / rect.height) * 100;
-                pctFromTop = Math.max(0, Math.min(100, pctFromTop));
-                
-                let currentTopPct = parseFloat(yTrimTopHandle.style.top) || 0;
-                let currentBottomPct = parseFloat(yTrimBottomHandle.style.bottom) || 0;
-                
-                if (isDraggingYTop) {
-                    currentTopPct = Math.min(pctFromTop, 100 - currentBottomPct - 1);
-                } else if (isDraggingYBottom) {
-                    let newBottom = 100 - pctFromTop;
-                    currentBottomPct = Math.max(0, Math.min(newBottom, 100 - currentTopPct - 1));
-                }
-                
-                yTrimTopHandle.style.top = `${currentTopPct}%`; yTrimBottomHandle.style.bottom = `${currentBottomPct}%`;
-                yTrimFill.style.top = `${currentTopPct}%`; yTrimFill.style.bottom = `${currentBottomPct}%`;
-                updateInputsFromHandles('y', currentTopPct, currentBottomPct);
-            }
-
-           if (isDraggingCTop || isDraggingCBottom) {
+            if (isDraggingCTop || isDraggingCBottom) {
                 const rect = cTrimTrack.getBoundingClientRect();
                 let pctFromTop = ((clientY - rect.top) / rect.height) * 100;
                 pctFromTop = Math.max(0, Math.min(100, pctFromTop));
@@ -824,11 +719,9 @@ function resetPlotState(fullReset = true) {
                 
                 cTrimTopHandle.style.top = `${currentTopPct}%`; 
                 cTrimBottomHandle.style.bottom = `${currentBottomPct}%`;
-                
                 cTrimTopMask.style.height = `${currentTopPct}%`; 
                 cTrimBottomMask.style.height = `${currentBottomPct}%`;
                 
-                // Squash the gradient track live while dragging
                 const gradEl = document.getElementById('cTrimGradient');
                 if (gradEl) {
                     gradEl.style.top = `${currentTopPct}%`;
@@ -839,129 +732,36 @@ function resetPlotState(fullReset = true) {
             }
             
             clearTimeout(trimTimeout);
-            trimTimeout = setTimeout(() => { updatePlot(); }, 500);
+            trimTimeout = setTimeout(() => { sendColourLimitsToIframe(); }, 50);
         };
 
-        const stopDrag = () => { isDraggingLeft = isDraggingRight = isDraggingYTop = isDraggingYBottom = isDraggingCTop = isDraggingCBottom = false; };
+        const stopDrag = () => { isDraggingCTop = isDraggingCBottom = false; };
 
-        trimLeftHandle.addEventListener('mousedown', () => isDraggingLeft = true);
-        trimRightHandle.addEventListener('mousedown', () => isDraggingRight = true);
-        yTrimTopHandle.addEventListener('mousedown', () => isDraggingYTop = true);
-        yTrimBottomHandle.addEventListener('mousedown', () => isDraggingYBottom = true);
         cTrimTopHandle.addEventListener('mousedown', () => isDraggingCTop = true);
         cTrimBottomHandle.addEventListener('mousedown', () => isDraggingCBottom = true);
         
         document.addEventListener('mousemove', handleSliderDrag);
         document.addEventListener('mouseup', stopDrag);
 
-        [trimStartInput, trimEndInput].forEach(el => el.addEventListener('change', () => { 
-            cTrimMinInput.value = ''; cTrimMaxInput.value = '';
-            updateHandlesFromInputs('x'); updatePlot(); 
-        }));
-        [yTrimMinInput, yTrimMaxInput].forEach(el => el.addEventListener('change', () => { 
-            cTrimMinInput.value = ''; cTrimMaxInput.value = '';
-            updateHandlesFromInputs('y'); updatePlot(); 
-        }));
         [cTrimMinInput, cTrimMaxInput].forEach(el => el.addEventListener('change', () => { 
-            updateHandlesFromInputs('c'); updatePlot(); 
+            updateHandlesFromInputs('c'); sendColourLimitsToIframe(); 
         }));
 
-
-        resetTrimBtn.addEventListener('click', () => { 
-            resetTrimUI('both'); 
-            baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
-            updatePlot(); 
+        document.getElementById('resetColorBtn').addEventListener('click', () => {
+            if (baseCMin !== null && baseCMax !== null) {
+                cTrimMinInput.value = baseCMin.toFixed(4);
+                cTrimMaxInput.value = baseCMax.toFixed(4);
+                updateHandlesFromInputs('c');
+                sendColourLimitsToIframe();
+            }
         });
-
-        plotAreaWrapper.addEventListener('mousedown', (e) => {
-            if (e.target !== plotImage || !currentPlotMeta) return;
-            e.preventDefault(); isDraggingBox = true;
-            
-            const rect = plotAreaWrapper.getBoundingClientRect();
-            dragStartX = e.clientX - rect.left; dragStartY = e.clientY - rect.top;
-            
-            zoomBoxOverlay.style.left = `${dragStartX}px`; zoomBoxOverlay.style.top = `${dragStartY}px`;
-            zoomBoxOverlay.style.width = '0px'; zoomBoxOverlay.style.height = '0px';
-            zoomBoxOverlay.style.display = 'block';
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isDraggingBox || !currentPlotMeta) return;
-            const rect = plotAreaWrapper.getBoundingClientRect();
-            let currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-            let currentY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
-
-            const width = Math.abs(currentX - dragStartX); const height = Math.abs(currentY - dragStartY);
-            zoomBoxOverlay.style.left = `${Math.min(currentX, dragStartX)}px`;
-            zoomBoxOverlay.style.top = `${Math.min(currentY, dragStartY)}px`;
-            zoomBoxOverlay.style.width = `${width}px`; zoomBoxOverlay.style.height = `${height}px`;
-        });
-
-        document.addEventListener('mouseup', (e) => {
-            if (!isDraggingBox) return;
-            isDraggingBox = false; zoomBoxOverlay.style.display = 'none';
-            if (!currentPlotMeta) return;
-
-            const wrapperRect = plotAreaWrapper.getBoundingClientRect();
-            let endX = Math.max(0, Math.min(e.clientX - wrapperRect.left, wrapperRect.width));
-            let endY = Math.max(0, Math.min(e.clientY - wrapperRect.top, wrapperRect.height));
-
-            if (Math.abs(endX - dragStartX) < ZOOM_DRAG_THRESHOLD && Math.abs(endY - dragStartY) < ZOOM_DRAG_THRESHOLD) {
-                triggerInspector(e); return;
-            }
-
-            const imgRect = plotImage.getBoundingClientRect();
-            const imgAspect = plotImage.naturalWidth / plotImage.naturalHeight;
-            const boxAspect = imgRect.width / imgRect.height;
-            
-            let renderW, renderH, offsetX = 0, offsetY = 0;
-            if (boxAspect > imgAspect) {
-                renderH = imgRect.height; renderW = renderH * imgAspect; offsetX = (imgRect.width - renderW) / 2;
-            } else {
-                renderW = imgRect.width; renderH = renderW / imgAspect; offsetY = (imgRect.height - renderH) / 2;
-            }
-
-            const leftPx = Math.min(dragStartX, endX) - (imgRect.left - wrapperRect.left) - offsetX;
-            const rightPx = Math.max(dragStartX, endX) - (imgRect.left - wrapperRect.left) - offsetX;
-            const topPx = Math.min(dragStartY, endY) - (imgRect.top - wrapperRect.top) - offsetY;
-            const bottomPx = Math.max(dragStartY, endY) - (imgRect.top - wrapperRect.top) - offsetY;
-
-            const normX1 = Math.max(0, Math.min(1, leftPx / renderW));
-            const normX2 = Math.max(0, Math.min(1, rightPx / renderW));
-            const normY1 = Math.max(0, Math.min(1, 1.0 - (bottomPx / renderH)));
-            const normY2 = Math.max(0, Math.min(1, 1.0 - (topPx / renderH)));
-
-            const {x0, y0, w, h} = currentPlotMeta.bbox;
-            const cx1 = Math.max(x0, Math.min(x0+w, normX1)); const cx2 = Math.max(x0, Math.min(x0+w, normX2));
-            const cy1 = Math.max(y0, Math.min(y0+h, normY1)); const cy2 = Math.max(y0, Math.min(y0+h, normY2));
-
-            if (cx1 >= cx2 || cy1 >= cy2) return; 
-
-            const dataXMin = currentPlotMeta.xlim[0] + ((cx1 - x0) / w) * (currentPlotMeta.xlim[1] - currentPlotMeta.xlim[0]);
-            const dataXMax = currentPlotMeta.xlim[0] + ((cx2 - x0) / w) * (currentPlotMeta.xlim[1] - currentPlotMeta.xlim[0]);
-            
-            let dataYMin, dataYMax;
-            if (document.getElementById('invertY').checked) {
-                dataYMax = currentPlotMeta.ylim[0] + ((cy1 - y0) / h) * (currentPlotMeta.ylim[1] - currentPlotMeta.ylim[0]);
-                dataYMin = currentPlotMeta.ylim[0] + ((cy2 - y0) / h) * (currentPlotMeta.ylim[1] - currentPlotMeta.ylim[0]);
-            } else {
-                dataYMin = currentPlotMeta.ylim[0] + ((cy1 - y0) / h) * (currentPlotMeta.ylim[1] - currentPlotMeta.ylim[0]);
-                dataYMax = currentPlotMeta.ylim[0] + ((cy2 - y0) / h) * (currentPlotMeta.ylim[1] - currentPlotMeta.ylim[0]);
-            }
-
-            if (isXDateTime) {
-                trimStartInput.value = formatDateTimeLocal(dataXMin); trimEndInput.value = formatDateTimeLocal(dataXMax);
-            } else {
-                trimStartInput.value = dataXMin.toFixed(4); trimEndInput.value = dataXMax.toFixed(4);
-            }
-            
-            yTrimMinInput.value = dataYMin.toFixed(4); yTrimMaxInput.value = dataYMax.toFixed(4);
-            
-            // Auto-scale colour axis: clear inputs to trigger backend auto-scaling, but keep global base limits
-            cTrimMinInput.value = ''; 
-            cTrimMaxInput.value = '';
-            
-            updateHandlesFromInputs('x'); updateHandlesFromInputs('y'); updatePlot();
+        document.getElementById('autoColorBtn').addEventListener('click', () => {
+            if (!plotIframe.contentWindow) return;
+            // Read current axis bounds from the iframe's last known zoom, or pass null for full dataset
+            plotIframe.contentWindow.postMessage({ 
+                type: 'autoColour', 
+                bounds: currentZoomBounds  // null = use full dataset
+            }, '*');
         });
 
         function updateCmapGradient(cmapVal) {
@@ -973,7 +773,6 @@ function resetPlotState(fullReset = true) {
                 const gradEl = document.getElementById('cTrimGradient');
                 if (gradEl) gradEl.style.background = bg;
                 
-                // Securely extract edge colours for the masks from the raw HTML style attribute string
                 const rawStyle = match.getAttribute('style');
                 const colors = rawStyle.match(/#[0-9a-fA-F]{6}|rgba?\([^)]+\)/g);
                 if (colors && colors.length >= 2) {
@@ -984,7 +783,6 @@ function resetPlotState(fullReset = true) {
                 cmapTrigger.style.background = '#000000';
                 const gradEl = document.getElementById('cTrimGradient');
                 if (gradEl) gradEl.style.background = '#000000';
-                
                 document.getElementById('cTrimBottomMask').style.backgroundColor = '#000000';
                 document.getElementById('cTrimTopMask').style.backgroundColor = '#000000';
             }
@@ -1006,6 +804,7 @@ function resetPlotState(fullReset = true) {
                 
                 setCustomMode();
                 resetPlotState(false); 
+                updatePlot(); 
             });
         });
 
@@ -1051,7 +850,6 @@ function resetPlotState(fullReset = true) {
             renderPresetsDropdown();
             await checkFilesAndTogglePrompt();
         }
-
 
         datasetSelect.addEventListener('change', handleDatasetChange);
 
@@ -1141,27 +939,6 @@ function resetPlotState(fullReset = true) {
                 statsEmptyState.classList.add('hidden');
             } catch (e) { console.error("Failed to load dataset info:", e); }
         }
-        async function fetchSparkline() {
-            const dataset = datasetSelect.value;
-            const x = xSelect.value; const y = ySelect.value;
-            if(!dataset || !x || !y) return;
-            
-            try {
-                const res = await fetch(`/api/sparkline?filename=${encodeURIComponent(dataset)}&x_var=${encodeURIComponent(x)}&y_var=${encodeURIComponent(y)}`);
-                const data = await res.json();
-                if(data.image) {
-                    sparklineImg.src = data.image; sparklineImg.classList.remove('hidden');
-                    if (baseXMin === null) {
-                        if (isXDateTime) {
-                            baseXMin = new Date(data.min_x + 'Z').getTime(); baseXMax = new Date(data.max_x + 'Z').getTime();
-                        } else {
-                            baseXMin = parseFloat(data.min_x); baseXMax = parseFloat(data.max_x);
-                        }
-                        resetTrimUI('x');
-                    }
-                }
-            } catch(e) { console.error("Sparkline failed:", e); }
-        }
 
         function applyPreset(presetKey) {
             if (presetKey === 'custom') return;
@@ -1189,11 +966,7 @@ function resetPlotState(fullReset = true) {
             updateCmapGradient(p.cmap);
             
             document.getElementById('invertY').checked = p.invert;
-            deltaCheck.checked = p.delta || false;
-            deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none';
-            if (p.deltaAxis) deltaAxis.value = p.deltaAxis;
 
-            updateMetadataLabels();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
         }
@@ -1263,7 +1036,6 @@ function resetPlotState(fullReset = true) {
                 }
             });
             
-            // Check if we are loading state from a shared URL
             if (!hasUrlState) {
                 if (!currentValid || plotPreset.value === 'custom') {
                     plotPreset.value = firstValid || 'custom';
@@ -1278,7 +1050,6 @@ function resetPlotState(fullReset = true) {
                     cmapInput.value = 'viridis';
                     updateCmapGradient('viridis');
                     document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
-                    updateMetadataLabels();
                 }
             }
             
@@ -1287,68 +1058,44 @@ function resetPlotState(fullReset = true) {
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
         }
 
-        function updateMetadataLabels() {
-            const xInfo = variableCache.find(v => v.name === xSelect.value);
-            const yInfo = variableCache.find(v => v.name === ySelect.value);
-            
-            const sameUnits = xInfo && yInfo && xInfo.units === yInfo.units && xInfo.units !== 'No units' && xInfo.units !== '';
-            const bothTime = xInfo && yInfo && xInfo.type === 'datetime' && yInfo.type === 'datetime';
-            const deltaPossible = sameUnits || bothTime;
-            
-            deltaCheck.disabled = !deltaPossible;
-            if (!deltaPossible) {
-                deltaCheck.checked = false; deltaAxisGroup.style.display = 'none';
-                deltaCheck.parentElement.classList.add('opacity-40', 'cursor-not-allowed');
-            } else {
-                deltaCheck.parentElement.classList.remove('opacity-40', 'cursor-not-allowed');
-            }
-        }
-
-        deltaCheck.addEventListener('change', () => { deltaAxisGroup.style.display = deltaCheck.checked ? 'flex' : 'none'; resetPlotState(false); });
-        ['invertY'].forEach(id => document.getElementById(id).addEventListener('change', () => { resetPlotState(false); }));
-        deltaAxis.addEventListener('change', () => resetPlotState(false));
+        ['invertY'].forEach(id => document.getElementById(id).addEventListener('change', () => { resetPlotState(false); updatePlot(); }));
 
         cVarSelect.addEventListener('change', () => { 
-            baseCMin = null; baseCMax = null; cTrimMinInput.value = ''; cTrimMaxInput.value = '';
             resetPlotState(false); 
+            updatePlot(); 
         });
 
         xSelect.addEventListener('change', () => { 
             resetPlotState(true);
-            updateMetadataLabels(); 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
+            updatePlot();
         });
         
         ySelect.addEventListener('change', () => { 
             resetPlotState(true);
-            updateMetadataLabels(); 
             document.getElementById('invertY').checked = ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase());
+            updatePlot();
         });
 
         applyQcCheck.addEventListener('change', () => { 
             qcFlagsContainer.style.display = applyQcCheck.checked ? 'flex' : 'none'; 
             highlightQcLabel.style.display = applyQcCheck.checked ? 'flex' : 'none';
-            resetPlotState(false); 
+            resetPlotState(false); updatePlot(); 
         });
-        highlightQcCheck.addEventListener('change', () => resetPlotState(false));
+        highlightQcCheck.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
 
         filterTimeCheck.addEventListener('change', () => { 
             resetPlotState(true); 
             updatePlot(); 
         });
         
-        qcFlagsInput.addEventListener('change', () => resetPlotState(false));
-        plotAllCheck.addEventListener('change', () => resetPlotState(false));
+        qcFlagsInput.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
 
         downloadBtn.addEventListener('click', () => {
-            if (!plotImage.src) return;
-            const link = document.createElement('a');
-            link.href = plotImage.src;
-            link.download = `glider_plot_${datasetSelect.value}_${xSelect.value}_vs_${ySelect.value}.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            if (plotIframe.contentWindow) {
+                plotIframe.contentWindow.postMessage({ type: 'downloadPlot' }, '*');
+            }
         });
 
         async function loadMapImage() {
@@ -1360,90 +1107,13 @@ function resetPlotState(fullReset = true) {
             
             gliderMap.src = `/static/map_view.html?filename=${encodeURIComponent(selectedDataset)}`;
             currentMapDataset = selectedDataset;
-            
-            // Note: The marker hover logic in triggerInspector will need updating in the future 
-            // to communicate with the iframe via postMessage if you wish to keep the red dot overlay feature.
         }
 
         const resetInspectorState = () => {
             resetInspectorBtn.classList.add('hidden'); inspectorContainer.classList.add('hidden');
-            mapMarker.classList.add('hidden'); inspectorLoader.classList.add('hidden');
-            ['hxVal', 'hyVal', 'hLat', 'hLon'].forEach(id => document.getElementById(id).classList.remove('opacity-50'));
-            if (inspectController) inspectController.abort();
+            document.getElementById('hxVal').textContent = '--'; document.getElementById('hyVal').textContent = '--';
         };
-
-        const triggerInspector = (e) => {
-            if (!currentPlotMeta) return;
-            const rect = plotAreaWrapper.getBoundingClientRect();
-            const imgRect = plotImage.getBoundingClientRect();
-            const imgAspect = plotImage.naturalWidth / plotImage.naturalHeight;
-            const boxAspect = imgRect.width / imgRect.height;
-            
-            let renderW, renderH, offsetX = 0, offsetY = 0;
-            if (boxAspect > imgAspect) {
-                renderH = imgRect.height; renderW = renderH * imgAspect; offsetX = (imgRect.width - renderW) / 2;
-            } else {
-                renderW = imgRect.width; renderH = renderW / imgAspect; offsetY = (imgRect.height - renderH) / 2;
-            }
-            
-            const imgX = e.clientX - imgRect.left - offsetX; const imgY = e.clientY - imgRect.top - offsetY;
-            if (imgX < 0 || imgX > renderW || imgY < 0 || imgY > renderH) { resetInspectorState(); return; }
-            
-            const normX = imgX / renderW; const normY = 1.0 - (imgY / renderH); 
-            const {x0, y0, w, h} = currentPlotMeta.bbox;
-            if (normX < x0 || normX > x0 + w || normY < y0 || normY > y0 + h) { resetInspectorState(); return; }
-            
-            const dataX = currentPlotMeta.xlim[0] + ((normX - x0) / w) * (currentPlotMeta.xlim[1] - currentPlotMeta.xlim[0]);
-            const dataY = currentPlotMeta.ylim[0] + ((normY - y0) / h) * (currentPlotMeta.ylim[1] - currentPlotMeta.ylim[0]);
-            
-            if (inspectController) inspectController.abort();
-            inspectController = new AbortController();
-
-            const url = `/api/hover?filename=${encodeURIComponent(datasetSelect.value)}&x_var=${encodeURIComponent(xSelect.value)}&y_var=${encodeURIComponent(ySelect.value)}&c_var=${encodeURIComponent(cVarSelect.value)}&x_val=${dataX}&y_val=${dataY}&is_x_dt=${currentPlotMeta.is_x_dt}&x_min=${currentPlotMeta.xlim[0]}&x_max=${currentPlotMeta.xlim[1]}&y_min=${currentPlotMeta.ylim[0]}&y_max=${currentPlotMeta.ylim[1]}`;
-            
-            document.getElementById('hxLabel').textContent = xSelect.value;
-            document.getElementById('hyLabel').textContent = ySelect.value;
-            
-            document.getElementById('hcContainer').classList.add('hidden');
-            document.getElementById('htContainer').classList.add('hidden');
-            
-            inspectorContainer.classList.remove('hidden');
-            resetInspectorBtn.classList.remove('hidden'); inspectorLoader.classList.remove('hidden');
-            ['hxVal', 'hyVal', 'hLat', 'hLon'].forEach(id => document.getElementById(id).classList.add('opacity-50'));
-
-            fetch(url, { signal: inspectController.signal }).then(r => r.json()).then(d => {
-                inspectorLoader.classList.add('hidden');
-                ['hxVal', 'hyVal', 'hLat', 'hLon'].forEach(id => document.getElementById(id).classList.remove('opacity-50'));
-                if (d.error) return; 
-                
-                document.getElementById('hxVal').textContent = currentPlotMeta.is_x_dt ? new Date(d.x).toLocaleString() : Number(d.x).toFixed(4);
-                document.getElementById('hyVal').textContent = d.y !== null ? Number(d.y).toFixed(4) : '--';
-                
-                if (d.c_val !== undefined && d.c_val !== null) {
-                    document.getElementById('hcLabel').textContent = cVarSelect.value;
-                    document.getElementById('hcVal').textContent = Number(d.c_val).toFixed(4);
-                    document.getElementById('hcContainer').classList.remove('hidden');
-                }
-                
-                if (d.time_val !== undefined && d.time_val !== null && xSelect.value !== 'TIME' && ySelect.value !== 'TIME' && !xSelect.value.includes('TIME') && !ySelect.value.includes('TIME')) {
-                    document.getElementById('htVal').textContent = d.time_val;
-                    document.getElementById('htContainer').classList.remove('hidden');
-                }
-                
-                document.getElementById('hLat').textContent = d.lat !== null ? d.lat.toFixed(4) : '--';
-                document.getElementById('hLon').textContent = d.lon !== null ? d.lon.toFixed(4) : '--';
-                
-                if (d.lat !== null && d.lon !== null && currentMapBounds) {
-                    const px = ((d.lon - currentMapBounds.min_lon) / (currentMapBounds.max_lon - currentMapBounds.min_lon)) * 100;
-                    const py = (1.0 - (d.lat - currentMapBounds.min_lat) / (currentMapBounds.max_lat - currentMapBounds.min_lat)) * 100;
-                    mapMarker.style.left = `${px}%`; mapMarker.style.top = `${py}%`; mapMarker.classList.remove('hidden');
-                } else { mapMarker.classList.add('hidden'); }
-            }).catch((err) => {
-                if (err.name === 'AbortError') return; 
-                inspectorLoader.classList.add('hidden');
-                ['hxVal', 'hyVal', 'hLat', 'hLon'].forEach(id => document.getElementById(id).classList.remove('opacity-50'));
-            });
-        };
+        resetInspectorBtn.addEventListener('click', resetInspectorState);
 
         const demoPrompt = document.getElementById('demoPrompt');
         const downloadDemoBtn = document.getElementById('downloadDemoBtn');
@@ -1469,14 +1139,12 @@ function resetPlotState(fullReset = true) {
                 
                 fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
                 
-                // Catch the dataset from the URL on first load
                 const params = new URLSearchParams(window.location.search);
                 if (isFirstLoad && params.has('dataset')) {
                     const requestedFile = params.get('dataset');
                     if (fileData.files.includes(requestedFile)) {
                         datasetSelect.value = requestedFile;
                     } else {
-                        // FIX: File is missing! Wipe the URL clean immediately.
                         window.history.replaceState({}, '', window.location.pathname);
                     }
                 }
@@ -1494,21 +1162,17 @@ function resetPlotState(fullReset = true) {
             await loadMapImage();
             await loadVariables();
             
-            // Set 3D View as the default active tab
             switchTab('tab3D');
 
-            // Load the 3D Viewer iframe
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) {
                 iframe3D.src = `/static/3d_view.html?filename=${encodeURIComponent(filename)}`;
             }
             
-            // Handle URL state and auto-plotting
             const params = new URLSearchParams(window.location.search);
             
             if (isFirstLoad) {
                 isFirstLoad = false;
-                
                 if (params.has('x')) {
                     applyUrlState();
                     updatePlot();
@@ -1530,7 +1194,6 @@ function resetPlotState(fullReset = true) {
                 const data = await res.json();
                 
                 if (data.status === "success") {
-                    // Re-run the check which will now find the files and flip the UI back
                     await checkFilesAndTogglePrompt();
                 } else {
                     alert("Download failed: " + data.message);
@@ -1542,137 +1205,36 @@ function resetPlotState(fullReset = true) {
             }
         });
 
-
-        const consoleStyles = {
-            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
-            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
-        };
-
-        const originalFetch = window.fetch;
-
-        window.fetch = async function(...args) {
-            const response = await originalFetch.apply(this, args);
-            const processTime = response.headers.get('X-Process-Time');
-
-            if (processTime) {
-                const timeInSeconds = parseFloat(processTime).toFixed(4);
-                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
-                const path = new URL(url, window.location.origin).pathname;
-
-                console.log(
-                    `%cAPI%c${path}%c${timeInSeconds}s`,
-                    consoleStyles.badge,
-                    consoleStyles.path,
-                    consoleStyles.time
-                );
-            }
-            return response;
-        };
-
-        resetInspectorBtn.addEventListener('click', resetInspectorState);
-
         async function updatePlot() {
-        if (isPlotting) { plotQueued = true; return; }
-        
-        updateUrlState();
-        setLoading(true); 
-        resetInspectorState(); 
-        
-        if (currentPlotController) currentPlotController.abort();
-        currentPlotController = new AbortController();
+            if (isPlotting) { plotQueued = true; return; }
+            
+            updateUrlState();
+            setLoading(true); 
+            resetInspectorState(); 
+            
+            baseCMin = null; baseCMax = null;
 
-        try {
-            if (baseXMin === null) await fetchSparkline();
-            
-            let safeTrimStart = trimStartInput.value; let safeTrimEnd = trimEndInput.value;
-            if (isXDateTime && safeTrimStart) safeTrimStart = new Date(safeTrimStart + 'Z').toISOString();
-            if (isXDateTime && safeTrimEnd) safeTrimEnd = new Date(safeTrimEnd + 'Z').toISOString();
-            
-            const params = new URLSearchParams({
-                filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
-                c_var: cVarSelect.value, cmap: cmapInput.value, plot_delta: deltaCheck.checked,
-                delta_axis: deltaAxis.value, invert_y: document.getElementById('invertY').checked,
-                trim_start: safeTrimStart, trim_end: safeTrimEnd,
-                y_trim_min: yTrimMinInput.value, y_trim_max: yTrimMaxInput.value,
-                c_trim_min: cTrimMinInput.value, c_trim_max: cTrimMaxInput.value,
-                apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
-                highlight_qc: highlightQcCheck.checked,
-                plot_all: plotAllCheck.checked,
-                filter_time: filterTimeCheck.checked
-            });
-
-            const response = await fetch(`/api/plot?${params.toString()}`, { signal: currentPlotController.signal });
-            const data = await response.json();
-            
-            if (data.error) {
-                plotImage.classList.add('hidden');
-                emptyState.classList.remove('hidden');
-                emptyState.innerHTML = `<span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">search_off</span><p class="text-sm font-medium text-gray-600">${data.error}</p>`;
-                downloadBtn.classList.add('hidden');
-                qcBadge.classList.add('hidden');
-                return;
-            }
-            
-            plotImage.src = data.image; plotImage.classList.remove('hidden');
-            emptyState.classList.add('hidden'); downloadBtn.classList.remove('hidden');
-            xTrimRow.classList.replace('hidden', 'flex'); yTrimContainer.classList.replace('hidden', 'flex');
-            
-            if (data.qc_applied) qcBadge.classList.remove('hidden');
-            else qcBadge.classList.add('hidden');
-            
-            currentPlotMeta = data.plot_meta;
-
-            // Learn baseline limits from the first full-view plot
-            if (baseXMin === null || baseXMax === null) {
-                baseXMin = currentPlotMeta.xlim[0]; baseXMax = currentPlotMeta.xlim[1];
-                if (!trimStartInput.value) {
-                    if (isXDateTime) {
-                        trimStartInput.value = formatDateTimeLocal(baseXMin);
-                        trimEndInput.value = formatDateTimeLocal(baseXMax);
-                    } else {
-                        trimStartInput.value = baseXMin.toFixed(4);
-                        trimEndInput.value = baseXMax.toFixed(4);
-                    }
-                }
-                updateHandlesFromInputs('x');
-            }
-            
-            if (baseYMin === null || baseYMax === null) {
-                let ymin = currentPlotMeta.ylim[0], ymax = currentPlotMeta.ylim[1];
-                if (ymin > ymax) { let temp = ymin; ymin = ymax; ymax = temp; } 
-                baseYMin = ymin; baseYMax = ymax;
-                if (!yTrimMinInput.value) {
-                    yTrimMinInput.value = baseYMin.toFixed(4);
-                    yTrimMaxInput.value = baseYMax.toFixed(4);
-                }
-                updateHandlesFromInputs('y');
-            }
-            
-            if (cVarSelect.value && data.plot_meta.clim_bounds) {
-                cTrimContainer.classList.replace('hidden', 'flex');
-                if (baseCMin === null || baseCMax === null) {
-                    baseCMin = data.plot_meta.clim_bounds[0];
-                    baseCMax = data.plot_meta.clim_bounds[1];
-                }
+            try {
+                if (!xSelect.value) { setLoading(false); return; }
                 
-                // Populate C-limits if empty (triggers auto-scale on X/Y zoom)
-                if (!cTrimMinInput.value || !cTrimMaxInput.value) {
-                    cTrimMinInput.value = data.plot_meta.c_used[0].toFixed(4);
-                    cTrimMaxInput.value = data.plot_meta.c_used[1].toFixed(4);
-                    updateHandlesFromInputs('c');
-                }
-            } else {
-                cTrimContainer.classList.replace('flex', 'hidden');
-            }
+                const params = new URLSearchParams({
+                    filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
+                    c_var: cVarSelect.value, cmap: cmapInput.value, invert_y: document.getElementById('invertY').checked,
+                    apply_qc: applyQcCheck.checked, qc_flags: qcFlagsInput.value,
+                    highlight_qc: highlightQcCheck.checked, filter_time: filterTimeCheck.checked
+                });
 
-        } catch (err) { 
-            if (err.name !== 'AbortError') console.error("Plotting error:", err); 
-        } finally { 
-            setLoading(false); 
-            if (plotQueued) { plotQueued = false; updatePlot(); }
+                plotIframe.src = `/static/main_plot.html?${params.toString()}`;
+                
+                plotIframe.classList.remove('hidden');
+                emptyState.classList.add('hidden');
+                downloadBtn.classList.remove('hidden');
+
+            } catch (err) { 
+                console.error("Plotting error:", err); 
+                setLoading(false); 
+            }
         }
-    }
 
         function setLoading(isLoading) {
             isPlotting = isLoading;
@@ -1681,20 +1243,18 @@ function resetPlotState(fullReset = true) {
             if (progressInterval) clearInterval(progressInterval);
             
             if (isLoading) {
-                plotImage.style.pointerEvents = 'none';
                 pw.classList.replace('hidden', 'flex');
                 pf.className = 'h-full w-0 transition-all duration-300 ease-out bg-googleBlue';
-                pt.textContent = "Fetching & slicing data...";
+                pt.textContent = "Loading data...";
                 let width = 0;
                 
                 progressInterval = setInterval(() => {
                     if (width < 60) { width += Math.random() * 5 + 5; }
-                    else if (width < 95) { width += Math.random() * 2 + 1; pt.textContent = "Rendering image..."; }
+                    else if (width < 95) { width += Math.random() * 2 + 1; pt.textContent = "Rendering WebGL..."; }
                     if (width > 95) width = 95;
                     pf.style.width = width + '%';
                 }, 300);
             } else {
-                plotImage.style.pointerEvents = 'auto';
                 pf.classList.remove('bg-googleBlue'); pf.classList.add('bg-googleGreen');
                 pt.textContent = "Complete!"; pf.style.width = '100%';
                 setTimeout(() => { pw.classList.replace('flex', 'hidden'); pf.style.width = '0%'; }, 800);
@@ -1703,39 +1263,30 @@ function resetPlotState(fullReset = true) {
 
         window.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
-                e.preventDefault();
-                updatePlot();
-                return;
+                e.preventDefault(); updatePlot(); return;
             }
             if (e.key === 'Enter' && !cmapMenu.classList.contains('hidden')) return;
             
             if (e.key === 'Enter' && 
-                document.activeElement !== trimStartInput && 
-                document.activeElement !== trimEndInput && 
-                document.activeElement !== yTrimMinInput && 
-                document.activeElement !== yTrimMaxInput && 
-                document.activeElement !== cTrimMinInput && 
-                document.activeElement !== cTrimMaxInput && 
                 document.activeElement !== presetNameInput &&
                 !e.target.closest('#qcDropdown')) updatePlot();
                 
             if (e.key === 'Escape') { 
-                resetPlotState(false);
-                setLoading(false);
+                resetPlotState(false); setLoading(false);
             }
         });
 
-            document.getElementById('openFolderBtn').addEventListener('click', async () => {
-                try {
-                    const res = await fetch('/api/open_folder', { method: 'POST' });
-                    const data = await res.json();
-                    if (data.status === "success") {
-                        await checkFilesAndTogglePrompt();
-                    }
-                } catch (err) {
-                    console.error("Failed to open folder:", err);
+        document.getElementById('openFolderBtn').addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/open_folder', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === "success") {
+                    await checkFilesAndTogglePrompt();
                 }
-            });
+            } catch (err) {
+                console.error("Failed to open folder:", err);
+            }
+        });
 
         plotBtn.addEventListener('click', updatePlot);
         plotPreset.addEventListener('change', () => {
@@ -1755,21 +1306,8 @@ function resetPlotState(fullReset = true) {
             }
         }
 
-        [xSelect, ySelect, cVarSelect, deltaCheck, deltaAxis, applyQcCheck, highlightQcCheck, qcFlagsInput, plotAllCheck].forEach(el => {
-            el.addEventListener('change', () => {
-                setCustomMode();
-                if (el === xSelect || el === ySelect) {
-                    resetPlotState(true);
-                } else {
-                    resetPlotState(false);
-                }
-            });
-        });
-
         init();
 
-
-        
     </script>
 </body>
 </html>

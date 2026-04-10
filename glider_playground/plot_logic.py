@@ -3,21 +3,10 @@ import numpy as np
 import pandas as pd
 from netCDF4 import Dataset, date2num
 import datetime
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import io
-import base64
 import os
 
-MAX_RENDER_POINTS = 259000
-LINE_COLOUR = '#1a73e8'
-TEXT_BOX_BG = '#ffffffcc'
-MIN_MARKER_SIZE = 0.5
-
-def format_dt(dt64):
-    return pd.to_datetime(dt64).strftime('%d %B %Y, %H:%M')
+# Locked to 200k points max for optimal WebGL performance
+MAX_RENDER_POINTS = 200000
 
 def get_variables(filepath):
     if not os.path.exists(filepath):
@@ -38,105 +27,6 @@ def get_variables(filepath):
             })
     glider_data.close()
     return variables
-
-def generate_sparkline(filepath, x_var, y_var):
-    try:
-        glider_data = xr.open_dataset(filepath)
-        
-        actual_x_var = x_var
-        if x_var.upper() == 'TIME' and 'TIME' not in glider_data.variables:
-            time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
-            if time_vars: actual_x_var = time_vars[0]
-
-        if y_var not in glider_data.variables or actual_x_var not in glider_data.variables:
-            glider_data.close()
-            return {"error": "Missing variables"}
-            
-        x_vals = glider_data[actual_x_var].values.copy().ravel()
-        y_vals = glider_data[y_var].values.copy().ravel()
-        
-        valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
-        
-        if f"{actual_x_var}_QC" in glider_data.variables:
-            qc_vals = glider_data[f"{actual_x_var}_QC"].values.copy().ravel()
-            valid_mask &= np.isin(qc_vals, [1, 2, 5, 8])
-
-        if f"{y_var}_QC" in glider_data.variables:
-            qc_vals = glider_data[f"{y_var}_QC"].values.copy().ravel()
-            valid_mask &= np.isin(qc_vals, [1, 2, 5, 8])
-            
-        x_vals = x_vals[valid_mask]
-        y_vals = y_vals[valid_mask]
-        
-        is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
-        glider_data.close()
-            
-        if len(x_vals) == 0:
-            return {"error": "No valid data"}
-            
-        sort_idx = np.argsort(x_vals)
-        x_vals = x_vals[sort_idx]
-        y_vals = y_vals[sort_idx]
-            
-        if is_x_dt:
-            min_x = pd.to_datetime(x_vals[0]).strftime('%Y-%m-%dT%H:%M')
-            max_x = pd.to_datetime(x_vals[-1]).strftime('%Y-%m-%dT%H:%M')
-        else:
-            min_x = float(x_vals[0])
-            max_x = float(x_vals[-1])
-        
-        max_pts = 10000
-        if len(x_vals) > max_pts:
-            step = len(x_vals) // max_pts
-            x_sub = x_vals[::step]
-            y_sub = y_vals[::step]
-            
-            if x_sub[-1] != x_vals[-1]:
-                x_sub = np.append(x_sub, x_vals[-1])
-                y_sub = np.append(y_sub, y_vals[-1])
-        else:
-            x_sub = x_vals
-            y_sub = y_vals
-            
-        fig, ax = plt.subplots(figsize=(8, 1), dpi=100)
-        ax.plot(x_sub, y_sub, color=LINE_COLOUR, linewidth=1, alpha=0.6)
-        ax.axis('off')
-        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-        plt.margins(0,0)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", transparent=True, bbox_inches='tight', pad_inches=0)
-        buf.seek(0)
-        plt.close(fig)
-        
-        return {
-            "image": f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
-            "min_x": min_x,
-            "max_x": max_x
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-def extract_qc_stats_from_file(data_dict, var_name):
-    vals = data_dict.get(var_name, np.array([]))
-    stats = {
-        "nans": int(pd.isnull(vals).sum()),
-        "breakdown": {}, 
-        "total_bad": 0,
-        "applied": False 
-    }
-    
-    bad_mask = np.zeros(len(vals), dtype=bool)
-    qc_var_name = f"{var_name}_QC"
-    
-    if qc_var_name in data_dict:
-        stats["applied"] = True
-        qc_vals = data_dict[qc_var_name]
-        bad_mask = ~np.isin(qc_vals, [1, 2, 5, 8]) & (qc_vals != 9) & ~pd.isnull(vals)
-        stats["total_bad"] = int(np.sum(bad_mask))
-            
-    return stats, bad_mask
-
 
 def get_dataset_info(filepath):
     if not os.path.exists(filepath):
@@ -237,103 +127,15 @@ def get_dataset_info(filepath):
         "global_attributes": global_attrs
     }
 
-def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max):
-    try:
-        glider_data = xr.open_dataset(filepath)
-
-        if x_var not in glider_data.variables or y_var not in glider_data.variables:
-            glider_data.close()
-            return {"error": "Variables not found"}
-
-        x_arr = glider_data[x_var].values.copy().ravel()
-        y_arr = glider_data[y_var].values.copy().ravel()
-
-        c_arr = None
-        if c_var and c_var in glider_data.variables:
-            c_arr = glider_data[c_var].values.copy().ravel()
-
-        lat_arr = glider_data["LATITUDE"].values.copy().ravel() if "LATITUDE" in glider_data.variables else None
-        lon_arr = glider_data["LONGITUDE"].values.copy().ravel() if "LONGITUDE" in glider_data.variables else None
-
-        time_name = "TIME"
-        if "TIME" not in glider_data.variables:
-            time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
-            if time_vars: time_name = time_vars[0]
-
-        time_arr = glider_data[time_name].values.copy().ravel() if time_name in glider_data.variables else None
-
-        glider_data.close()
-
-        valid_mask = ~pd.isnull(x_arr) & ~pd.isnull(y_arr)
-        valid_idx = np.where(valid_mask)[0]
-
-        if len(valid_idx) == 0:
-            return {"error": "No valid data points"}
-
-        x_valid = x_arr[valid_mask]
-        y_valid = y_arr[valid_mask]
-
-        if is_dt:
-            x_numeric = x_valid.astype('datetime64[ms]').astype(float)
-        else:
-            x_numeric = x_valid.astype(float)
-
-        x_range = x_max - x_min if x_max != x_min else 1.0
-        y_range = y_max - y_min if y_max != y_min else 1.0
-
-        norm_x = (x_numeric - x_min) / x_range
-        norm_y = (y_valid - y_min) / y_range
-
-        target_norm_x = (x_val - x_min) / x_range
-        target_norm_y = (y_val - y_min) / y_range
-
-        distances = (norm_x - target_norm_x)**2 + (norm_y - target_norm_y)**2
-        best_idx_relative = np.argmin(distances)
-        original_idx = valid_idx[best_idx_relative]
-
-        res_x = x_arr[original_idx]
-        if is_dt:
-            res_x = str(pd.to_datetime(res_x))
-        else:
-            res_x = float(res_x)
-
-        result = {
-            "x": res_x,
-            "y": float(y_arr[original_idx]),
-            "lat": float(lat_arr[original_idx]) if lat_arr is not None and not pd.isnull(lat_arr[original_idx]) else None,
-            "lon": float(lon_arr[original_idx]) if lon_arr is not None and not pd.isnull(lon_arr[original_idx]) else None,
-        }
-
-        if c_arr is not None:
-            val = c_arr[original_idx]
-            result["c_val"] = float(val) if not pd.isnull(val) else None
-
-        if time_arr is not None:
-            val = time_arr[original_idx]
-            result["time_val"] = str(pd.to_datetime(val)) if not pd.isnull(val) else None
-
-        return result
-
-    except Exception as e:
-        return {"error": str(e)}
-    
-
-def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=None, plot_delta=False, delta_axis="x", invert_y=False, trim_start=None, trim_end=None, y_trim_min=None, y_trim_max=None, c_trim_min=None, c_trim_max=None, apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, plot_all=False, filter_time=True):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True):
     if c_var == "None":
         c_var = ""
 
     glider_data = xr.open_dataset(filepath)
     
-    actual_plot_x_var = x_var
-    if plot_delta and delta_axis == "time":
-        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
-        actual_plot_x_var = 'TIME' if 'TIME' in glider_data.variables else (time_vars[0] if time_vars else x_var)
-    elif plot_delta and delta_axis == "y":
-        actual_plot_x_var = y_var
-
     data_dict = {}
-    vars_to_extract = {actual_plot_x_var, y_var, x_var}
-    if c_var and cmap != 'black':
+    vars_to_extract = {x_var, y_var}
+    if c_var and c_var != 'black':
         vars_to_extract.add(c_var)
 
     actual_time_var = "TIME"
@@ -352,10 +154,9 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         if name in glider_data.variables:
             data_dict[name] = glider_data.variables[name].values.copy().ravel()
 
-    x_vals = data_dict.get(actual_plot_x_var, np.array([]))
+    x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
-    raw_comparison_x = data_dict.get(x_var, np.array([]))
-    c_vals = data_dict.get(c_var) if c_var and cmap != 'black' else None
+    c_vals = data_dict.get(c_var) if c_var and c_var != 'black' else None
 
     if len(x_vals) == 0:
         glider_data.close()
@@ -370,7 +171,7 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
         except:
             allowed_flags = [1, 2, 5, 8]
             
-        for v in [actual_plot_x_var, y_var, x_var, c_var]:
+        for v in [x_var, y_var, c_var]:
             if v and f"{v}_QC" in data_dict:
                 qc_vals = data_dict[f"{v}_QC"]
                 qc_pass_mask &= np.isin(qc_vals, allowed_flags)
@@ -381,14 +182,6 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
     if filter_time and actual_time_var in data_dict:
         t_vals = data_dict[actual_time_var]
         min_time = pd.to_datetime("1990-01-01").to_datetime64()
-        if "DEPLOYMENT_TIME" in glider_data.variables:
-            try:
-                deploy_time = pd.to_datetime(glider_data["DEPLOYMENT_TIME"].values)
-                if isinstance(deploy_time, pd.DatetimeIndex):
-                    deploy_time = deploy_time[0]
-                min_time = max(min_time, deploy_time.to_datetime64())
-            except: pass
-                
         now_time = pd.Timestamp.now().to_datetime64()
         with np.errstate(invalid='ignore'):
             time_valid_mask = (t_vals >= min_time) & (t_vals <= now_time) & ~pd.isnull(t_vals)
@@ -403,139 +196,171 @@ def generate_plot(filepath, x_var, y_var, c_var="", cmap="viridis", output_path=
             c_vals = c_vals_numeric
         else:
             c_vals = c_vals.astype(float)
-            
         valid_mask &= ~np.isnan(c_vals)
-
-    # Base the colorbar purely on data that passes QC to prevent outliers destroying the scale
-    global_valid_c = c_vals[valid_mask & qc_pass_mask] if c_vals is not None else None
-
-    is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
-    try:
-        if trim_start and str(trim_start).strip() and trim_start != "undefined":
-            valid_mask &= (x_vals >= (pd.to_datetime(trim_start).to_datetime64() if is_x_dt else float(trim_start)))
-        if trim_end and str(trim_end).strip() and trim_end != "undefined":
-            valid_mask &= (x_vals <= (pd.to_datetime(trim_end).to_datetime64() if is_x_dt else float(trim_end)))
-        if y_trim_min and str(y_trim_min).strip() and y_trim_min != "undefined":
-            valid_mask &= (y_vals >= float(y_trim_min))
-        if y_trim_max and str(y_trim_max).strip() and y_trim_max != "undefined":
-            valid_mask &= (y_vals <= float(y_trim_max))
-    except:
-        pass
-
-    plot_y_label = y_var
-    if plot_delta:
-        if np.issubdtype(y_vals.dtype, np.number):
-            y_vals = y_vals - raw_comparison_x
-            plot_y_label = f"Δ ({y_var} - {x_var})"
 
     plot_x = x_vals[valid_mask]
     plot_y = y_vals[valid_mask]
     plot_c = c_vals[valid_mask] if c_vals is not None else None
-    plot_qc_pass = qc_pass_mask[valid_mask]
+    plot_qc = qc_pass_mask[valid_mask]
 
     total_valid_points = len(plot_x)
-    
     if total_valid_points == 0:
         glider_data.close()
-        return {"error": "No data points remain in the current view."}
+        return {"error": "No valid data points remain."}
 
-    if not plot_all and total_valid_points > MAX_RENDER_POINTS:
+    # Lock to max points
+    if total_valid_points > MAX_RENDER_POINTS:
         step = total_valid_points // MAX_RENDER_POINTS
-        plot_x, plot_y = plot_x[::step], plot_y[::step]
-        plot_qc_pass = plot_qc_pass[::step]
+        plot_x = plot_x[::step]
+        plot_y = plot_y[::step]
+        plot_qc = plot_qc[::step]
         if plot_c is not None: plot_c = plot_c[::step]
+
+    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
     
-    rendered_points = len(plot_x)
-    percentage = (rendered_points / total_valid_points) * 100
-
-    if rendered_points <= 20: dynamic_size = 14.0
-    elif rendered_points <= 100: dynamic_size = 10.0
-    elif rendered_points <= 1000: dynamic_size = 6.0
-    elif rendered_points <= 5000: dynamic_size = 3.0
-    else: dynamic_size = MIN_MARKER_SIZE
-
-    safe_marker_size = max(dynamic_size, 2)
-
-    fig, ax = plt.subplots(figsize=(18, 8))
-    clim_bounds = None
-    c_used = None
-
-    if apply_qc and highlight_qc:
-        bad_x = plot_x[~plot_qc_pass]
-        bad_y = plot_y[~plot_qc_pass]
-        
-        plot_x = plot_x[plot_qc_pass]
-        plot_y = plot_y[plot_qc_pass]
-        if plot_c is not None: 
-            plot_c = plot_c[plot_qc_pass]
-
-        if len(bad_x) > 0:
-            ax.scatter(bad_x, bad_y, s=safe_marker_size**2, color='#b0b0b0', marker='o', alpha=0.5, zorder=1)
-    
-    if cmap == 'black':
-        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color='black', marker='o', zorder=2)
-    elif plot_c is not None:
-        valid_c = plot_c[~np.isnan(plot_c)]
-        valid_global_c = global_valid_c[~np.isnan(global_valid_c)]
-        
-        if len(valid_c) > 0 and len(valid_global_c) > 0:
-            track_min = float(np.percentile(valid_global_c, 0.1))
-            track_max = float(np.percentile(valid_global_c, 99.9))
-            c_min = float(np.percentile(valid_c, 0.1))
-            c_max = float(np.percentile(valid_c, 99.9))
-            
-            try:
-                if c_trim_min and str(c_trim_min).strip() and c_trim_min != "undefined":
-                    c_min = float(c_trim_min)
-                if c_trim_max and str(c_trim_max).strip() and c_trim_max != "undefined":
-                    c_max = float(c_trim_max)
-            except: pass
-
-            if track_max <= track_min: track_max = track_min + 1e-10
-            if c_max <= c_min: c_max = c_min + 1e-10
-
-            x_pts = np.linspace(track_min, track_max, 256)
-            x_norm = np.clip((x_pts - c_min) / (c_max - c_min), 0, 1)
-            
-            orig_cmap = plt.get_cmap(cmap)
-            custom_colors = orig_cmap(x_norm)
-            new_cmap = matplotlib.colors.ListedColormap(custom_colors)
-            
-            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=new_cmap, vmin=track_min, vmax=track_max, marker='o', zorder=2)
-            plt.colorbar(scatter, label=c_var) 
-            
-            clim_bounds = [track_min, track_max]
-            c_used = [c_min, c_max]
-        else:
-            c_min, c_max = 0.0, 1.0
-            scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, c=plot_c, cmap=cmap, vmin=c_min, vmax=c_max, marker='o', zorder=2)
-            plt.colorbar(scatter, label=c_var)
+    if is_x_dt:
+        x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist()
     else:
-        scatter = ax.scatter(plot_x, plot_y, s=safe_marker_size**2, color=LINE_COLOUR, marker='o', zorder=2)
+        x_out = [None if np.isnan(v) else float(v) for v in plot_x]
 
-    info_text = f"{rendered_points:,} / {total_valid_points:,} points ({percentage:.1f}%)"
-    ax.text(0.99, 0.02, info_text, transform=ax.transAxes, fontsize=10, verticalalignment='bottom', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.5', facecolor=TEXT_BOX_BG, edgecolor='none'))
-
-    if invert_y: ax.invert_yaxis()
-    if is_x_dt: ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %Y\n%H:%M'))
+    y_out = [None if np.isnan(v) else float(v) for v in plot_y]
     
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-    
-    fig.canvas.draw()
-    bbox = ax.get_position().bounds 
-    xlim = [float(x) for x in ax.get_xlim()]
-    ylim = [float(y) for y in ax.get_ylim()]
-    if is_x_dt: xlim = [float(mdates.num2date(xlim[0]).timestamp() * 1000), float(mdates.num2date(xlim[1]).timestamp() * 1000)]
+    c_out = []
+    c_min, c_max = 0.0, 1.0
+    if plot_c is not None:
+        c_out = [None if np.isnan(v) else float(v) for v in plot_c]
+        valid_c_for_scale = plot_c[plot_qc] if apply_qc else plot_c
+        if len(valid_c_for_scale) > 0:
+            c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
+            c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=100)
-    plt.close()
     glider_data.close()
-    
+
     return {
-        "image": f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
-        "plot_meta": { "bbox": {"x0": float(bbox[0]), "y0": float(bbox[1]), "w": float(bbox[2]), "h": float(bbox[3])}, "xlim": xlim, "ylim": ylim, "is_x_dt": bool(is_x_dt), "clim_bounds": clim_bounds, "c_used": c_used },
-        "valid_points": int(len(plot_x)),
+        "x": x_out,
+        "y": y_out,
+        "c": c_out,
+        "is_x_dt": bool(is_x_dt),
+        "c_min": c_min,
+        "c_max": c_max,
         "qc_applied": apply_qc
     }
+def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", 
+                          highlight_qc=False, filter_time=True,
+                          x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False):
+    """Like get_plot_data_json but resamples 200k points from within the visible bounds."""
+    if c_var == "None":
+        c_var = ""
+
+    glider_data = xr.open_dataset(filepath)
+    
+    data_dict = {}
+    vars_to_extract = {x_var, y_var}
+    if c_var and c_var != 'black':
+        vars_to_extract.add(c_var)
+
+    actual_time_var = "TIME"
+    if "TIME" not in glider_data.variables:
+        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+        if time_vars: actual_time_var = time_vars[0]
+
+    if filter_time and actual_time_var in glider_data.variables:
+        vars_to_extract.add(actual_time_var)
+    if apply_qc:
+        vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
+
+    for name in vars_to_extract:
+        if name in glider_data.variables:
+            data_dict[name] = glider_data.variables[name].values.copy().ravel()
+
+    x_vals = data_dict.get(x_var, np.array([]))
+    y_vals = data_dict.get(y_var, np.array([]))
+    c_vals = data_dict.get(c_var) if c_var and c_var != 'black' else None
+
+    if len(x_vals) == 0:
+        glider_data.close()
+        return {"error": "No data found."}
+
+    valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
+    qc_pass_mask = np.ones(len(x_vals), dtype=bool)
+
+    if apply_qc:
+        try:
+            allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
+        except:
+            allowed_flags = [1, 2, 5, 8]
+        for v in [x_var, y_var, c_var]:
+            if v and f"{v}_QC" in data_dict:
+                qc_pass_mask &= np.isin(data_dict[f"{v}_QC"], allowed_flags)
+        if not highlight_qc:
+            valid_mask &= qc_pass_mask
+
+    if filter_time and actual_time_var in data_dict:
+        t_vals = data_dict[actual_time_var]
+        min_time = pd.to_datetime("1990-01-01").to_datetime64()
+        now_time = pd.Timestamp.now().to_datetime64()
+        with np.errstate(invalid='ignore'):
+            valid_mask &= (t_vals >= min_time) & (t_vals <= now_time) & ~pd.isnull(t_vals)
+
+    if c_vals is not None:
+        if np.issubdtype(c_vals.dtype, np.datetime64):
+            c_num = np.full(len(c_vals), np.nan)
+            ok = ~pd.isnull(c_vals)
+            c_num[ok] = c_vals[ok].astype('datetime64[s]').astype(float)
+            c_vals = c_num
+        else:
+            c_vals = c_vals.astype(float)
+        valid_mask &= ~np.isnan(c_vals)
+
+    plot_x = x_vals[valid_mask]
+    plot_y = y_vals[valid_mask].astype(float)
+    plot_c = c_vals[valid_mask] if c_vals is not None else None
+    plot_qc = qc_pass_mask[valid_mask]
+
+    # --- Apply bounds filter ---
+    if x_min is not None and x_max is not None:
+        is_dt = np.issubdtype(plot_x.dtype, np.datetime64)
+        if is_dt:
+            x_min_dt = np.datetime64(pd.to_datetime(x_min, unit='ms'))
+            x_max_dt = np.datetime64(pd.to_datetime(x_max, unit='ms'))
+            bounds_mask = (plot_x >= x_min_dt) & (plot_x <= x_max_dt)
+        else:
+            bounds_mask = (plot_x.astype(float) >= float(x_min)) & (plot_x.astype(float) <= float(x_max))
+        
+        if y_min is not None and y_max is not None:
+            bounds_mask &= (plot_y >= float(y_min)) & (plot_y <= float(y_max))
+        
+        plot_x = plot_x[bounds_mask]
+        plot_y = plot_y[bounds_mask]
+        plot_qc = plot_qc[bounds_mask]
+        if plot_c is not None:
+            plot_c = plot_c[bounds_mask]
+
+    total = len(plot_x)
+    if total == 0:
+        glider_data.close()
+        return {"error": "No points in view."}
+
+    if total > MAX_RENDER_POINTS:
+        step = total // MAX_RENDER_POINTS
+        plot_x = plot_x[::step]
+        plot_y = plot_y[::step]
+        plot_qc = plot_qc[::step]
+        if plot_c is not None:
+            plot_c = plot_c[::step]
+
+    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
+    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else [None if np.isnan(v) else float(v) for v in plot_x]
+    y_out = [None if np.isnan(v) else float(v) for v in plot_y]
+
+    c_out, c_min, c_max = [], 0.0, 1.0
+    if plot_c is not None:
+        c_out = [None if np.isnan(v) else float(v) for v in plot_c]
+        valid_c = plot_c[plot_qc] if apply_qc else plot_c
+        if len(valid_c) > 0:
+            c_min = float(np.nanpercentile(valid_c, 0.1))
+            c_max = float(np.nanpercentile(valid_c, 99.9))
+
+    glider_data.close()
+    return {"x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
+            "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc}
