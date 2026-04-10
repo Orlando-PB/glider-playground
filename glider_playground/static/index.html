@@ -188,7 +188,7 @@
             <div class="border-b border-gray-200 bg-gray-100 flex justify-center items-center shrink-0">
                 <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0">
                     <span id="mapEmptyText" class="text-[10px] text-gray-400 absolute text-center px-4">Load data to see map</span>
-                    <img id="gliderMap" src="" alt="Glider Path" class="w-full h-full object-cover hidden">
+                    <iframe id="gliderMap" src="" class="w-full h-full border-none hidden"></iframe>
                     <div id="mapMarker" class="absolute w-2 h-2 bg-googleRed border border-white hidden shadow-sm transform -translate-x-1/2 -translate-y-1/2 transition-all duration-75 z-10" style="border-radius: 50%;"></div>
                 </div>
             </div>
@@ -1355,21 +1355,14 @@ function resetPlotState(fullReset = true) {
             const selectedDataset = datasetSelect.value;
             if (!selectedDataset) return;
             
-            gliderMap.classList.add('hidden'); mapEmptyText.classList.remove('hidden'); mapEmptyText.textContent = "Loading map...";
-
-            try {
-                const mapRes = await fetch(`/api/map?filename=${encodeURIComponent(selectedDataset)}`);
-                const mapData = await mapRes.json();
-                
-                if (mapData.image) {
-                    gliderMap.src = mapData.image; gliderMap.classList.remove('hidden'); mapEmptyText.classList.add('hidden');
-                    currentMapDataset = selectedDataset; currentMapBounds = mapData.bounds;
-                } else if (mapData.error) {
-                    mapEmptyText.textContent = mapData.error; mapEmptyText.classList.remove('hidden');
-                }
-            } catch (err) {
-                console.error("Failed to load map:", err); mapEmptyText.textContent = "Map failed to load";
-            }
+            gliderMap.classList.remove('hidden');
+            mapEmptyText.classList.add('hidden');
+            
+            gliderMap.src = `/static/map_view.html?filename=${encodeURIComponent(selectedDataset)}`;
+            currentMapDataset = selectedDataset;
+            
+            // Note: The marker hover logic in triggerInspector will need updating in the future 
+            // to communicate with the iframe via postMessage if you wish to keep the red dot overlay feature.
         }
 
         const resetInspectorState = () => {
@@ -1548,6 +1541,34 @@ function resetPlotState(fullReset = true) {
                 setLoading(false);
             }
         });
+
+
+        const consoleStyles = {
+            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
+            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
+        };
+
+        const originalFetch = window.fetch;
+
+        window.fetch = async function(...args) {
+            const response = await originalFetch.apply(this, args);
+            const processTime = response.headers.get('X-Process-Time');
+
+            if (processTime) {
+                const timeInSeconds = parseFloat(processTime).toFixed(4);
+                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
+                const path = new URL(url, window.location.origin).pathname;
+
+                console.log(
+                    `%cAPI%c${path}%c${timeInSeconds}s`,
+                    consoleStyles.badge,
+                    consoleStyles.path,
+                    consoleStyles.time
+                );
+            }
+            return response;
+        };
 
         resetInspectorBtn.addEventListener('click', resetInspectorState);
 

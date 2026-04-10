@@ -7,12 +7,29 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import os
 from pathlib import Path
+import time
+import logging
 
 from . import plot_logic
 from . import map_logic
 from . import ocean_3d
 
+
+
 app = FastAPI()
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+@app.middleware("http")
+async def log_request_timing(request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
+
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -168,4 +185,4 @@ async def download_demo_files():
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="127.0.0.1", port=8420, reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8420, reload=True, access_log=False)

@@ -1,6 +1,8 @@
 import xarray as xr
 import numpy as np
 import pandas as pd
+from netCDF4 import Dataset, date2num
+import datetime
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -135,21 +137,22 @@ def extract_qc_stats_from_file(data_dict, var_name):
             
     return stats, bad_mask
 
+
 def get_dataset_info(filepath):
     if not os.path.exists(filepath):
         return {"error": "File not found"}
     
-    ds = xr.open_dataset(filepath)
+    nc = Dataset(filepath, 'r')
     
-    dims = dict(ds.sizes)
+    dims = nc.dimensions
     main_dim_name = next(iter(dims)) if dims else "None"
-    main_dim_size = dims[main_dim_name] if dims else 0
+    main_dim_size = len(dims[main_dim_name]) if dims and main_dim_name in dims else 0
     
     variables = []
-    for name, var in ds.variables.items():
-        if len(var.dims) > 0:
-            description = var.attrs.get('long_name', 'No description available')
-            variables.append({"name": name, "description": description})
+    for name, var in nc.variables.items():
+        if len(var.dimensions) > 0:
+            description = getattr(var, 'long_name', 'No description available')
+            variables.append({"name": name, "description": str(description)})
             
     time_stats = {
         "has_time": False, "n_measurements": main_dim_size, "n_valid": main_dim_size,
@@ -157,35 +160,59 @@ def get_dataset_info(filepath):
         "is_monotonic": True, "deploy_time": None
     }
     
-    time_name = "TIME" if "TIME" in ds.variables else None
+    time_name = "TIME" if "TIME" in nc.variables else None
     if not time_name:
-        time_vars = [v for v in ds.variables if 'TIME' in v.upper()]
+        time_vars = [v for v in nc.variables if 'TIME' in v.upper()]
         if time_vars: time_name = time_vars[0]
         
     if time_name:
         time_stats["has_time"] = True
-        time_array = ds[time_name].values
+        time_var = nc.variables[time_name]
+        time_array = time_var[:]
         
-        nan_mask = pd.isnull(time_array)
+        if np.ma.isMaskedArray(time_array):
+            nan_mask = time_array.mask | np.isnan(time_array.data)
+            time_array = time_array.data
+        else:
+            nan_mask = np.isnan(time_array)
+            
         time_stats["removed_nan"] = int(nan_mask.sum())
         
-        min_time = pd.to_datetime("1990-01-01").to_datetime64()
-        if "DEPLOYMENT_TIME" in ds.variables:
+        time_units = getattr(time_var, 'units', 'seconds since 1970-01-01 00:00:00')
+        time_calendar = getattr(time_var, 'calendar', 'standard')
+        
+        min_dt = datetime.datetime(1990, 1, 1)
+        now_dt = datetime.datetime.now()
+        
+        try:
+            min_time_num = date2num(min_dt, units=time_units, calendar=time_calendar)
+            now_time_num = date2num(now_dt, units=time_units, calendar=time_calendar)
+        except:
+            min_time_num = -np.inf
+            now_time_num = np.inf
+        
+        deploy_dt = None
+        if "DEPLOYMENT_TIME" in nc.variables:
             try:
-                deploy_time = pd.to_datetime(ds["DEPLOYMENT_TIME"].values)
-                if isinstance(deploy_time, pd.DatetimeIndex):
-                    deploy_time = deploy_time[0]
-                min_time = max(min_time, deploy_time.to_datetime64())
-                time_stats["deploy_time"] = deploy_time.strftime("%Y-%m-%d %H:%M")
+                deploy_val = nc.variables["DEPLOYMENT_TIME"][:]
+                if isinstance(deploy_val, np.ndarray) and deploy_val.dtype.kind in 'SU':
+                    deploy_dt = pd.to_datetime("".join([c.decode('utf-8') if isinstance(c, bytes) else c for c in deploy_val])).to_pydatetime()
+                else:
+                    deploy_dt = pd.to_datetime(deploy_val[0]).to_pydatetime()
+                    
+                time_stats["deploy_time"] = deploy_dt.strftime("%Y-%m-%d %H:%M")
+                
+                try:
+                    deploy_num = date2num(deploy_dt, units=time_units, calendar=time_calendar)
+                    min_time_num = max(min_time_num, deploy_num)
+                except: pass
             except: pass
         else:
             time_stats["deploy_time"] = "1990-01-01"
             
-        now_time = pd.Timestamp.now().to_datetime64()
-        
         with np.errstate(invalid='ignore'):
-            before_mask = (time_array < min_time) & ~nan_mask
-            after_mask = (time_array > now_time) & ~nan_mask
+            before_mask = (time_array < min_time_num) & ~nan_mask
+            after_mask = (time_array > now_time_num) & ~nan_mask
             
         time_stats["removed_before"] = int(before_mask.sum())
         time_stats["removed_after"] = int(after_mask.sum())
@@ -197,7 +224,9 @@ def get_dataset_info(filepath):
         if len(valid_times) > 1:
             time_stats["is_monotonic"] = bool(np.all(np.diff(valid_times).astype(float) >= 0))
 
-    ds.close()
+    global_attrs = {attr: str(getattr(nc, attr)) for attr in nc.ncattrs()}
+    nc.close()
+    
     variables.sort(key=lambda x: x["name"].lower())
     
     return {
@@ -205,7 +234,7 @@ def get_dataset_info(filepath):
         "dimension_size": main_dim_size,
         "variables": variables,
         "time_stats": time_stats,
-        "global_attributes": {str(k): str(v) for k, v in ds.attrs.items()}
+        "global_attributes": global_attrs
     }
 
 def get_nearest_point(filepath, x_var, y_var, c_var, x_val, y_val, is_dt, x_min, x_max, y_min, y_max):
