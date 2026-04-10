@@ -415,6 +415,14 @@
                     updateHandlesFromInputs('c');
                 }
             }
+            else if (msg.type === 'bgFetchComplete') {
+                // Silently update colour slider to reflect the denser zoomed data
+                if (baseCMin !== null) {
+                    cTrimMinInput.value = parseFloat(msg.cMin).toFixed(4);
+                    cTrimMaxInput.value = parseFloat(msg.cMax).toFixed(4);
+                    updateHandlesFromInputs('c');
+                }
+            }
 
         });
 

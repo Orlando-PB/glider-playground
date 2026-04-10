@@ -34,6 +34,9 @@
     <script>
         let _bgFetchController = null;
         let _pendingBounds = null;
+        let _originalPlotData = null;
+        let _currentZoom = null; // tracks current zoom range for Plotly.react
+
         const plotConfig = {
             defaultMarkerSize: 4,
             defaultColour: '#1a73e8'
@@ -78,7 +81,6 @@
         const urlParams = new URLSearchParams(window.location.search);
         let plotData = null;
 
-        // Custom stack-safe algorithms to replace Math.min(...array)
         function getSafeMin(arr) {
             let min = Infinity;
             for (let i = 0; i < arr.length; i++) {
@@ -122,11 +124,41 @@
             }
         }
 
-        function renderPlot() {
-            const traces = [];
+        function buildLayout(xRange, yRange) {
             const isXDate = plotData.is_x_dt;
+            const isInverted = urlParams.get('invert_y') === 'true';
+            const layout = {
+                margin: { l: 50, r: 20, t: 20, b: 50 },
+                xaxis: { type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false },
+                yaxis: { showgrid: true, zeroline: false },
+                hovermode: false,
+                plot_bgcolor: 'transparent',
+                paper_bgcolor: 'transparent',
+                dragmode: 'zoom'
+            };
+
+            if (xRange) {
+                layout.xaxis.range = xRange;
+                layout.xaxis.autorange = false;
+            }
+
+            if (yRange) {
+                layout.yaxis.range = isInverted ? [yRange[1], yRange[0]] : yRange;
+                layout.yaxis.autorange = false;
+            } else {
+                layout.yaxis.autorange = isInverted ? 'reversed' : true;
+            }
+
+            return layout;
+        }
+
+        function renderPlot() {
             const cmapName = urlParams.get('cmap') || 'viridis';
-            
+            const isXDate = plotData.is_x_dt;
+
+            // Store original data for double-click reset
+            _originalPlotData = plotData;
+
             const mainTrace = {
                 x: plotData.x,
                 y: plotData.y,
@@ -147,19 +179,7 @@
                 mainTrace.marker.color = 'black';
             }
 
-            traces.push(mainTrace);
-
-            const layout = {
-                margin: { l: 50, r: 20, t: 20, b: 50 },
-                xaxis: { type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false },
-                yaxis: { autorange: urlParams.get('invert_y') === 'true' ? 'reversed' : true, showgrid: true, zeroline: false },
-                hovermode: false, // <-- CHANGED: Disables the Quadtree calculation to prevent TS-plot freezing
-                plot_bgcolor: 'transparent',
-                paper_bgcolor: 'transparent',
-                dragmode: 'zoom'
-            };
-
-            Plotly.newPlot('plotDiv', traces, layout, { displayModeBar: false, responsive: true }).then(function(plotDiv) {
+            Plotly.newPlot('plotDiv', [mainTrace], buildLayout(null, null), { displayModeBar: false, responsive: true }).then(function(plotDiv) {
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
@@ -187,7 +207,7 @@
                 }, '*');
 
                 plotDiv.on('plotly_hover', function(data){
-                    if(data.points.length > 0) {
+                    if (data.points.length > 0) {
                         const pt = data.points[0];
                         window.parent.postMessage({
                             type: 'plotHover',
@@ -206,9 +226,10 @@
                     xMin = eventData['xaxis.range[0]']; xMax = eventData['xaxis.range[1]'];
                     yMin = eventData['yaxis.range[0]']; yMax = eventData['yaxis.range[1]'];
                     if (yMin > yMax) { let temp = yMin; yMin = yMax; yMax = temp; }
+                    _currentZoom = { xMin, xMax, yMin, yMax };
                 } else if (eventData['xaxis.autorange']) {
-                    xMin = 'auto'; yMin = 'auto';
                     isAuto = true;
+                    _currentZoom = null;
                 }
 
                 if (xMin !== undefined || isAuto) {
@@ -217,7 +238,97 @@
                         limits: { xMin, xMax, yMin, yMax }
                     }, '*');
                 }
+
+                if (_bgFetchController) {
+                    _bgFetchController.abort();
+                    _bgFetchController = null;
+                }
+
+                if (isAuto) {
+                    clearTimeout(_pendingBounds);
+                    // Restore original full-dataset points
+                    if (_originalPlotData) {
+                        plotData = _originalPlotData;
+                        const cmapName = urlParams.get('cmap') || 'viridis';
+                        const trace = {
+                            x: plotData.x, y: plotData.y,
+                            mode: 'markers', type: 'scattergl',
+                            marker: { size: plotConfig.defaultMarkerSize, color: plotConfig.defaultColour, opacity: 0.8 },
+                            hoverinfo: 'none'
+                        };
+                        if (plotData.c && plotData.c.length > 0) {
+                            trace.marker.color = plotData.c;
+                            trace.marker.colorscale = customColorscales[cmapName] || cmapName;
+                            trace.marker.cauto = false;
+                            trace.marker.showscale = false;
+                            trace.marker.cmin = plotData.c_min;
+                            trace.marker.cmax = plotData.c_max;
+                        } else if (cmapName === 'black') {
+                            trace.marker.color = 'black';
+                        }
+                        Plotly.react('plotDiv', [trace], buildLayout(null, null));
+                        window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max }, '*');
+                    }
+                    return;
+                }
+
+                if (xMin === undefined) return;
+
+                clearTimeout(_pendingBounds);
+                _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
             });
+        }
+
+        async function triggerBgFetch(xMin, xMax, yMin, yMax) {
+            const params = new URLSearchParams(urlParams);
+            
+            const isXDate = plotData.is_x_dt;
+            const xMinVal = isXDate ? new Date(xMin).getTime() : xMin;
+            const xMaxVal = isXDate ? new Date(xMax).getTime() : xMax;
+
+            params.set('x_min', xMinVal);
+            params.set('x_max', xMaxVal);
+            params.set('y_min', yMin);
+            params.set('y_max', yMax);
+
+            _bgFetchController = new AbortController();
+
+            try {
+                const res = await fetch(`/api/plot_data_bounds?${params.toString()}`, { 
+                    signal: _bgFetchController.signal 
+                });
+                const newData = await res.json();
+                if (newData.error) return;
+
+                plotData = newData;
+
+                const cmapName = urlParams.get('cmap') || 'viridis';
+                const trace = {
+                    x: newData.x, y: newData.y,
+                    mode: 'markers', type: 'scattergl',
+                    marker: {
+                        size: plotConfig.defaultMarkerSize,
+                        color: newData.c && newData.c.length > 0 ? newData.c : plotConfig.defaultColour,
+                        colorscale: newData.c && newData.c.length > 0 ? (customColorscales[cmapName] || cmapName) : undefined,
+                        cauto: false, showscale: false,
+                        cmin: newData.c_min, cmax: newData.c_max,
+                        opacity: 0.8
+                    },
+                    hoverinfo: 'none'
+                };
+
+                // Preserve the current zoom range so the view doesn't jump
+                const zoom = _currentZoom;
+                const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
+                const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
+
+                Plotly.react('plotDiv', [trace], buildLayout(xRange, yRange));
+
+                window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max }, '*');
+
+            } catch (err) {
+                if (err.name !== 'AbortError') console.error('Background fetch failed:', err);
+            }
         }
 
         window.addEventListener('message', function(event) {
@@ -230,12 +341,8 @@
                     update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
                 }
                 if (msg.limits.yMin !== undefined && !isNaN(msg.limits.yMin)) {
-                    const invY = urlParams.get('invert_y') === 'true'
-                    if (invY) {
-                        update['yaxis.range'] = [msg.limits.yMax, msg.limits.yMin];
-                    } else {
-                        update['yaxis.range'] = [msg.limits.yMin, msg.limits.yMax];
-                    }
+                    const invY = urlParams.get('invert_y') === 'true';
+                    update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
                 }
                 if (Object.keys(update).length > 0) Plotly.relayout('plotDiv', update);
             }
@@ -252,41 +359,40 @@
                     filename: `glider_plot_${urlParams.get('x')}_vs_${urlParams.get('y')}`
                 });
             }
+
             if (msg.type === 'autoColour') {
-            if (!plotData || !plotData.c || !plotData.c.length) return;
+                if (!plotData || !plotData.c || !plotData.c.length) return;
 
-            const isXDate = plotData.is_x_dt;
-            const parseDate = (d) => typeof d === 'string' ? new Date(d.replace(' ', 'T')).getTime() : new Date(d).getTime();
+                const isXDate = plotData.is_x_dt;
+                const parseDate = (d) => typeof d === 'string' ? new Date(d.replace(' ', 'T')).getTime() : new Date(d).getTime();
 
-            let calcCMin = Infinity, calcCMax = -Infinity;
+                let calcCMin = Infinity, calcCMax = -Infinity;
 
-            // If bounds provided, sample within view; otherwise use full dataset
-            if (msg.bounds) {
-                const xMinNum = isXDate ? parseDate(msg.bounds.xMin) : parseFloat(msg.bounds.xMin);
-                const xMaxNum = isXDate ? parseDate(msg.bounds.xMax) : parseFloat(msg.bounds.xMax);
-                const yMinNum = parseFloat(msg.bounds.yMin);
-                const yMaxNum = parseFloat(msg.bounds.yMax);
+                if (msg.bounds) {
+                    const xMinNum = isXDate ? parseDate(msg.bounds.xMin) : parseFloat(msg.bounds.xMin);
+                    const xMaxNum = isXDate ? parseDate(msg.bounds.xMax) : parseFloat(msg.bounds.xMax);
+                    const yMinNum = parseFloat(msg.bounds.yMin);
+                    const yMaxNum = parseFloat(msg.bounds.yMax);
 
-                const SAMPLE_STEP = Math.max(1, Math.floor(plotData.x.length / 5000));
-                for (let i = 0; i < plotData.x.length; i += SAMPLE_STEP) {
-                    if (plotData.x[i] === null || plotData.y[i] === null || plotData.c[i] === null) continue;
-                    const px = isXDate ? parseDate(plotData.x[i]) : plotData.x[i];
-                    const py = plotData.y[i];
-                    if (px >= xMinNum && px <= xMaxNum && py >= yMinNum && py <= yMaxNum) {
-                        const pc = plotData.c[i];
-                        if (pc < calcCMin) calcCMin = pc;
-                        if (pc > calcCMax) calcCMax = pc;
+                    const SAMPLE_STEP = Math.max(1, Math.floor(plotData.x.length / 5000));
+                    for (let i = 0; i < plotData.x.length; i += SAMPLE_STEP) {
+                        if (plotData.x[i] === null || plotData.y[i] === null || plotData.c[i] === null) continue;
+                        const px = isXDate ? parseDate(plotData.x[i]) : plotData.x[i];
+                        const py = plotData.y[i];
+                        if (px >= xMinNum && px <= xMaxNum && py >= yMinNum && py <= yMaxNum) {
+                            const pc = plotData.c[i];
+                            if (pc < calcCMin) calcCMin = pc;
+                            if (pc > calcCMax) calcCMax = pc;
+                        }
                     }
                 }
+
+                const newCMin = calcCMin !== Infinity ? calcCMin : plotData.c_min;
+                const newCMax = calcCMax !== -Infinity ? calcCMax : plotData.c_max;
+
+                Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [0]);
+                window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
             }
-
-            const newCMin = calcCMin !== Infinity ? calcCMin : plotData.c_min;
-            const newCMax = calcCMax !== -Infinity ? calcCMax : plotData.c_max;
-
-            Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [0]);
-
-            window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
-        }
         });
 
         initPlot();
