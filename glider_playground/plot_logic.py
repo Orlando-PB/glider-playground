@@ -162,7 +162,65 @@ def _apply_profile_mask(data_dict, profile_num):
         return (prof_vals == float(profile_num)) & ~np.isnan(prof_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None):
+def _calculate_mld(plot_x, plot_y, plot_c, is_x_dt):
+    if not is_x_dt or len(plot_x) == 0 or plot_c is None:
+        return [], []
+        
+    df = pd.DataFrame({'time': plot_x, 'depth': plot_y, 'temp': plot_c})
+    df = df.dropna()
+    if len(df) == 0:
+        return [], []
+        
+    # Target ~150 bins across the currently viewed time window for the overlay line
+    num_bins = min(150, max(10, len(df) // 100))
+    
+    # Safely convert datetime to numeric seconds for aggregation
+    df['time_num'] = pd.to_numeric(pd.to_datetime(df['time'])) / 10**9
+    
+    bins = np.linspace(df['time_num'].min(), df['time_num'].max(), num_bins + 1)
+    bins = np.unique(bins) # prevent duplicate bin edges
+    if len(bins) < 2:
+        return [], []
+        
+    df['bin'] = pd.cut(df['time_num'], bins=bins, include_lowest=True)
+    
+    mld_x, mld_y = [], []
+    
+    for name, group in df.groupby('bin', observed=True):
+        if len(group) < 5:
+            continue
+        group = group.sort_values('depth')
+        
+        # Find reference temperature (median of shallowest 5m)
+        min_depth = group['depth'].min()
+        shallow = group[group['depth'] <= min_depth + 5.0]
+        if len(shallow) == 0:
+            shallow = group.head(5)
+            
+        t_ref = shallow['temp'].median()
+        threshold = t_ref - 0.2  # 0.2°C criteria
+        
+        below_thresh = group[group['temp'] < threshold]
+        mld = below_thresh['depth'].min() if len(below_thresh) > 0 else group['depth'].max()
+            
+        mld_x.append(group['time_num'].mean())
+        mld_y.append(mld)
+        
+    # Smooth the line slightly for visual appeal
+    if len(mld_y) > 3:
+        mld_y = pd.Series(mld_y).rolling(window=3, center=True, min_periods=1).mean().tolist()
+        
+    x_out = pd.to_datetime(mld_x, unit='s').strftime('%Y-%m-%d %H:%M:%S').tolist()
+    y_out = [float(v) if not pd.isna(v) else None for v in mld_y]
+    
+    return x_out, y_out
+
+
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, calc_mld=False):
+    if isinstance(c_var, str) and "|mld" in c_var:
+        calc_mld = True
+        c_var = c_var.replace("|mld", "")
+        
     if c_var == "None":
         c_var = ""
 
@@ -272,6 +330,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if stats["valid"] == 0:
         return {"error": "No valid data points remain.", "stats": stats}
 
+    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
+    
+    mld_x, mld_y = [], []
+    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper() in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
+        mld_x, mld_y = _calculate_mld(plot_x, plot_y, plot_c, is_x_dt)
+
     if stats["valid"] > MAX_RENDER_POINTS:
         step = stats["valid"] // MAX_RENDER_POINTS
         plot_x = plot_x[::step]
@@ -279,8 +343,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         plot_qc = plot_qc[::step]
         if plot_c is not None: plot_c = plot_c[::step]
 
-    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
-    
     if is_x_dt:
         x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist()
     else:
@@ -306,13 +368,19 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "c_max": c_max,
         "qc_applied": apply_qc,
         "qc_pass": plot_qc.tolist() if apply_qc else [],
-        "stats": stats
+        "stats": stats,
+        "mld_x": mld_x,
+        "mld_y": mld_y
     }
 
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
                           highlight_qc=False, filter_time=True,
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
-                          profile_num=None):
+                          profile_num=None, calc_mld=False):
+    if isinstance(c_var, str) and "|mld" in c_var:
+        calc_mld = True
+        c_var = c_var.replace("|mld", "")
+
     if c_var == "None":
         c_var = ""
 
@@ -412,6 +480,12 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     if total == 0:
         return {"error": "No points in view."}
 
+    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
+
+    mld_x, mld_y = [], []
+    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper() in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
+        mld_x, mld_y = _calculate_mld(plot_x, plot_y, plot_c, is_x_dt)
+
     if total > MAX_RENDER_POINTS:
         step = total // MAX_RENDER_POINTS
         plot_x = plot_x[::step]
@@ -420,7 +494,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         if plot_c is not None:
             plot_c = plot_c[::step]
 
-    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
     x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else [None if np.isnan(v) else float(v) for v in plot_x]
     y_out = [None if np.isnan(v) else float(v) for v in plot_y]
 
@@ -435,5 +508,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     return {
         "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
         "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,
-        "qc_pass": plot_qc.tolist() if apply_qc else []
+        "qc_pass": plot_qc.tolist() if apply_qc else [],
+        "mld_x": mld_x, "mld_y": mld_y
     }

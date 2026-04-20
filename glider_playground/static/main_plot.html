@@ -148,7 +148,8 @@
                 hovermode: false,
                 plot_bgcolor: 'transparent',
                 paper_bgcolor: 'transparent',
-                dragmode: 'zoom'
+                dragmode: 'zoom',
+                showlegend: false
             };
 
             if (xRange) {
@@ -219,6 +220,18 @@
                     hoverinfo: 'none', customdata: data.c || []
                 });
             }
+            
+            if (data.mld_x && data.mld_x.length > 0 && data.mld_y && data.mld_y.length > 0) {
+                traces.push({
+                    x: data.mld_x, y: data.mld_y,
+                    mode: 'lines', type: 'scattergl',
+                    line: { color: '#000000', width: 3 },
+                    name: 'Mixed Layer Depth',
+                    showlegend: false,
+                    hoverinfo: 'x+y'
+                });
+            }
+
             return traces;
         }
 
@@ -323,6 +336,13 @@
             bgSpinner.classList.add('active'); 
             const params = new URLSearchParams(urlParams);
             
+            // Prevent MLD recalculation on zoomed chunks to keep the line static
+            params.delete('calc_mld');
+            let cVarStr = params.get('c_var') || '';
+            if (cVarStr.includes('|mld')) {
+                params.set('c_var', cVarStr.replace('|mld', ''));
+            }
+            
             const isXDate = plotData.is_x_dt;
             const xMinVal = isXDate ? new Date(xMin).getTime() : xMin;
             const xMaxVal = isXDate ? new Date(xMax).getTime() : xMax;
@@ -340,6 +360,12 @@
                 });
                 const newData = await res.json();
                 if (newData.error) return;
+
+                // Carry over the static MLD line from the initial full-dataset load
+                if (_originalPlotData && _originalPlotData.mld_x && _originalPlotData.mld_x.length > 0) {
+                    newData.mld_x = _originalPlotData.mld_x;
+                    newData.mld_y = _originalPlotData.mld_y;
+                }
 
                 plotData = newData;
 

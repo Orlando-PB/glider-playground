@@ -107,6 +107,7 @@
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
                 <button id="invertYBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded">Invert Y</button>
+                <button id="calcMldBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">Overlay MLD</button>
 
                 <div class="border-l border-gray-300 pl-3 ml-1 flex items-center gap-2">
                     <button id="filterTimeBtn" class="toggle-btn active px-3 py-1.5 text-[10px] font-bold uppercase rounded" title="Filters out NaNs, pre-deployment, and future dates">Filter Bad Time</button>
@@ -317,6 +318,7 @@
         const plotStatsContainer = document.getElementById('plotStatsContainer');
         
         const invertYBtn = document.getElementById('invertYBtn');
+        const calcMldBtn = document.getElementById('calcMldBtn');
         const applyQcBtn = document.getElementById('applyQcBtn');
         const highlightQcBtn = document.getElementById('highlightQcBtn');
         const filterTimeBtn = document.getElementById('filterTimeBtn');
@@ -536,6 +538,18 @@
         function checkAndUpdatePreset() {
             currentPreset = detectCurrentPreset();
             updatePresetUI();
+            
+            const xInfo = variableCache.find(v => v.name === xSelect.value);
+            isXDateTime = xInfo && xInfo.type === 'datetime';
+            
+            const isYDepth = ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'].includes(ySelect.value.toUpperCase());
+            const isCTemp = ['TEMP', 'CONS_TEMP'].includes(cVarSelect.value.toUpperCase());
+            if (isXDateTime && isYDepth && isCTemp) {
+                calcMldBtn.classList.remove('hidden');
+            } else {
+                calcMldBtn.classList.add('hidden');
+                calcMldBtn.classList.remove('active');
+            }
         }
 
         function renderPresetsDropdown() {
@@ -883,6 +897,7 @@
 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
+        checkAndUpdatePreset();
         }
 
         async function loadVariables() {
@@ -968,6 +983,7 @@
         };
 
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
+        calcMldBtn.addEventListener('click', () => handleToggle(calcMldBtn, false));
         filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
         
         applyQcBtn.addEventListener('click', () => {
@@ -1211,9 +1227,10 @@
                 
                 const params = new URLSearchParams({
                     filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
-                    c_var: cVarSelect.value, cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
+                    c_var: cVarSelect.value + (calcMldBtn.classList.contains('active') ? '|mld' : ''), cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
                     apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
-                    highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active')
+                    highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active'),
+                    calc_mld: calcMldBtn.classList.contains('active')
                 });
 
                 if (currentProfileNum !== null && currentProfileNum !== undefined) {
