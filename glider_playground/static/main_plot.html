@@ -79,12 +79,14 @@
         const originalFetch = window.fetch;
         window.fetch = async function(...args) {
             const response = await originalFetch.apply(this, args);
-            const processTime = response.headers.get('X-Process-Time');
-            if (processTime) {
-                const timeInSeconds = parseFloat(processTime).toFixed(4);
-                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
-                const path = new URL(url, window.location.origin).pathname;
-                console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
+            if (url.includes('/api/')) {
+                const processTime = response.headers.get('X-Process-Time');
+                if (processTime) {
+                    const timeInSeconds = parseFloat(processTime).toFixed(4);
+                    const path = new URL(url, window.location.origin).pathname;
+                    console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
+                }
             }
             return response;
         };

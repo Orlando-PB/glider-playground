@@ -4,10 +4,30 @@ import pandas as pd
 from netCDF4 import Dataset
 import datetime
 import os
+import functools
 
 # Locked to 200k points max for optimal WebGL performance
 MAX_RENDER_POINTS = 200000
 
+@functools.lru_cache(maxsize=32)
+def _get_var_names(filepath):
+    if not os.path.exists(filepath): return []
+    try:
+        with xr.open_dataset(filepath) as ds:
+            return list(ds.variables.keys())
+    except Exception:
+        return []
+
+@functools.lru_cache(maxsize=16)
+def _read_vars_cached(filepath, var_names_tuple):
+    if not os.path.exists(filepath): return None
+    try:
+        with xr.open_dataset(filepath) as ds:
+            return {name: ds.variables[name].values.copy().ravel() for name in var_names_tuple if name in ds.variables}
+    except Exception:
+        return None
+
+@functools.lru_cache(maxsize=32)
 def get_variables(filepath):
     if not os.path.exists(filepath):
         return []
@@ -34,6 +54,7 @@ def get_variables(filepath):
     glider_data.close()
     return variables
 
+@functools.lru_cache(maxsize=32)
 def get_dataset_info(filepath):
     if not os.path.exists(filepath):
         return {"error": "File not found"}
@@ -63,72 +84,73 @@ def get_dataset_info(filepath):
         "global_attributes": global_attrs
     }
 
+@functools.lru_cache(maxsize=32)
 def get_profiles(filepath):
     if not os.path.exists(filepath):
         return {"error": "File not found"}
 
-    try:
-        glider_data = xr.open_dataset(filepath)
-    except Exception as e:
-        return {"error": f"Failed to read dataset: {e}"}
+    var_names = _get_var_names(filepath)
+    if not var_names:
+        return {"error": "Failed to read dataset"}
 
-    if "PROFILE_NUMBER" not in glider_data.variables:
-        glider_data.close()
+    if "PROFILE_NUMBER" not in var_names:
         return {"has_profiles": False, "profiles": [], "has_direction": False}
 
-    prof_nums = glider_data.variables["PROFILE_NUMBER"].values.ravel()
-    valid_mask = ~pd.isnull(prof_nums)
-    prof_nums_valid = prof_nums[valid_mask]
-
-    has_direction = "PROFILE_DIRECTION" in glider_data.variables
-    prof_dirs_valid = None
-    if has_direction:
-        prof_dirs_valid = glider_data.variables["PROFILE_DIRECTION"].values.ravel()[valid_mask]
-
-    if len(prof_nums_valid) == 0:
-        glider_data.close()
-        return {"has_profiles": False, "profiles": [], "has_direction": has_direction}
-
-    unique_profs = np.unique(prof_nums_valid.astype(float))
-    unique_profs = unique_profs[~np.isnan(unique_profs)]
-
+    has_direction = "PROFILE_DIRECTION" in var_names
     time_var = None
-    if "TIME" in glider_data.variables:
+    if "TIME" in var_names:
         time_var = "TIME"
     else:
-        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+        time_vars = [v for v in var_names if 'TIME' in v.upper()]
         if time_vars:
             time_var = time_vars[0]
 
-    time_vals_valid = None
-    if time_var is not None:
-        t_arr = glider_data.variables[time_var].values.ravel()
-        if len(t_arr) == len(prof_nums):
-            time_vals_valid = t_arr[valid_mask]
+    vars_to_read = {"PROFILE_NUMBER"}
+    if has_direction: vars_to_read.add("PROFILE_DIRECTION")
+    if time_var: vars_to_read.add(time_var)
+
+    data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_read)))
+    if data_dict is None:
+        return {"error": "Failed to extract profile variables"}
+
+    prof_nums = data_dict["PROFILE_NUMBER"]
+    valid_mask = ~pd.isnull(prof_nums)
+
+    if not valid_mask.any():
+        return {"has_profiles": False, "profiles": [], "has_direction": has_direction}
+
+    df_dict = {"PROFILE_NUMBER": prof_nums[valid_mask]}
+    if has_direction:
+        df_dict["PROFILE_DIRECTION"] = data_dict["PROFILE_DIRECTION"][valid_mask]
+    if time_var:
+        df_dict["TIME"] = data_dict[time_var][valid_mask]
+
+    df = pd.DataFrame(df_dict)
+    grouped = df.groupby("PROFILE_NUMBER", dropna=True)
+
+    d_first = grouped["PROFILE_DIRECTION"].first() if has_direction else None
+    t_min = grouped["TIME"].min() if time_var else None
+    t_max = grouped["TIME"].max() if time_var else None
 
     profiles = []
-    for p in unique_profs:
+    for p in grouped.groups.keys():
         entry = {"number": int(p) if float(p).is_integer() else float(p)}
-        p_mask = prof_nums_valid == p
-        if has_direction and prof_dirs_valid is not None:
-            matches = prof_dirs_valid[p_mask]
-            matches = matches[~pd.isnull(matches)]
-            if len(matches) > 0:
-                entry["direction"] = int(matches[0])
-            else:
-                entry["direction"] = None
-        if time_vals_valid is not None:
-            p_times = time_vals_valid[p_mask]
-            p_times = p_times[~pd.isnull(p_times)]
-            if len(p_times) > 0:
+        
+        if has_direction and d_first is not None:
+            val = d_first.get(p)
+            entry["direction"] = None if pd.isnull(val) else int(val)
+            
+        if time_var and t_min is not None and t_max is not None:
+            p_min = t_min.get(p)
+            p_max = t_max.get(p)
+            if not pd.isnull(p_min) and not pd.isnull(p_max):
                 try:
-                    entry["time_min"] = pd.to_datetime(p_times.min()).isoformat()
-                    entry["time_max"] = pd.to_datetime(p_times.max()).isoformat()
+                    entry["time_min"] = pd.to_datetime(p_min).isoformat()
+                    entry["time_max"] = pd.to_datetime(p_max).isoformat()
                 except Exception:
                     pass
         profiles.append(entry)
 
-    glider_data.close()
     return {"has_profiles": True, "profiles": profiles, "has_direction": has_direction}
 
 
@@ -147,41 +169,38 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if not os.path.exists(filepath):
         return {"error": "File not found"}
 
-    try:
-        glider_data = xr.open_dataset(filepath)
-    except Exception as e:
-        return {"error": f"Failed to read dataset: {e}"}
-    
-    data_dict = {}
+    var_names = _get_var_names(filepath)
+    if not var_names:
+        return {"error": "Failed to read dataset"}
+
     vars_to_extract = {x_var, y_var}
     if c_var and c_var != 'black':
         vars_to_extract.add(c_var)
 
     actual_time_var = "TIME"
-    if "TIME" not in glider_data.variables:
-        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+    if "TIME" not in var_names:
+        time_vars = [v for v in var_names if 'TIME' in v.upper()]
         if time_vars: actual_time_var = time_vars[0]
 
-    if filter_time and actual_time_var in glider_data.variables:
+    if filter_time and actual_time_var in var_names:
         vars_to_extract.add(actual_time_var)
 
-    if profile_num is not None and "PROFILE_NUMBER" in glider_data.variables:
+    if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
 
     if apply_qc:
         qc_vars = {f"{v}_QC" for v in vars_to_extract}
         vars_to_extract.update(qc_vars)
 
-    for name in vars_to_extract:
-        if name in glider_data.variables:
-            data_dict[name] = glider_data.variables[name].values.copy().ravel()
+    data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
+    if data_dict is None:
+        return {"error": "Failed to extract variables from dataset"}
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
     c_vals = data_dict.get(c_var) if c_var and c_var != 'black' else None
 
     if len(x_vals) == 0:
-        glider_data.close()
         return {"error": "No data found for selected variables."}
 
     stats = {
@@ -251,7 +270,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     plot_qc = qc_pass_mask[current_mask]
 
     if stats["valid"] == 0:
-        glider_data.close()
         return {"error": "No valid data points remain.", "stats": stats}
 
     if stats["valid"] > MAX_RENDER_POINTS:
@@ -279,8 +297,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
             c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
             c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
 
-    glider_data.close()
-
     return {
         "x": x_out,
         "y": y_out,
@@ -303,38 +319,35 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     if not os.path.exists(filepath):
         return {"error": "File not found"}
 
-    try:
-        glider_data = xr.open_dataset(filepath)
-    except Exception as e:
-        return {"error": f"Failed to read dataset: {e}"}
-    
-    data_dict = {}
+    var_names = _get_var_names(filepath)
+    if not var_names:
+        return {"error": "Failed to read dataset"}
+
     vars_to_extract = {x_var, y_var}
     if c_var and c_var != 'black':
         vars_to_extract.add(c_var)
 
     actual_time_var = "TIME"
-    if "TIME" not in glider_data.variables:
-        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+    if "TIME" not in var_names:
+        time_vars = [v for v in var_names if 'TIME' in v.upper()]
         if time_vars: actual_time_var = time_vars[0]
 
-    if filter_time and actual_time_var in glider_data.variables:
+    if filter_time and actual_time_var in var_names:
         vars_to_extract.add(actual_time_var)
-    if profile_num is not None and "PROFILE_NUMBER" in glider_data.variables:
+    if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
     if apply_qc:
         vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
 
-    for name in vars_to_extract:
-        if name in glider_data.variables:
-            data_dict[name] = glider_data.variables[name].values.copy().ravel()
+    data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
+    if data_dict is None:
+        return {"error": "Failed to extract variables from dataset"}
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
     c_vals = data_dict.get(c_var) if c_var and c_var != 'black' else None
 
     if len(x_vals) == 0:
-        glider_data.close()
         return {"error": "No data found."}
 
     valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
@@ -397,7 +410,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
     total = len(plot_x)
     if total == 0:
-        glider_data.close()
         return {"error": "No points in view."}
 
     if total > MAX_RENDER_POINTS:
@@ -420,7 +432,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
             c_min = float(np.nanpercentile(valid_c, 0.1))
             c_max = float(np.nanpercentile(valid_c, 99.9))
 
-    glider_data.close()
     return {
         "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
         "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,

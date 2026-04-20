@@ -285,6 +285,30 @@
     </div>
 
     <script>
+        // --- Shared Console Logging ---
+        const consoleStyles = {
+            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
+            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
+            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
+        };
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(...args) {
+            const response = await originalFetch.apply(this, args);
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
+            if (url.includes('/api/')) {
+                const processTime = response.headers.get('X-Process-Time');
+                if (processTime) {
+                    const timeInSeconds = parseFloat(processTime).toFixed(4);
+                    const path = new URL(url, window.location.origin).pathname;
+                    console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
+                }
+            }
+            return response;
+        };
+        // ------------------------------
+
         const tabVariables = document.getElementById('tabVariables');
         const tabAttributes = document.getElementById('tabAttributes');
         const tab3D = document.getElementById('tab3D');
