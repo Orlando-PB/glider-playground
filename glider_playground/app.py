@@ -91,9 +91,16 @@ def open_data_folder():
             return {"status": "success", "path": str(state["DATA_DIR"])}
         else:
             return {"status": "cancelled"}
-            
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/set_folder")
+def set_folder(path: str):
+    if not path or not os.path.isdir(path):
+        return {"status": "error", "message": "Folder not found"}
+    state["DATA_DIR"] = Path(path)
+    return {"status": "success", "path": str(state["DATA_DIR"])}
 
 @app.get("/api/map")
 def get_map(filename: str):
@@ -122,6 +129,11 @@ def get_variables(filename: str):
 def get_dataset_info(filename: str):
     with data_lock:
         return plot_logic.get_dataset_info(str(state["DATA_DIR"] / filename))
+
+@app.get("/api/profiles")
+def get_profiles(filename: str):
+    with data_lock:
+        return plot_logic.get_profiles(str(state["DATA_DIR"] / filename))
     
 @app.get("/api/config")
 def get_config():
@@ -129,26 +141,30 @@ def get_config():
 
 @app.get("/api/plot_data")
 def get_plot_data(
-    filename: str, x_var: str, y_var: str, c_var: str = "", 
-    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True
+    filename: str, x_var: str, y_var: str, c_var: str = "",
+    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
+    profile_num: float = None
 ):
     with data_lock:
         return plot_logic.get_plot_data_json(
-            str(state["DATA_DIR"] / filename), x_var, y_var, c_var,  
-            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, filter_time=filter_time
+            str(state["DATA_DIR"] / filename), x_var, y_var, c_var,
+            apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, filter_time=filter_time,
+            profile_num=profile_num
         )
 
 @app.get("/api/plot_data_bounds")
 def get_plot_data_bounds(
     filename: str, x_var: str, y_var: str, c_var: str = "",
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
-    x_min: float = None, x_max: float = None, y_min: float = None, y_max: float = None
+    x_min: float = None, x_max: float = None, y_min: float = None, y_max: float = None,
+    profile_num: float = None
 ):
     with data_lock:
         return plot_logic.get_plot_data_bounds(
             str(state["DATA_DIR"] / filename), x_var, y_var, c_var,
             apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc, filter_time=filter_time,
-            x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max
+            x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
+            profile_num=profile_num
         )
     
 @app.post("/api/download_demo")

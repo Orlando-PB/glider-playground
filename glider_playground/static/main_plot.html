@@ -264,42 +264,53 @@
             
             const plotDiv = document.getElementById('plotDiv');
             plotDiv.on('plotly_relayout', function(eventData) {
-                let xMin, xMax, yMin, yMax;
-                let isAuto = false;
+                const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
+                const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
+                const xAuto = eventData['xaxis.autorange'] === true;
+                const yAuto = eventData['yaxis.autorange'] === true;
 
-                if (eventData['xaxis.range[0]']) {
-                    xMin = eventData['xaxis.range[0]']; xMax = eventData['xaxis.range[1]'];
-                    yMin = eventData['yaxis.range[0]']; yMax = eventData['yaxis.range[1]'];
-                    if (yMin > yMax) { let temp = yMin; yMin = yMax; yMax = temp; }
-                    _currentZoom = { xMin, xMax, yMin, yMax };
-                } else if (eventData['xaxis.autorange']) {
-                    isAuto = true;
-                    _currentZoom = null;
-                }
-
-                if (xMin !== undefined || isAuto) {
-                    window.parent.postMessage({ 
-                        type: 'plotZoomed', 
-                        limits: { xMin, xMax, yMin, yMax }
-                    }, '*');
-                }
+                if (!hasXRange && !hasYRange && !xAuto && !yAuto) return;
 
                 if (_bgFetchController) {
                     _bgFetchController.abort();
                     _bgFetchController = null;
                 }
 
-                if (isAuto) {
+                if (xAuto && yAuto) {
                     clearTimeout(_pendingBounds);
+                    _currentZoom = null;
                     if (_originalPlotData) {
                         plotData = _originalPlotData;
                         Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
                         window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max }, '*');
                     }
+                    window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
                     return;
                 }
 
-                if (xMin === undefined) return;
+                const layout = plotDiv.layout || {};
+                let xMin, xMax, yMin, yMax;
+
+                if (hasXRange) {
+                    xMin = eventData['xaxis.range[0]']; xMax = eventData['xaxis.range[1]'];
+                } else if (layout.xaxis && Array.isArray(layout.xaxis.range)) {
+                    xMin = layout.xaxis.range[0]; xMax = layout.xaxis.range[1];
+                }
+
+                if (hasYRange) {
+                    yMin = eventData['yaxis.range[0]']; yMax = eventData['yaxis.range[1]'];
+                } else if (layout.yaxis && Array.isArray(layout.yaxis.range)) {
+                    yMin = layout.yaxis.range[0]; yMax = layout.yaxis.range[1];
+                }
+
+                if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
+
+                if (typeof yMin === 'number' && typeof yMax === 'number' && yMin > yMax) {
+                    const t = yMin; yMin = yMax; yMax = t;
+                }
+
+                _currentZoom = { xMin, xMax, yMin, yMax };
+                window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
                 _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);

@@ -140,6 +140,21 @@
                 </div>
             </div>
 
+            <div id="profileContainer" class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1" style="display: none;">
+                <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Profile</label>
+                <button id="profilePrevBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold rounded" title="Previous profile">
+                    <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                </button>
+                <input type="number" id="profileNumInput" class="w-14 p-1 border border-gray-300 bg-white text-[10px] text-center rounded outline-none focus:border-googleBlue" placeholder="All" title="Profile number (empty = all)">
+                <button id="profileNextBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold rounded" title="Next profile">
+                    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                </button>
+                <span id="profileDirIcon" class="material-symbols-outlined text-[14px] text-gray-500 w-4 text-center" title="Direction"></span>
+                <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed text-[12px] px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                    <span class="material-symbols-outlined text-[14px]">close</span>
+                </button>
+            </div>
+
             <div class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1 relative">
                 <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Colour</label>
                 <select id="cVar" class="p-1.5 border border-transparent bg-[#eee] focus:bg-white focus:border-googleBlue w-28 outline-none transition-all">
@@ -307,6 +322,16 @@
         const cmapTrigger = document.getElementById('cmapTrigger'), cmapMenu = document.getElementById('cmapMenu');
         const cmapInput = document.getElementById('cmap'), cmapOptions = Array.from(document.querySelectorAll('.cmap-option'));
 
+        const profileContainer = document.getElementById('profileContainer');
+        const profilePrevBtn = document.getElementById('profilePrevBtn');
+        const profileNextBtn = document.getElementById('profileNextBtn');
+        const profileNumInput = document.getElementById('profileNumInput');
+        const profileDirIcon = document.getElementById('profileDirIcon');
+        const profileClearBtn = document.getElementById('profileClearBtn');
+
+        let profileList = [];
+        let currentProfileNum = null;
+
         const cTrimContainer = document.getElementById('cTrimContainer');
         const cTrimTrack = document.getElementById('cTrimTrack');
         const cTrimTopMask = document.getElementById('cTrimTopMask'), cTrimBottomMask = document.getElementById('cTrimBottomMask');
@@ -336,7 +361,22 @@
             preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true }
         };
 
-        let isFirstLoad = true;
+        const COOKIE_FOLDER = 'gp_folder';
+        const COOKIE_FILE = 'gp_file';
+        const COOKIE_DAYS = 365;
+
+        function setCookie(name, value) {
+            const d = new Date();
+            d.setTime(d.getTime() + COOKIE_DAYS * 24 * 60 * 60 * 1000);
+            document.cookie = `${name}=${encodeURIComponent(value)};expires=${d.toUTCString()};path=/;SameSite=Lax`;
+        }
+        function getCookie(name) {
+            const match = document.cookie.split('; ').find(c => c.startsWith(name + '='));
+            return match ? decodeURIComponent(match.slice(name.length + 1)) : '';
+        }
+        function clearCookie(name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+        }
 
         function updateToggleBtn(btn, isActive) {
             if (isActive) { btn.classList.add('active'); } 
@@ -373,21 +413,17 @@
                     plotStatsContainer.classList.remove('hidden');
                     plotStatsContainer.classList.add('flex');
                     let html = `<div class="flex justify-between font-medium"><span>Plotted Points:</span> <span class="text-googleBlue font-bold">${msg.stats.valid.toLocaleString()}</span></div>`;
-                    if (msg.stats.nan_removed > 0 || msg.stats.qc_removed > 0 || msg.stats.time_removed > 0) {
+                    if (msg.stats.nan_removed > 0 || msg.stats.qc_removed > 0 || msg.stats.time_removed > 0 || msg.stats.profile_removed > 0) {
                         html += `<div class="border-t border-gray-100 my-0.5"></div>`;
                         if (msg.stats.nan_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>NaNs removed:</span> <span>${msg.stats.nan_removed.toLocaleString()}</span></div>`;
                         if (msg.stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Failed QC:</span> <span>${msg.stats.qc_removed.toLocaleString()}</span></div>`;
                         if (msg.stats.time_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad times removed:</span> <span>${msg.stats.time_removed.toLocaleString()}</span></div>`;
+                        if (msg.stats.profile_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Other profiles:</span> <span>${msg.stats.profile_removed.toLocaleString()}</span></div>`;
                     }
                     plotStatsContainer.innerHTML = html;
                 }
 
-                const params = new URLSearchParams(window.location.search);
-                if (params.has('cMin') && !isNaN(params.get('cMin'))) cTrimMinInput.value = params.get('cMin');
-                if (params.has('cMax') && !isNaN(params.get('cMax'))) cTrimMaxInput.value = params.get('cMax');
-                
                 if (msg.hasC) updateHandlesFromInputs('c');
-                if (params.has('cMin') && !isNaN(params.get('cMin'))) sendColourLimitsToIframe();
             }
             else if (msg.type === 'plotError') {
                 setLoading(false);
@@ -427,7 +463,6 @@
                 } else {
                     currentZoomBounds = null;
                 }
-                updateUrlState();
             }
             else if (msg.type === 'autoColourResult') {
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
@@ -451,73 +486,6 @@
             const c2 = parseFloat(cTrimMaxInput.value);
             if(isNaN(c1) || isNaN(c2)) return;
             plotIframe.contentWindow.postMessage({ type: 'updateColour', limits: { cMin: c1, cMax: c2 } }, '*');
-            updateUrlState();
-        }
-
-        function updateUrlState() {
-            const params = new URLSearchParams();
-            params.set('dataset', datasetSelect.value);
-            if (currentPreset) params.set('preset', currentPreset);
-            params.set('x', xSelect.value);
-            params.set('y', ySelect.value);
-            params.set('c', cVarSelect.value);
-            params.set('cmap', cmapInput.value);
-            params.set('invY', invertYBtn.classList.contains('active'));
-            params.set('qc', applyQcBtn.classList.contains('active'));
-            params.set('hlQc', highlightQcBtn.classList.contains('active'));
-            params.set('qcFlags', qcFlagsInput.value);
-            params.set('filtTime', filterTimeBtn.classList.contains('active'));
-
-            if (cTrimMinInput.value && !isNaN(cTrimMinInput.value) && baseCMin !== null) params.set('cMin', cTrimMinInput.value);
-            if (cTrimMaxInput.value && !isNaN(cTrimMaxInput.value) && baseCMax !== null) params.set('cMax', cTrimMaxInput.value);
-
-            if (currentZoomBounds) {
-                params.set('zXmin', currentZoomBounds.xMin);
-                params.set('zXmax', currentZoomBounds.xMax);
-                params.set('zYmin', currentZoomBounds.yMin);
-                params.set('zYmax', currentZoomBounds.yMax);
-            }
-
-            const newUrl = `${window.location.pathname}?${params.toString()}`;
-            window.history.replaceState({}, '', newUrl);
-        }
-
-        function applyUrlState() {
-            const params = new URLSearchParams(window.location.search);
-            if (!params.has('x')) return;
-
-            const setVal = (id, param) => { if (params.has(param)) document.getElementById(id).value = params.get(param); };
-            const toggleBtn = (btn, param) => { if (params.has(param)) updateToggleBtn(btn, params.get(param) === 'true'); };
-
-            if (params.has('preset')) {
-                currentPreset = params.get('preset');
-            }
-
-            setVal('xVar', 'x'); setVal('yVar', 'y'); setVal('cVar', 'c'); setVal('cmap', 'cmap');
-            updateCmapGradient(cmapInput.value);
-
-            toggleBtn(invertYBtn, 'invY');
-            toggleBtn(applyQcBtn, 'qc');
-            toggleBtn(highlightQcBtn, 'hlQc');
-            setVal('qcFlags', 'qcFlags'); 
-            toggleBtn(filterTimeBtn, 'filtTime');
-
-            qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
-            highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
-
-            setVal('cTrimMinInput', 'cMin');
-            setVal('cTrimMaxInput', 'cMax');
-
-            if (params.has('zXmin') && params.has('zXmax') && params.has('zYmin') && params.has('zYmax')) {
-                currentZoomBounds = {
-                    xMin: params.get('zXmin'), xMax: params.get('zXmax'),
-                    yMin: params.get('zYmin'), yMax: params.get('zYmax')
-                };
-            }
-
-            const xInfo = variableCache.find(v => v.name === xSelect.value);
-            if (xInfo) isXDateTime = xInfo.type === 'datetime';
-            updatePresetUI();
         }
 
         function detectCurrentPreset() {
@@ -775,14 +743,32 @@
         tab3D.addEventListener('click', () => switchTab('tab3D'));
 
         async function init() {
+            let isServer = false;
             try {
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
-                if (cfg.is_server) {
+                isServer = !!cfg.is_server;
+                if (isServer) {
                     document.getElementById('openFolderBtn').style.display = 'none';
                 }
-            } catch(e) { 
-                console.error("Config fetch failed:", e); 
+            } catch(e) {
+                console.error("Config fetch failed:", e);
+            }
+
+            if (!isServer) {
+                const savedFolder = getCookie(COOKIE_FOLDER);
+                if (savedFolder) {
+                    try {
+                        const res = await fetch(`/api/set_folder?path=${encodeURIComponent(savedFolder)}`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.status !== 'success') {
+                            clearCookie(COOKIE_FOLDER);
+                            clearCookie(COOKIE_FILE);
+                        }
+                    } catch (e) {
+                        console.error("Failed to restore folder:", e);
+                    }
+                }
             }
 
             renderPresetsDropdown();
@@ -890,31 +876,26 @@
                 return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
             });
             
-            const params = new URLSearchParams(window.location.search);
-            const hasUrlState = isFirstLoad && params.has('x');
-
             if (!hasAnyQc) {
                 updateToggleBtn(applyQcBtn, false);
                 applyQcBtn.disabled = true;
                 applyQcBtn.classList.add('opacity-40', 'cursor-not-allowed');
                 qcFlagsContainer.style.display = 'none';
-                
+
                 updateToggleBtn(highlightQcBtn, false);
                 highlightQcBtn.style.display = 'none';
-                
-                if (!hasUrlState) updateToggleBtn(filterTimeBtn, true);
+
+                updateToggleBtn(filterTimeBtn, true);
             } else {
                 applyQcBtn.disabled = false;
                 applyQcBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-                
-                if (!hasUrlState) {
-                    updateToggleBtn(applyQcBtn, true);
-                    updateToggleBtn(filterTimeBtn, false);
-                    updateToggleBtn(highlightQcBtn, false);
-                }
 
-                qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
-                highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
+                updateToggleBtn(applyQcBtn, true);
+                updateToggleBtn(filterTimeBtn, false);
+                updateToggleBtn(highlightQcBtn, false);
+
+                qcFlagsContainer.style.display = 'flex';
+                highlightQcBtn.style.display = 'flex';
             }
 
             const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
@@ -945,13 +926,10 @@
                 }
             });
             
-            if (!hasUrlState) {
+            if (!currentValid) {
                 currentPreset = firstValid || 'preset_temp';
-                applyPreset(currentPreset);
-            } else if (currentPreset && !currentValid) {
-                currentPreset = firstValid || 'preset_temp';
-                applyPreset(currentPreset);
             }
+            applyPreset(currentPreset);
             
             updatePresetUI();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
@@ -1007,6 +985,104 @@
             }
         });
 
+        const DIR_ICONS = { 1: 'arrow_upward', '-1': 'arrow_downward', 0: 'swap_horiz' };
+        const DIR_LABELS = { 1: 'Ascending', '-1': 'Descending', 0: 'Transect' };
+
+        async function loadProfiles(filename) {
+            profileList = [];
+            try {
+                const res = await fetch(`/api/profiles?filename=${encodeURIComponent(filename)}`);
+                const data = await res.json();
+                if (data.has_profiles && data.profiles.length > 0) {
+                    profileList = data.profiles;
+                    profileContainer.style.display = 'flex';
+                } else {
+                    profileContainer.style.display = 'none';
+                    currentProfileNum = null;
+                }
+            } catch (e) {
+                console.error("Failed to load profiles:", e);
+                profileContainer.style.display = 'none';
+                currentProfileNum = null;
+            }
+            syncProfileUI();
+        }
+
+        function syncProfileUI() {
+            if (currentProfileNum === null || currentProfileNum === undefined) {
+                profileNumInput.value = '';
+                profileDirIcon.textContent = '';
+                profileDirIcon.title = '';
+                profileClearBtn.style.display = 'none';
+            } else {
+                profileNumInput.value = currentProfileNum;
+                profileClearBtn.style.display = 'inline-flex';
+                const entry = profileList.find(p => p.number === currentProfileNum);
+                const dir = entry && entry.direction !== undefined ? entry.direction : null;
+                if (dir !== null && DIR_ICONS[dir] !== undefined) {
+                    profileDirIcon.textContent = DIR_ICONS[dir];
+                    profileDirIcon.title = DIR_LABELS[dir] || '';
+                } else {
+                    profileDirIcon.textContent = '';
+                    profileDirIcon.title = '';
+                }
+            }
+        }
+
+        function stepProfile(delta) {
+            if (!profileList.length) return;
+
+            let candidates = profileList;
+            const needZoomFilter = (currentProfileNum === null || currentProfileNum === undefined)
+                && currentZoomBounds && isXDateTime
+                && profileList.some(p => p.time_min && p.time_max);
+            if (needZoomFilter) {
+                const zMin = new Date(currentZoomBounds.xMin).getTime();
+                const zMax = new Date(currentZoomBounds.xMax).getTime();
+                const inZoom = profileList.filter(p => {
+                    if (!p.time_min || !p.time_max) return false;
+                    const pMin = new Date(p.time_min).getTime();
+                    const pMax = new Date(p.time_max).getTime();
+                    return pMax >= zMin && pMin <= zMax;
+                });
+                if (inZoom.length) candidates = inZoom;
+            }
+
+            const numbers = candidates.map(p => p.number);
+            let idx;
+            if (currentProfileNum === null || currentProfileNum === undefined || numbers.indexOf(currentProfileNum) === -1) {
+                idx = delta > 0 ? 0 : numbers.length - 1;
+            } else {
+                idx = Math.max(0, Math.min(numbers.length - 1, numbers.indexOf(currentProfileNum) + delta));
+            }
+            currentProfileNum = numbers[idx];
+            syncProfileUI();
+            resetPlotState(true);
+            updatePlot();
+        }
+
+        profilePrevBtn.addEventListener('click', () => stepProfile(-1));
+        profileNextBtn.addEventListener('click', () => stepProfile(1));
+        profileClearBtn.addEventListener('click', () => {
+            currentProfileNum = null;
+            syncProfileUI();
+            resetPlotState(true);
+            updatePlot();
+        });
+        profileNumInput.addEventListener('change', () => {
+            const v = profileNumInput.value.trim();
+            if (v === '') {
+                currentProfileNum = null;
+            } else {
+                const n = Number(v);
+                if (isNaN(n)) { syncProfileUI(); return; }
+                currentProfileNum = n;
+            }
+            syncProfileUI();
+            resetPlotState(true);
+            updatePlot();
+        });
+
         async function loadMapImage() {
             const selectedDataset = datasetSelect.value;
             if (!selectedDataset) return;
@@ -1047,46 +1123,36 @@
                 resetBtn.classList.remove('opacity-50');
                 
                 fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
-                
-                const params = new URLSearchParams(window.location.search);
-                if (isFirstLoad && params.has('dataset')) {
-                    const requestedFile = params.get('dataset');
-                    if (fileData.files.includes(requestedFile)) {
-                        datasetSelect.value = requestedFile;
-                    } else {
-                        window.history.replaceState({}, '', window.location.pathname);
-                    }
+
+                const savedFile = getCookie(COOKIE_FILE);
+                if (savedFile && fileData.files.includes(savedFile)) {
+                    datasetSelect.value = savedFile;
                 }
-                
+
                 await handleDatasetChange();
             }
         }
 
         async function handleDatasetChange() {
             resetPlotState(true);
+            currentProfileNum = null;
             const filename = datasetSelect.value;
             if (!filename) return;
+
+            setCookie(COOKIE_FILE, filename);
 
             await loadDatasetInfo(filename);
             await loadMapImage();
             await loadVariables();
-            
+            await loadProfiles(filename);
+
             switchTab('tab3D');
 
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) {
                 iframe3D.src = `/static/3d_view.html?filename=${encodeURIComponent(filename)}`;
             }
-            
-            const params = new URLSearchParams(window.location.search);
-            
-            if (isFirstLoad) {
-                isFirstLoad = false;
-                if (params.has('x')) {
-                    applyUrlState();
-                }
-            }
-            
+
             updatePlot();
         }
 
@@ -1110,10 +1176,9 @@
 
         async function updatePlot() {
             if (isPlotting) { plotQueued = true; return; }
-            
-            updateUrlState();
-            setLoading(true); 
-            resetInspectorState(); 
+
+            setLoading(true);
+            resetInspectorState();
             
             baseCMin = null; baseCMax = null;
 
@@ -1126,6 +1191,10 @@
                     apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
                     highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active')
                 });
+
+                if (currentProfileNum !== null && currentProfileNum !== undefined) {
+                    params.set('profile_num', currentProfileNum);
+                }
 
                 if (currentZoomBounds) {
                     params.set('zXmin', currentZoomBounds.xMin);
@@ -1174,6 +1243,8 @@
                 const res = await fetch('/api/open_folder', { method: 'POST' });
                 const data = await res.json();
                 if (data.status === "success") {
+                    setCookie(COOKIE_FOLDER, data.path);
+                    clearCookie(COOKIE_FILE);
                     await checkFilesAndTogglePrompt();
                 }
             } catch (err) {
@@ -1184,6 +1255,9 @@
         resetBtn.addEventListener('click', () => {
             currentPreset = 'preset_temp';
             applyPreset(currentPreset);
+            currentProfileNum = null;
+            syncProfileUI();
+            currentZoomBounds = null;
             resetPlotState(true);
             updatePlot();
         });

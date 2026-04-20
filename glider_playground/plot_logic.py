@@ -63,7 +63,84 @@ def get_dataset_info(filepath):
         "global_attributes": global_attrs
     }
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True):
+def get_profiles(filepath):
+    if not os.path.exists(filepath):
+        return {"error": "File not found"}
+
+    try:
+        glider_data = xr.open_dataset(filepath)
+    except Exception as e:
+        return {"error": f"Failed to read dataset: {e}"}
+
+    if "PROFILE_NUMBER" not in glider_data.variables:
+        glider_data.close()
+        return {"has_profiles": False, "profiles": [], "has_direction": False}
+
+    prof_nums = glider_data.variables["PROFILE_NUMBER"].values.ravel()
+    valid_mask = ~pd.isnull(prof_nums)
+    prof_nums_valid = prof_nums[valid_mask]
+
+    has_direction = "PROFILE_DIRECTION" in glider_data.variables
+    prof_dirs_valid = None
+    if has_direction:
+        prof_dirs_valid = glider_data.variables["PROFILE_DIRECTION"].values.ravel()[valid_mask]
+
+    if len(prof_nums_valid) == 0:
+        glider_data.close()
+        return {"has_profiles": False, "profiles": [], "has_direction": has_direction}
+
+    unique_profs = np.unique(prof_nums_valid.astype(float))
+    unique_profs = unique_profs[~np.isnan(unique_profs)]
+
+    time_var = None
+    if "TIME" in glider_data.variables:
+        time_var = "TIME"
+    else:
+        time_vars = [v for v in glider_data.variables if 'TIME' in v.upper()]
+        if time_vars:
+            time_var = time_vars[0]
+
+    time_vals_valid = None
+    if time_var is not None:
+        t_arr = glider_data.variables[time_var].values.ravel()
+        if len(t_arr) == len(prof_nums):
+            time_vals_valid = t_arr[valid_mask]
+
+    profiles = []
+    for p in unique_profs:
+        entry = {"number": int(p) if float(p).is_integer() else float(p)}
+        p_mask = prof_nums_valid == p
+        if has_direction and prof_dirs_valid is not None:
+            matches = prof_dirs_valid[p_mask]
+            matches = matches[~pd.isnull(matches)]
+            if len(matches) > 0:
+                entry["direction"] = int(matches[0])
+            else:
+                entry["direction"] = None
+        if time_vals_valid is not None:
+            p_times = time_vals_valid[p_mask]
+            p_times = p_times[~pd.isnull(p_times)]
+            if len(p_times) > 0:
+                try:
+                    entry["time_min"] = pd.to_datetime(p_times.min()).isoformat()
+                    entry["time_max"] = pd.to_datetime(p_times.max()).isoformat()
+                except Exception:
+                    pass
+        profiles.append(entry)
+
+    glider_data.close()
+    return {"has_profiles": True, "profiles": profiles, "has_direction": has_direction}
+
+
+def _apply_profile_mask(data_dict, profile_num):
+    if profile_num is None or "PROFILE_NUMBER" not in data_dict:
+        return None
+    prof_vals = data_dict["PROFILE_NUMBER"].astype(float)
+    with np.errstate(invalid='ignore'):
+        return (prof_vals == float(profile_num)) & ~np.isnan(prof_vals)
+
+
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None):
     if c_var == "None":
         c_var = ""
 
@@ -88,6 +165,9 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if filter_time and actual_time_var in glider_data.variables:
         vars_to_extract.add(actual_time_var)
 
+    if profile_num is not None and "PROFILE_NUMBER" in glider_data.variables:
+        vars_to_extract.add("PROFILE_NUMBER")
+
     if apply_qc:
         qc_vars = {f"{v}_QC" for v in vars_to_extract}
         vars_to_extract.update(qc_vars)
@@ -109,10 +189,17 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "nan_removed": 0,
         "time_removed": 0,
         "qc_removed": 0,
+        "profile_removed": 0,
         "valid": 0
     }
 
     current_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
+
+    profile_mask = _apply_profile_mask(data_dict, profile_num)
+    if profile_mask is not None:
+        old_sum = current_mask.sum()
+        current_mask &= profile_mask
+        stats["profile_removed"] = int(old_sum - current_mask.sum())
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
             c_vals_numeric = np.zeros(len(c_vals), dtype=float)
@@ -206,9 +293,10 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "stats": stats
     }
 
-def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", 
+def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
                           highlight_qc=False, filter_time=True,
-                          x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False):
+                          x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
+                          profile_num=None):
     if c_var == "None":
         c_var = ""
 
@@ -232,6 +320,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
     if filter_time and actual_time_var in glider_data.variables:
         vars_to_extract.add(actual_time_var)
+    if profile_num is not None and "PROFILE_NUMBER" in glider_data.variables:
+        vars_to_extract.add("PROFILE_NUMBER")
     if apply_qc:
         vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
 
@@ -249,6 +339,10 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
     valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
     qc_pass_mask = np.ones(len(x_vals), dtype=bool)
+
+    profile_mask = _apply_profile_mask(data_dict, profile_num)
+    if profile_mask is not None:
+        valid_mask &= profile_mask
 
     if apply_qc:
         try:
