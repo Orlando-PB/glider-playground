@@ -47,6 +47,38 @@
         let _pendingBounds = null;
         let _originalPlotData = null;
         let _currentZoom = null;
+        let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
+        let _suppressRelayout = false;  // true while we are driving relayout programmatically
+        let _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+
+        function computeRunningMean(xs, ys, window, isXDate) {
+            const pairs = [];
+            for (let i = 0; i < xs.length; i++) {
+                const yv = ys[i];
+                if (yv === null || yv === undefined || isNaN(yv)) continue;
+                const raw = xs[i];
+                if (raw === null || raw === undefined) continue;
+                const xv = isXDate ? new Date(raw).getTime() : Number(raw);
+                if (isNaN(xv)) continue;
+                pairs.push([xv, Number(yv)]);
+            }
+            pairs.sort((a, b) => a[0] - b[0]);
+            const n = pairs.length;
+            if (!n) return { x: [], y: [] };
+            const w = Math.max(2, Math.min(n, Math.floor(window)));
+            const half = Math.floor(w / 2);
+            const out_x = new Array(n), out_y = new Array(n);
+            let sum = 0, count = 0, lo = 0, hi = 0;
+            for (let i = 0; i < n; i++) {
+                const wantLo = Math.max(0, i - half);
+                const wantHi = Math.min(n, i + half + 1);
+                while (hi < wantHi) { sum += pairs[hi][1]; count++; hi++; }
+                while (lo < wantLo) { sum -= pairs[lo][1]; count--; lo++; }
+                out_x[i] = isXDate ? new Date(pairs[i][0]).toISOString() : pairs[i][0];
+                out_y[i] = sum / count;
+            }
+            return { x: out_x, y: out_y };
+        }
 
         const plotConfig = {
             defaultMarkerSize: 4,
@@ -141,16 +173,44 @@
         function buildLayout(xRange, yRange) {
             const isXDate = plotData.is_x_dt;
             const isInverted = urlParams.get('invert_y') === 'true';
+            const axisLabel = (name, units) => {
+                if (!name) return '';
+                const u = (units || '').trim();
+                return (u && u !== 'No units') ? `${name} (${u})` : name;
+            };
+            const xLabel = isXDate ? '' : axisLabel(plotData.x_var, plotData.x_units);
+            const yLabel = axisLabel(plotData.y_var, plotData.y_units);
             const layout = {
-                margin: { l: 50, r: 20, t: 20, b: 50 },
-                xaxis: { type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false },
-                yaxis: { showgrid: true, zeroline: false },
+                margin: { l: 60, r: 20, t: 20, b: xLabel ? 55 : 50 },
+                xaxis: { type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false, title: xLabel ? { text: xLabel, font: { size: 11, color: '#5f6368' }, standoff: 6 } : undefined },
+                yaxis: { showgrid: true, zeroline: false, title: yLabel ? { text: yLabel, font: { size: 11, color: '#5f6368' }, standoff: 6 } : undefined },
                 hovermode: false,
                 plot_bgcolor: 'transparent',
                 paper_bgcolor: 'transparent',
                 dragmode: 'zoom',
                 showlegend: false
             };
+
+            if (_jellyOverrides.title) {
+                layout.title = { text: _jellyOverrides.title, font: { size: 16, color: '#202124' }, x: 0.5, xanchor: 'center', y: 0.98, yanchor: 'top' };
+                layout.margin = { l: 50, r: 20, t: 40, b: 50 };
+            }
+
+            const jellyShapes = [], jellyAnnotations = [];
+            (_jellyOverrides.lines || []).forEach(ln => {
+                const numVal = typeof ln.value === 'number' ? ln.value : parseFloat(ln.value);
+                if (isNaN(numVal)) return;
+                const color = ln.color || '#ea4335';
+                if (ln.axis === 'y') {
+                    jellyShapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: numVal, y1: numVal, line: { color, width: 2, dash: 'dash' } });
+                    if (ln.label) jellyAnnotations.push({ xref: 'paper', x: 0.99, xanchor: 'right', yref: 'y', y: numVal, yanchor: 'bottom', text: ln.label, font: { size: 10, color }, bgcolor: 'rgba(255,255,255,0.8)', bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
+                } else {
+                    jellyShapes.push({ type: 'line', yref: 'paper', y0: 0, y1: 1, xref: 'x', x0: numVal, x1: numVal, line: { color, width: 2, dash: 'dash' } });
+                    if (ln.label) jellyAnnotations.push({ yref: 'paper', y: 0.99, yanchor: 'top', xref: 'x', x: numVal, xanchor: 'left', text: ln.label, font: { size: 10, color }, bgcolor: 'rgba(255,255,255,0.8)', bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
+                }
+            });
+            if (jellyShapes.length) layout.shapes = jellyShapes;
+            if (jellyAnnotations.length) layout.annotations = jellyAnnotations;
 
             if (xRange) {
                 layout.xaxis.range = xRange;
@@ -176,7 +236,16 @@
         }
 
         function createTraces(data) {
-            const cmapName = urlParams.get('cmap') || 'viridis';
+            let cmapName = urlParams.get('cmap') || 'viridis';
+            let effectiveColorscale = customColorscales[cmapName] || cmapName;
+            let forceSolidColor = null;
+
+            if (_jellyOverrides.colorMode === 'solid' && _jellyOverrides.colors.length >= 1) {
+                forceSolidColor = _jellyOverrides.colors[0];
+            } else if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
+                effectiveColorscale = [[0, _jellyOverrides.colors[0]], [1, _jellyOverrides.colors[1]]];
+            }
+
             let traces = [];
 
             if (data.qc_applied && urlParams.get('highlight_qc') === 'true') {
@@ -199,28 +268,51 @@
                 
                 traces.push({
                     x: gx, y: gy, mode: 'markers', type: 'scattergl',
-                    marker: { 
-                        size: plotConfig.defaultMarkerSize, 
-                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: 0.8, 
-                        colorscale: gc.length && data.c ? (customColorscales[cmapName]||cmapName) : undefined, 
-                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false 
+                    marker: {
+                        size: plotConfig.defaultMarkerSize,
+                        color: forceSolidColor ? forceSolidColor : (gc.length && data.c ? gc : plotConfig.defaultColour), opacity: 0.8,
+                        colorscale: forceSolidColor ? undefined : (gc.length && data.c ? effectiveColorscale : undefined),
+                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
                     hoverinfo: 'none', customdata: gc, name: 'Passed QC'
                 });
             } else {
                 traces.push({
                     x: data.x, y: data.y, mode: 'markers', type: 'scattergl',
-                    marker: { 
-                        size: plotConfig.defaultMarkerSize, 
-                        color: data.c && data.c.length ? data.c : (cmapName === 'black' ? 'black' : plotConfig.defaultColour), 
-                        opacity: 0.8, 
-                        colorscale: data.c && data.c.length ? (customColorscales[cmapName]||cmapName) : undefined, 
-                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false 
+                    marker: {
+                        size: plotConfig.defaultMarkerSize,
+                        color: forceSolidColor ? forceSolidColor : (data.c && data.c.length ? data.c : (cmapName === 'black' ? 'black' : plotConfig.defaultColour)),
+                        opacity: 0.8,
+                        colorscale: forceSolidColor ? undefined : (data.c && data.c.length ? effectiveColorscale : undefined),
+                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
                     hoverinfo: 'none', customdata: data.c || []
                 });
             }
             
+            if (_jellyOverrides.runningMean && data.x && data.x.length) {
+                const rm = _jellyOverrides.runningMean;
+                const axis = rm.axis || 'y';
+                const defaultWin = Math.max(10, Math.floor(data.x.length / 100));
+                const win = rm.window ? Math.max(3, Math.floor(rm.window)) : defaultWin;
+                let smoothed;
+                if (axis === 'x') {
+                    smoothed = computeRunningMean(data.y, data.x.map(v => data.is_x_dt ? new Date(v).getTime() : v), win, false);
+                    traces.push({
+                        x: smoothed.y, y: smoothed.x, mode: 'lines', type: 'scattergl',
+                        line: { color: rm.color || '#ea4335', width: 2.5 },
+                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y'
+                    });
+                } else {
+                    smoothed = computeRunningMean(data.x, data.y, win, !!data.is_x_dt);
+                    traces.push({
+                        x: smoothed.x, y: smoothed.y, mode: 'lines', type: 'scattergl',
+                        line: { color: rm.color || '#ea4335', width: 2.5 },
+                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y'
+                    });
+                }
+            }
+
             if (data.mld_x && data.mld_x.length > 0 && data.mld_y && data.mld_y.length > 0) {
                 traces.push({
                     x: data.mld_x, y: data.mld_y,
@@ -258,6 +350,8 @@
                     xMax = getSafeMax(plotData.x);
                 }
 
+                _globalExtent = { xMin, xMax, yMin, yMax };
+
                 window.parent.postMessage({
                     type: 'plotLoaded',
                     globalLimits: { xMin, xMax, yMin, yMax, cMin: plotData.c_min, cMax: plotData.c_max },
@@ -279,6 +373,7 @@
             
             const plotDiv = document.getElementById('plotDiv');
             plotDiv.on('plotly_relayout', function(eventData) {
+                if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
                 const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
                 const xAuto = eventData['xaxis.autorange'] === true;
@@ -318,6 +413,13 @@
                     yMin = layout.yaxis.range[0]; yMax = layout.yaxis.range[1];
                 }
 
+                // Fall back to global extent so a y-only or x-only zoom still triggers bgFetch
+                if ((xMin === undefined || xMax === undefined) && _globalExtent) {
+                    xMin = _globalExtent.xMin; xMax = _globalExtent.xMax;
+                }
+                if ((yMin === undefined || yMax === undefined) && _globalExtent) {
+                    yMin = _globalExtent.yMin; yMax = _globalExtent.yMax;
+                }
                 if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
 
                 if (typeof yMin === 'number' && typeof yMax === 'number' && yMin > yMax) {
@@ -361,10 +463,16 @@
                 const newData = await res.json();
                 if (newData.error) return;
 
-                // Carry over the static MLD line from the initial full-dataset load
-                if (_originalPlotData && _originalPlotData.mld_x && _originalPlotData.mld_x.length > 0) {
-                    newData.mld_x = _originalPlotData.mld_x;
-                    newData.mld_y = _originalPlotData.mld_y;
+                // Carry over the static MLD line and var/unit metadata from the full-dataset load
+                if (_originalPlotData) {
+                    if (_originalPlotData.mld_x && _originalPlotData.mld_x.length > 0) {
+                        newData.mld_x = _originalPlotData.mld_x;
+                        newData.mld_y = _originalPlotData.mld_y;
+                    }
+                    if (!newData.x_var) newData.x_var = _originalPlotData.x_var;
+                    if (!newData.y_var) newData.y_var = _originalPlotData.y_var;
+                    if (!newData.x_units) newData.x_units = _originalPlotData.x_units;
+                    if (!newData.y_units) newData.y_units = _originalPlotData.y_units;
                 }
 
                 plotData = newData;
@@ -390,14 +498,34 @@
             
             if (msg.type === 'updateLimits') {
                 const update = {};
-                if (msg.limits.xMin !== undefined && !isNaN(msg.limits.xMin)) {
-                    update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
-                }
-                if (msg.limits.yMin !== undefined && !isNaN(msg.limits.yMin)) {
-                    const invY = urlParams.get('invert_y') === 'true';
-                    update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
-                }
-                if (Object.keys(update).length > 0) Plotly.relayout('plotDiv', update);
+                const hasX = msg.limits.xMin !== undefined && !isNaN(msg.limits.xMin);
+                const hasY = msg.limits.yMin !== undefined && !isNaN(msg.limits.yMin);
+                const invY = urlParams.get('invert_y') === 'true';
+                if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
+                if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
+                if (Object.keys(update).length === 0) return;
+
+                _suppressRelayout = true;
+                Plotly.relayout('plotDiv', update).then(() => { _suppressRelayout = false; });
+
+                // Programmatic relayout doesn't always fire plotly_relayout with the flat-indexed
+                // keys (xaxis.range[0], xaxis.range[1]) that the drag handler expects, so we
+                // directly drive the same zoom flow here: record the new zoom bounds, notify
+                // the parent, and schedule a bgFetch for high-res data.
+                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+
+                const gl = _globalExtent || {};
+                const xMin = hasX ? msg.limits.xMin : gl.xMin;
+                const xMax = hasX ? msg.limits.xMax : gl.xMax;
+                const yMin = hasY ? msg.limits.yMin : gl.yMin;
+                const yMax = hasY ? msg.limits.yMax : gl.yMax;
+                if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
+
+                _currentZoom = { xMin, xMax, yMin, yMax };
+                window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
+
+                clearTimeout(_pendingBounds);
+                _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
             }
             
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
@@ -408,11 +536,50 @@
             
             if (msg.type === 'downloadPlot') {
                 Plotly.downloadImage('plotDiv', {
-                    format: 'png', 
-                    width: 1200, 
-                    height: 800, 
+                    format: 'png',
+                    width: 1200,
+                    height: 800,
                     filename: `glider_plot_${urlParams.get('x')}_vs_${urlParams.get('y')}`
                 });
+            }
+
+            if (msg.type === 'jellyOverrides') {
+                const ov = msg.overrides || {};
+                if ('title' in ov) _jellyOverrides.title = ov.title || null;
+                if ('colorMode' in ov) {
+                    _jellyOverrides.colorMode = ov.colorMode;
+                    _jellyOverrides.colors = Array.isArray(ov.colors) ? ov.colors : [];
+                }
+                if (Array.isArray(ov.lines)) {
+                    const resolved = [];
+                    ov.lines.forEach(ln => {
+                        if (ln && (ln.stat === 'mean' || ln.stat === 'median')) {
+                            const axis = ln.axis || 'y';
+                            const arr = axis === 'y' ? plotData.y : plotData.x;
+                            const nums = [];
+                            for (let i = 0; i < arr.length; i++) {
+                                const v = axis === 'x' && plotData.is_x_dt ? (arr[i] !== null ? new Date(arr[i]).getTime() : null) : arr[i];
+                                if (v !== null && !isNaN(v)) nums.push(v);
+                            }
+                            if (!nums.length) return;
+                            let val;
+                            if (ln.stat === 'mean') val = nums.reduce((a,b)=>a+b,0)/nums.length;
+                            else { nums.sort((a,b)=>a-b); val = nums.length % 2 ? nums[(nums.length-1)/2] : 0.5*(nums[nums.length/2 -1]+nums[nums.length/2]); }
+                            resolved.push({ axis, value: val, label: ln.label || (ln.stat === 'mean' ? 'Mean' : 'Median'), color: ln.color || '#34a853' });
+                        } else if (ln && typeof ln.value !== 'undefined') {
+                            resolved.push({ axis: ln.axis || 'y', value: ln.value, label: ln.label || '', color: ln.color || '#ea4335' });
+                        }
+                    });
+                    if (ov.replaceLines) _jellyOverrides.lines = resolved;
+                    else _jellyOverrides.lines = (_jellyOverrides.lines || []).concat(resolved);
+                }
+                if ('runningMean' in ov) _jellyOverrides.runningMean = ov.runningMean;
+                if (ov.clear) _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+
+                const zoom = _currentZoom;
+                const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
+                const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
+                Plotly.react('plotDiv', createTraces(plotData), buildLayout(xRange, yRange));
             }
 
             if (msg.type === 'autoColour') {

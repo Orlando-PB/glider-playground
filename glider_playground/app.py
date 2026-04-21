@@ -2,7 +2,7 @@ import uvicorn
 import platform
 import subprocess
 import sys
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import os
@@ -14,6 +14,7 @@ import httpx
 
 from . import plot_logic
 from . import spatial_logic
+from . import jelly_logic
 
 app = FastAPI()
 
@@ -112,6 +113,11 @@ def get_3d_data(filename: str):
     with data_lock:
         return spatial_logic.generate_3d_data(str(state["DATA_DIR"] / filename))
 
+@app.get("/api/location")
+def get_location(filename: str):
+    with data_lock:
+        return spatial_logic.get_location_summary(str(state["DATA_DIR"] / filename))
+
 @app.get("/api/files")
 def get_files():
     data_dir = state["DATA_DIR"]
@@ -192,6 +198,29 @@ async def download_demo_files():
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/api/jelly/key_status")
+def jelly_key_status():
+    return {"has_key": jelly_logic.has_api_key()}
+
+@app.post("/api/jelly/set_key")
+async def jelly_set_key(request: Request):
+    body = await request.json()
+    key = (body.get("key") or "").strip()
+    if not key or len(key) < 10:
+        return {"status": "error", "message": "Key looks too short."}
+    jelly_logic.set_api_key(key)
+    return {"status": "success"}
+
+@app.post("/api/jelly/delete_key")
+def jelly_delete_key():
+    jelly_logic.delete_api_key()
+    return {"status": "success"}
+
+@app.post("/api/jelly/chat")
+async def jelly_chat(request: Request):
+    body = await request.json()
+    return await jelly_logic.chat(body)
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8420, reload=True, access_log=False)

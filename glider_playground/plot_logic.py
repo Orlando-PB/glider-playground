@@ -28,6 +28,15 @@ def _read_vars_cached(filepath, var_names_tuple):
         return None
 
 @functools.lru_cache(maxsize=32)
+def _get_var_units(filepath):
+    if not os.path.exists(filepath): return {}
+    try:
+        with xr.open_dataset(filepath) as ds:
+            return {name: str(var.attrs.get('units', '')) for name, var in ds.variables.items()}
+    except Exception:
+        return {}
+
+@functools.lru_cache(maxsize=32)
 def get_variables(filepath):
     if not os.path.exists(filepath):
         return []
@@ -193,7 +202,7 @@ def _calculate_mld(plot_x, plot_y, plot_c, is_x_dt):
         
         # Find reference temperature (median of shallowest 5m)
         min_depth = group['depth'].min()
-        shallow = group[group['depth'] <= min_depth + 5.0]
+        shallow = group[group['depth'] <= min_depth + 10.0]
         if len(shallow) == 0:
             shallow = group.head(5)
             
@@ -359,6 +368,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
             c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
             c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
 
+    units_map = _get_var_units(filepath)
     return {
         "x": x_out,
         "y": y_out,
@@ -370,7 +380,13 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "qc_pass": plot_qc.tolist() if apply_qc else [],
         "stats": stats,
         "mld_x": mld_x,
-        "mld_y": mld_y
+        "mld_y": mld_y,
+        "x_var": x_var,
+        "y_var": y_var,
+        "c_var": c_var,
+        "x_units": units_map.get(x_var, ""),
+        "y_units": units_map.get(y_var, ""),
+        "c_units": units_map.get(c_var, "") if c_var else ""
     }
 
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
@@ -505,9 +521,14 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
             c_min = float(np.nanpercentile(valid_c, 0.1))
             c_max = float(np.nanpercentile(valid_c, 99.9))
 
+    units_map = _get_var_units(filepath)
     return {
         "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
         "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,
         "qc_pass": plot_qc.tolist() if apply_qc else [],
-        "mld_x": mld_x, "mld_y": mld_y
+        "mld_x": mld_x, "mld_y": mld_y,
+        "x_var": x_var, "y_var": y_var, "c_var": c_var,
+        "x_units": units_map.get(x_var, ""),
+        "y_units": units_map.get(y_var, ""),
+        "c_units": units_map.get(c_var, "") if c_var else ""
     }

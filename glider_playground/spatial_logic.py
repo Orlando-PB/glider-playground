@@ -110,6 +110,20 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
         
     return lat, lon, pres, temp
 
+def get_location_summary(filepath):
+    try:
+        lat, lon, _pres, _temp = get_core_spatial_data(filepath)
+    except Exception as e:
+        return {"error": str(e)}
+    if len(lat) == 0:
+        return {"error": "No valid coordinates"}
+    return {
+        "lat_min": float(np.min(lat)), "lat_max": float(np.max(lat)),
+        "lon_min": float(np.min(lon)), "lon_max": float(np.max(lon)),
+        "lat_center": float(np.mean(lat)), "lon_center": float(np.mean(lon)),
+        "n_points": int(len(lat))
+    }
+
 def generate_map_image(filepath):
     t_start = time.time()
     try:

@@ -59,6 +59,21 @@
         .preset-btn:not(:disabled).active { transform: scale(1.05); }
         .preset-btn:not(:disabled).active .preset-text { text-decoration: underline; text-underline-offset: 2px; }
         .preset-btn:disabled { opacity: 0.35 !important; filter: grayscale(100%); cursor: not-allowed; }
+
+        @keyframes jellyFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-5px) rotate(-3deg); } }
+        @keyframes jellyWiggle { 0%,100% { transform: rotate(-6deg) scale(1.05); } 50% { transform: rotate(6deg) scale(1.05); } }
+        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(236,72,153,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 10px rgba(236,72,153,0.55)); } }
+        @keyframes jellyTyping { 0%,100% { transform: translateY(0) rotate(-2deg); } 25% { transform: translateY(-2px) rotate(2deg); } 50% { transform: translateY(-3px) rotate(-2deg); } 75% { transform: translateY(-1px) rotate(3deg); } }
+        .jelly-img { display: block; object-fit: contain; animation: jellyFloat 3s ease-in-out infinite; }
+        #jellyToggle:hover .jelly-img { animation: jellyWiggle 0.6s ease-in-out infinite; }
+        #jellyToggle.thinking .jelly-img { animation: jellyPulse 0.9s ease-in-out infinite; }
+        #jellyPanel.thinking .jelly-img-small { animation: jellyTyping 0.6s ease-in-out infinite; }
+        .jelly-bubble { max-width: 85%; padding: 6px 10px; border-radius: 12px; font-size: 11px; line-height: 1.4; word-wrap: break-word; }
+        .jelly-bubble.user { background: #e8f0fe; color: #1a237e; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .jelly-bubble.jelly { background: #f3e8ff; color: #4a148c; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .jelly-bubble.jelly.thinking { font-style: italic; opacity: 0.7; }
+        .jelly-bubble.error { background: #fde8e8; color: #9b1c1c; align-self: stretch; text-align: center; }
+        .jelly-actions { font-size: 9px; color: #6b7280; margin-top: 2px; }
     </style>
 </head>
 <body class="overflow-hidden">
@@ -240,7 +255,7 @@
             <div class="flex-grow flex overflow-hidden w-full relative">
                 
                 <div id="plotAreaWrapper" class="flex-grow flex items-center justify-center p-4 overflow-hidden relative">
-                    <iframe id="plotIframe" src="" class="w-full h-full border-none hidden"></iframe>
+                    <iframe id="plotIframe" src="" class="w-full h-full border-none hidden" style="background:#ffffff;"></iframe>
 
                     <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
                         <div class="text-center">
@@ -264,7 +279,7 @@
                     </div>
                 </div>
 
-                <div id="cTrimContainer" class="hidden flex-col items-center py-4 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
+                <div id="cTrimContainer" class="hidden flex-col items-center pt-4 pb-20 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
                     <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
@@ -283,6 +298,48 @@
 
             </div>
         </div>
+    </div>
+
+    <div id="jellyBubble" class="fixed bottom-4 right-4 z-[100]">
+        <button id="jellyToggle" class="rounded-full w-14 h-14 flex items-center justify-center shadow-lg border-none cursor-pointer bg-white/90 transition-transform hover:scale-105 overflow-hidden" style="background: radial-gradient(circle at 35% 30%, #ffffff, #fce7f3 60%, #f3e8ff);" title="Ask Jelly">
+            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-[52px] h-[52px]" />
+        </button>
+    </div>
+
+    <div id="jellyPanel" class="fixed bottom-[80px] right-4 z-[100] w-80 max-w-[95vw] bg-white border border-gray-200 rounded-lg shadow-xl flex-col hidden" style="height: 460px;">
+        <div class="flex items-center justify-between px-3 py-2 rounded-t-lg text-white" style="background: linear-gradient(135deg, #a855f7, #ec4899);">
+            <div class="flex items-center gap-2">
+                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-6 h-6" />
+                <span class="font-bold text-sm">Jelly</span>
+                <span class="text-[9px] opacity-70" id="jellyElapsed"></span>
+            </div>
+            <div class="flex items-center gap-1">
+                <button id="jellyKeyBtn" class="text-[10px] hover:bg-white/20 px-1.5 py-0.5 rounded border-none bg-transparent text-white cursor-pointer" title="Manage API key">
+                    <span class="material-symbols-outlined text-[14px]">key</span>
+                </button>
+                <button id="jellyClearBtn" class="text-[10px] hover:bg-white/20 px-1.5 py-0.5 rounded border-none bg-transparent text-white cursor-pointer" title="Clear chat">
+                    <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
+                </button>
+                <button id="jellyCloseBtn" class="hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-white cursor-pointer" title="Close">&#10005;</button>
+            </div>
+        </div>
+
+        <div id="jellyKeyPrompt" class="p-3 flex-col gap-2 hidden border-b border-gray-100 bg-purple-50/40">
+            <p class="text-[11px] text-gray-600 leading-snug">Paste your OpenAI API key so Jelly can think. Saved locally in <code class="bg-white px-1 rounded">.env</code>. Never leaves your machine.</p>
+            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-purple-500 w-full" />
+            <div class="flex gap-2">
+                <button id="jellyKeySave" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
+                <button id="jellyKeyDelete" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs border-none cursor-pointer hidden">Delete</button>
+            </div>
+            <p id="jellyKeyStatus" class="text-[10px] text-gray-500"></p>
+        </div>
+
+        <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs"></div>
+
+        <form id="jellyForm" class="p-2 border-t border-gray-200 flex gap-2 shrink-0">
+            <input id="jellyInput" type="text" placeholder="e.g. make a T-S plot" class="flex-grow border border-gray-300 p-2 text-xs rounded outline-none focus:border-purple-500" autocomplete="off" />
+            <button type="submit" id="jellySend" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
+        </form>
     </div>
 
     <script>
@@ -417,6 +474,14 @@
 
                 if (plotQueued) { plotQueued = false; updatePlot(); return; }
 
+                if (msg.globalLimits) {
+                    currentGlobalLimits = {
+                        xMin: msg.globalLimits.xMin, xMax: msg.globalLimits.xMax,
+                        yMin: msg.globalLimits.yMin, yMax: msg.globalLimits.yMax
+                    };
+                    currentColorLimits = { cMin: msg.globalLimits.cMin, cMax: msg.globalLimits.cMax };
+                }
+
                 if (msg.hasC) {
                     baseCMin = msg.globalLimits.cMin;
                     baseCMax = msg.globalLimits.cMax;
@@ -498,6 +563,9 @@
                 }
             }
             else if (msg.type === 'bgFetchComplete') {
+                if (msg.cMin !== undefined && !isNaN(msg.cMin)) {
+                    currentColorLimits = { cMin: msg.cMin, cMax: msg.cMax };
+                }
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     cTrimMinInput.value = parseFloat(msg.cMin).toFixed(4);
                     cTrimMaxInput.value = parseFloat(msg.cMax).toFixed(4);
@@ -1173,9 +1241,19 @@
             }
         }
 
+        async function loadLocation(filename) {
+            currentLocation = null;
+            try {
+                const res = await fetch(`/api/location?filename=${encodeURIComponent(filename)}`);
+                const data = await res.json();
+                if (!data.error) currentLocation = data;
+            } catch (e) { console.error('Failed to load location:', e); }
+        }
+
         async function handleDatasetChange() {
             resetPlotState(true);
             currentProfileNum = null;
+            parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
             const filename = datasetSelect.value;
             if (!filename) return;
 
@@ -1185,6 +1263,7 @@
             await loadMapImage();
             await loadVariables();
             await loadProfiles(filename);
+            loadLocation(filename);
 
             switchTab('tab3D');
 
@@ -1299,10 +1378,476 @@
             currentProfileNum = null;
             syncProfileUI();
             currentZoomBounds = null;
+            // Clear all Jelly overlays
+            parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+            _pendingJellyOverlays = [];
+            if (_jellyOverlayArmed && plotIframe.contentWindow) {
+                plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: { clear: true } }, '*');
+            }
+            updateCmapGradient(cmapInput.value);
+            // Clear Jelly chat history and messages
+            jellyHistory = [];
+            jellyMessages.innerHTML = '';
+            jellyElapsed.textContent = '';
             resetPlotState(true);
             updatePlot();
         });
 
+        // ===== Jelly 🪼 =====
+        const jellyToggle = document.getElementById('jellyToggle');
+        const jellyPanel = document.getElementById('jellyPanel');
+        const jellyCloseBtn = document.getElementById('jellyCloseBtn');
+        const jellyClearBtn = document.getElementById('jellyClearBtn');
+        const jellyKeyBtn = document.getElementById('jellyKeyBtn');
+        const jellyKeyPrompt = document.getElementById('jellyKeyPrompt');
+        const jellyKeyInput = document.getElementById('jellyKeyInput');
+        const jellyKeySave = document.getElementById('jellyKeySave');
+        const jellyKeyDelete = document.getElementById('jellyKeyDelete');
+        const jellyKeyStatus = document.getElementById('jellyKeyStatus');
+        const jellyMessages = document.getElementById('jellyMessages');
+        const jellyForm = document.getElementById('jellyForm');
+        const jellyInput = document.getElementById('jellyInput');
+        const jellySend = document.getElementById('jellySend');
+        const jellyElapsed = document.getElementById('jellyElapsed');
+
+        let jellyHistory = [];
+        let jellyHasKey = false;
+        let jellyBusy = false;
+        let jellyFirstOpen = true;
+        let _pendingJellyOverlays = [];
+        let _jellyOverlayArmed = false;  // true once current plot has loaded at least once
+        let parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+        let currentLocation = null;
+        let currentGlobalLimits = null;
+        let currentColorLimits = null;
+
+        function jellyOpen(open) {
+            if (open) {
+                jellyPanel.classList.remove('hidden');
+                jellyPanel.classList.add('flex');
+                setTimeout(() => jellyInput.focus(), 50);
+                if (jellyFirstOpen) {
+                    jellyFirstOpen = false;
+                    if (jellyHasKey) addJellyMessage('jelly', "Hi! I'm Jelly — ask me to plot things, style the chart, zoom, or tell you what's in the data.");
+                }
+            } else {
+                jellyPanel.classList.add('hidden');
+                jellyPanel.classList.remove('flex');
+            }
+        }
+
+        jellyToggle.addEventListener('click', () => jellyOpen(jellyPanel.classList.contains('hidden')));
+        jellyCloseBtn.addEventListener('click', () => jellyOpen(false));
+
+        jellyKeyBtn.addEventListener('click', () => {
+            const hidden = jellyKeyPrompt.classList.contains('hidden');
+            jellyKeyPrompt.classList.toggle('hidden', !hidden);
+            jellyKeyPrompt.classList.toggle('flex', hidden);
+            jellyKeyDelete.classList.toggle('hidden', !jellyHasKey);
+            jellyKeyStatus.textContent = jellyHasKey ? 'A key is saved. You can replace or delete it.' : '';
+        });
+
+        jellyClearBtn.addEventListener('click', () => {
+            jellyHistory = [];
+            jellyMessages.innerHTML = '';
+            jellyElapsed.textContent = '';
+            addJellyMessage('jelly', 'Cleared — fresh start.');
+        });
+
+        function addJellyMessage(role, text, extra) {
+            const div = document.createElement('div');
+            div.className = 'jelly-bubble ' + role;
+            div.textContent = text;
+            if (extra) {
+                const meta = document.createElement('div');
+                meta.className = 'jelly-actions';
+                meta.textContent = extra;
+                div.appendChild(meta);
+            }
+            jellyMessages.appendChild(div);
+            jellyMessages.scrollTop = jellyMessages.scrollHeight;
+            return div;
+        }
+
+        async function checkJellyKey() {
+            try {
+                const r = await fetch('/api/jelly/key_status');
+                const d = await r.json();
+                jellyHasKey = !!d.has_key;
+            } catch { jellyHasKey = false; }
+            if (!jellyHasKey) {
+                jellyKeyPrompt.classList.remove('hidden');
+                jellyKeyPrompt.classList.add('flex');
+                jellyKeyStatus.textContent = 'No key saved yet. Paste one to get started.';
+            }
+        }
+
+        jellyKeySave.addEventListener('click', async () => {
+            const key = jellyKeyInput.value.trim();
+            if (!key) { jellyKeyStatus.textContent = 'Please paste a key.'; return; }
+            jellyKeyStatus.textContent = 'Saving...';
+            try {
+                const r = await fetch('/api/jelly/set_key', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key }) });
+                const d = await r.json();
+                if (d.status === 'success') {
+                    jellyHasKey = true;
+                    jellyKeyInput.value = '';
+                    jellyKeyStatus.textContent = 'Saved! Jelly is awake.';
+                    jellyKeyDelete.classList.remove('hidden');
+                    setTimeout(() => {
+                        jellyKeyPrompt.classList.add('hidden');
+                        jellyKeyPrompt.classList.remove('flex');
+                    }, 800);
+                } else {
+                    jellyKeyStatus.textContent = d.message || 'Failed to save.';
+                }
+            } catch (e) {
+                jellyKeyStatus.textContent = 'Network error.';
+            }
+        });
+
+        jellyKeyDelete.addEventListener('click', async () => {
+            await fetch('/api/jelly/delete_key', { method: 'POST' });
+            jellyHasKey = false;
+            jellyKeyDelete.classList.add('hidden');
+            jellyKeyStatus.textContent = 'Key deleted.';
+        });
+
+        function gatherJellyContext() {
+            const files = Array.from(datasetSelect.options).map(o => o.value);
+            const vars = variableCache.map(v => ({ name: v.name, units: v.units, description: v.description }));
+            const userCTrimMin = parseFloat(cTrimMinInput.value);
+            const userCTrimMax = parseFloat(cTrimMaxInput.value);
+            const colorLimits = {
+                data_c_min: currentColorLimits ? currentColorLimits.cMin : null,
+                data_c_max: currentColorLimits ? currentColorLimits.cMax : null,
+                user_c_min: isNaN(userCTrimMin) ? null : userCTrimMin,
+                user_c_max: isNaN(userCTrimMax) ? null : userCTrimMax
+            };
+            return {
+                files,
+                current_file: datasetSelect.value || '',
+                variables: vars,
+                profile_info: {
+                    has_profiles: profileList.length > 0,
+                    count: profileList.length,
+                    has_direction: profileList.some(p => p.direction !== undefined),
+                    current_profile: currentProfileNum
+                },
+                plot_state: {
+                    x: xSelect.value, y: ySelect.value, c: cVarSelect.value,
+                    cmap: cmapInput.value,
+                    invert_y: invertYBtn.classList.contains('active'),
+                    apply_qc: applyQcBtn.classList.contains('active'),
+                    highlight_qc: highlightQcBtn.classList.contains('active'),
+                    filter_time: filterTimeBtn.classList.contains('active'),
+                    current_preset: currentPreset,
+                    is_x_datetime: !!isXDateTime,
+                    data_extent: currentGlobalLimits
+                },
+                overrides: parentJellyOverrides,
+                zoom: currentZoomBounds,
+                color_limits: colorLimits,
+                location: currentLocation
+            };
+        }
+
+        function updateJellyColorBar(mode, colors) {
+            const gradEl = document.getElementById('cTrimGradient');
+            const topMask = document.getElementById('cTrimTopMask');
+            const bottomMask = document.getElementById('cTrimBottomMask');
+            if (!mode || mode === 'default') {
+                updateCmapGradient(cmapInput.value);
+                return;
+            }
+            if (mode === 'solid' && colors.length >= 1) {
+                const c = colors[0];
+                if (gradEl) gradEl.style.background = c;
+                if (topMask) topMask.style.backgroundColor = c;
+                if (bottomMask) bottomMask.style.backgroundColor = c;
+                cmapTrigger.style.background = c;
+            } else if (mode === 'gradient' && colors.length >= 2) {
+                const [c1, c2] = colors;
+                if (gradEl) gradEl.style.background = `linear-gradient(to top, ${c1}, ${c2})`;
+                if (topMask) topMask.style.backgroundColor = c2;
+                if (bottomMask) bottomMask.style.backgroundColor = c1;
+                cmapTrigger.style.background = `linear-gradient(to right, ${c1}, ${c2})`;
+            }
+        }
+
+        function postOverlayToPlot(action) {
+            const overrides = {};
+            if (action.type === 'set_title') {
+                overrides.title = action.title || '';
+                parentJellyOverrides.title = overrides.title || null;
+            }
+            if (action.type === 'set_color_mode') {
+                overrides.colorMode = action.mode || 'default';
+                overrides.colors = Array.isArray(action.colors) ? action.colors : [];
+                parentJellyOverrides.colorMode = overrides.colorMode === 'default' ? null : overrides.colorMode;
+                parentJellyOverrides.colors = overrides.colors;
+                updateJellyColorBar(overrides.colorMode, overrides.colors);
+            }
+            if (action.type === 'add_line') {
+                const ln = { axis: action.axis || 'y', value: action.value, label: action.label || '', color: action.color || '#ea4335' };
+                overrides.lines = [ln];
+                parentJellyOverrides.lines.push(ln);
+            }
+            if (action.type === 'add_stat_line') {
+                const ln = { stat: action.stat, axis: action.axis || 'y', label: action.label, color: action.color || '#34a853' };
+                overrides.lines = [ln];
+                parentJellyOverrides.lines.push(ln);
+            }
+            if (action.type === 'add_running_mean') {
+                const rm = {
+                    axis: action.axis === 'x' ? 'x' : 'y',
+                    window: action.window ? Math.max(3, Math.floor(Number(action.window))) : null,
+                    color: action.color || '#ea4335',
+                    label: action.label || ''
+                };
+                overrides.runningMean = rm;
+                parentJellyOverrides.runningMean = rm;
+            }
+            if (action.type === 'clear_overlays') {
+                overrides.clear = true;
+                parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+                updateCmapGradient(cmapInput.value);
+            }
+            if (!_jellyOverlayArmed || isPlotting) {
+                _pendingJellyOverlays.push(overrides);
+            } else {
+                plotIframe.contentWindow && plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides }, '*');
+            }
+        }
+
+        function fullOverridesPayload() {
+            const p = parentJellyOverrides;
+            const hasAny = p.title || p.colorMode || (p.lines && p.lines.length) || p.runningMean;
+            if (!hasAny) return null;
+            return {
+                title: p.title || '',
+                colorMode: p.colorMode || 'default',
+                colors: p.colors || [],
+                lines: p.lines || [],
+                runningMean: p.runningMean || null,
+                replaceLines: true
+            };
+        }
+
+        async function runJellyAction(a) {
+            switch(a.type) {
+                case 'load_file': {
+                    const opts = Array.from(datasetSelect.options).map(o => o.value);
+                    if (opts.includes(a.filename) && datasetSelect.value !== a.filename) {
+                        const snapshot = a.preserve_style ? {
+                            x: xSelect.value,
+                            y: ySelect.value,
+                            c: cVarSelect.value,
+                            cmap: cmapInput.value,
+                            invert_y: invertYBtn.classList.contains('active')
+                        } : null;
+                        datasetSelect.value = a.filename;
+                        setCookie(COOKIE_FILE, a.filename);
+                        _jellyOverlayArmed = false;
+                        await handleDatasetChange();
+                        if (snapshot) {
+                            const has = (sel, val) => Array.from(sel.options).some(o => o.value === val);
+                            let changed = false;
+                            if (snapshot.x && has(xSelect, snapshot.x) && xSelect.value !== snapshot.x) { xSelect.value = snapshot.x; changed = true; }
+                            if (snapshot.y && has(ySelect, snapshot.y) && ySelect.value !== snapshot.y) { ySelect.value = snapshot.y; changed = true; }
+                            if (typeof snapshot.c === 'string' && (snapshot.c === '' || has(cVarSelect, snapshot.c)) && cVarSelect.value !== snapshot.c) { cVarSelect.value = snapshot.c; changed = true; }
+                            if (snapshot.cmap && cmapInput.value !== snapshot.cmap) { cmapInput.value = snapshot.cmap; updateCmapGradient(snapshot.cmap); changed = true; }
+                            if (invertYBtn.classList.contains('active') !== snapshot.invert_y) { updateToggleBtn(invertYBtn, snapshot.invert_y); changed = true; }
+                            if (changed) { checkAndUpdatePreset(); resetPlotState(true); updatePlot(); }
+                        }
+                    }
+                    break;
+                }
+                case 'load_preset': {
+                    if (OceanPresets[a.preset]) {
+                        currentPreset = a.preset;
+                        applyPreset(a.preset);
+                        _jellyOverlayArmed = false;
+                        resetPlotState(true);
+                        updatePlot();
+                    }
+                    break;
+                }
+                case 'set_variables': {
+                    const has = (sel, val) => Array.from(sel.options).some(o => o.value === val);
+                    if (a.x && has(xSelect, a.x)) xSelect.value = a.x;
+                    if (a.y && has(ySelect, a.y)) ySelect.value = a.y;
+                    if (typeof a.c === 'string' && (a.c === '' || has(cVarSelect, a.c))) cVarSelect.value = a.c;
+                    if (a.cmap) { cmapInput.value = a.cmap; updateCmapGradient(a.cmap); }
+                    if (typeof a.invert_y === 'boolean') updateToggleBtn(invertYBtn, a.invert_y);
+                    checkAndUpdatePreset();
+                    _jellyOverlayArmed = false;
+                    resetPlotState(true);
+                    updatePlot();
+                    break;
+                }
+                case 'set_profile': {
+                    currentProfileNum = (a.profile_num === null || a.profile_num === undefined) ? null : Number(a.profile_num);
+                    syncProfileUI();
+                    resetPlotState(true);
+                    updatePlot();
+                    break;
+                }
+                case 'set_qc': {
+                    if (typeof a.apply === 'boolean' && !applyQcBtn.disabled && applyQcBtn.classList.contains('active') !== a.apply) applyQcBtn.click();
+                    if (typeof a.highlight === 'boolean' && highlightQcBtn.style.display !== 'none' && highlightQcBtn.classList.contains('active') !== a.highlight) highlightQcBtn.click();
+                    if (typeof a.filter_time === 'boolean' && filterTimeBtn.classList.contains('active') !== a.filter_time) filterTimeBtn.click();
+                    if (a.flags) { qcFlagsInput.value = a.flags; resetPlotState(false); updatePlot(); }
+                    break;
+                }
+                case 'calc_mld': {
+                    if (!calcMldBtn.classList.contains('hidden') && !calcMldBtn.classList.contains('active')) {
+                        calcMldBtn.click();
+                    }
+                    break;
+                }
+                case 'set_zoom': {
+                    const toNum = v => {
+                        if (v === null || v === undefined) return undefined;
+                        if (typeof v === 'number') return v;
+                        const n = Number(v);
+                        if (!isNaN(n)) return n;
+                        const d = new Date(v).getTime();
+                        return isNaN(d) ? undefined : d;
+                    };
+                    const limits = {};
+                    // Only include an axis if BOTH bounds are explicitly provided (non-null)
+                    const xMinV = toNum(a.x_min), xMaxV = toNum(a.x_max);
+                    const yMinV = toNum(a.y_min), yMaxV = toNum(a.y_max);
+                    if (xMinV !== undefined && xMaxV !== undefined) {
+                        limits.xMin = xMinV; limits.xMax = xMaxV;
+                    }
+                    if (yMinV !== undefined && yMaxV !== undefined) {
+                        limits.yMin = yMinV; limits.yMax = yMaxV;
+                    }
+                    if (Object.keys(limits).length && plotIframe.contentWindow) {
+                        plotIframe.contentWindow.postMessage({ type: 'updateLimits', limits }, '*');
+                        const gl = currentGlobalLimits || {};
+                        const zb = currentZoomBounds || {};
+                        currentZoomBounds = {
+                            xMin: limits.xMin ?? zb.xMin ?? gl.xMin,
+                            xMax: limits.xMax ?? zb.xMax ?? gl.xMax,
+                            yMin: limits.yMin ?? zb.yMin ?? gl.yMin,
+                            yMax: limits.yMax ?? zb.yMax ?? gl.yMax
+                        };
+                    }
+                    break;
+                }
+                case 'set_color_limits': {
+                    if (!cVarSelect.value) break;
+                    const cmin = Number(a.c_min);
+                    const cmax = Number(a.c_max);
+                    if (isNaN(cmin) || isNaN(cmax)) break;
+                    cTrimMinInput.value = cmin.toFixed(4);
+                    cTrimMaxInput.value = cmax.toFixed(4);
+                    updateHandlesFromInputs('c');
+                    sendColourLimitsToIframe();
+                    break;
+                }
+                case 'set_title':
+                case 'set_color_mode':
+                case 'add_line':
+                case 'add_stat_line':
+                case 'add_running_mean':
+                case 'clear_overlays':
+                    postOverlayToPlot(a);
+                    break;
+            }
+        }
+
+        async function runJellyActions(actions) {
+            for (const a of actions || []) {
+                try { await runJellyAction(a); } catch (e) { console.error('Jelly action failed:', a, e); }
+            }
+        }
+
+        jellyForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (jellyBusy) return;
+            const text = jellyInput.value.trim();
+            if (!text) return;
+            if (!jellyHasKey) {
+                jellyKeyPrompt.classList.remove('hidden');
+                jellyKeyPrompt.classList.add('flex');
+                jellyKeyStatus.textContent = 'Paste an API key first.';
+                return;
+            }
+            jellyInput.value = '';
+            addJellyMessage('user', text);
+            jellyHistory.push({ role: 'user', content: text });
+
+            jellyBusy = true;
+            jellySend.disabled = true;
+            jellyToggle.classList.add('thinking');
+            jellyPanel.classList.add('thinking');
+            const thinking = addJellyMessage('jelly thinking', 'thinking…');
+
+            try {
+                const r = await fetch('/api/jelly/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: text,
+                        history: jellyHistory.slice(-12),
+                        context: gatherJellyContext()
+                    })
+                });
+                const d = await r.json();
+                thinking.remove();
+                if (d.error) {
+                    addJellyMessage('error', d.error);
+                    if (d.needs_key) {
+                        jellyHasKey = false;
+                        jellyKeyPrompt.classList.remove('hidden');
+                        jellyKeyPrompt.classList.add('flex');
+                    }
+                } else {
+                    const reply = (d.message || '').trim() || '(no reply)';
+                    const extra = (d.actions && d.actions.length) ? `did ${d.actions.length} thing${d.actions.length>1?'s':''}` : '';
+                    addJellyMessage('jelly', reply, extra);
+                    jellyHistory.push({ role: 'assistant', content: reply });
+                    if (jellyHistory.length > 24) jellyHistory = jellyHistory.slice(-24);
+                    if (d.elapsed_s !== undefined) jellyElapsed.textContent = `${d.elapsed_s}s`;
+                    if (d.actions && d.actions.length) await runJellyActions(d.actions);
+                }
+            } catch (err) {
+                thinking.remove();
+                addJellyMessage('error', 'Network error talking to Jelly.');
+                console.error(err);
+            } finally {
+                jellyBusy = false;
+                jellySend.disabled = false;
+                jellyToggle.classList.remove('thinking');
+                jellyPanel.classList.remove('thinking');
+                jellyInput.focus();
+            }
+        });
+
+        // Flush queued overlays once the plot finishes loading, then re-apply persistent overrides
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'plotLoaded') {
+                _jellyOverlayArmed = true;
+                if (plotIframe.contentWindow) {
+                    if (_pendingJellyOverlays.length) {
+                        const queue = _pendingJellyOverlays.slice();
+                        _pendingJellyOverlays = [];
+                        queue.forEach(ov => plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: ov }, '*'));
+                    }
+                    const full = fullOverridesPayload();
+                    if (full) {
+                        plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: full }, '*');
+                        if (full.colorMode) updateJellyColorBar(full.colorMode, full.colors);
+                    }
+                }
+            }
+        });
+
+        checkJellyKey();
         init();
 
     </script>
