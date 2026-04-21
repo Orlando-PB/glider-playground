@@ -154,6 +154,12 @@
                         <input type="text" id="qcFlags" value="1,2,5,8" class="w-[50px] p-1 border border-gray-300 bg-white text-[10px] text-center outline-none focus:border-googleBlue transition-colors rounded" title="Comma-separated list of allowed QC flags">
                     </div>
                 </div>
+
+                <div id="ctdContainer" class="border-l border-gray-300 pl-3 ml-1 flex items-center gap-2" style="display: none;">
+                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">CTD</span>
+                    <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interp</button>
+                    <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Custom CTD QC: flag 0.0 fill values (9), auto-scale CNDC S/m → mS/cm, cross-flag 5σ CNDC outliers (4) on PRES/TEMP/CNDC.">QC</button>
+                </div>
             </div>
 
             <div id="profileContainer" class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1" style="display: none;">
@@ -382,6 +388,9 @@
         
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
+        const ctdContainer = document.getElementById('ctdContainer');
+        const ctdInterpBtn = document.getElementById('ctdInterpBtn');
+        const ctdQcBtn = document.getElementById('ctdQcBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         
         const datasetSelect = document.getElementById('dataset'), resetBtn = document.getElementById('resetBtn');
@@ -976,12 +985,21 @@
             const data = await response.json();
             
             const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
+            const hasAnyCtd = ['PRES', 'TEMP', 'CNDC'].some(n => data.variables.some(v => v.name === n));
 
             variableCache = data.variables.sort((a, b) => {
                 const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
                 const baseA = getBase(a.name), baseB = getBase(b.name);
                 return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
             });
+
+            if (hasAnyCtd) {
+                ctdContainer.style.display = 'flex';
+            } else {
+                ctdContainer.style.display = 'none';
+                updateToggleBtn(ctdInterpBtn, false);
+                updateToggleBtn(ctdQcBtn, false);
+            }
             
             if (!hasAnyQc) {
                 updateToggleBtn(applyQcBtn, false);
@@ -1063,6 +1081,9 @@
         });
         
         highlightQcBtn.addEventListener('click', () => handleToggle(highlightQcBtn, false));
+
+        ctdInterpBtn.addEventListener('click', () => handleToggle(ctdInterpBtn, true));
+        ctdQcBtn.addEventListener('click', () => handleToggle(ctdQcBtn, true));
 
         cVarSelect.addEventListener('change', () => { 
             checkAndUpdatePreset();
@@ -1309,7 +1330,9 @@
                     c_var: cVarSelect.value + (calcMldBtn.classList.contains('active') ? '|mld' : ''), cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
                     apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
                     highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active'),
-                    calc_mld: calcMldBtn.classList.contains('active')
+                    calc_mld: calcMldBtn.classList.contains('active'),
+                    ctd_interpolate: ctdInterpBtn.classList.contains('active'),
+                    ctd_qc: ctdQcBtn.classList.contains('active')
                 });
 
                 if (currentProfileNum !== null && currentProfileNum !== undefined) {
@@ -1541,6 +1564,9 @@
                     apply_qc: applyQcBtn.classList.contains('active'),
                     highlight_qc: highlightQcBtn.classList.contains('active'),
                     filter_time: filterTimeBtn.classList.contains('active'),
+                    ctd_interpolate: ctdInterpBtn.classList.contains('active'),
+                    ctd_qc: ctdQcBtn.classList.contains('active'),
+                    ctd_available: ctdContainer.style.display !== 'none',
                     current_preset: currentPreset,
                     is_x_datetime: !!isXDateTime,
                     data_extent: currentGlobalLimits
@@ -1698,6 +1724,12 @@
                     if (typeof a.highlight === 'boolean' && highlightQcBtn.style.display !== 'none' && highlightQcBtn.classList.contains('active') !== a.highlight) highlightQcBtn.click();
                     if (typeof a.filter_time === 'boolean' && filterTimeBtn.classList.contains('active') !== a.filter_time) filterTimeBtn.click();
                     if (a.flags) { qcFlagsInput.value = a.flags; resetPlotState(false); updatePlot(); }
+                    break;
+                }
+                case 'set_ctd': {
+                    if (ctdContainer.style.display === 'none') break;
+                    if (typeof a.interpolate === 'boolean' && ctdInterpBtn.classList.contains('active') !== a.interpolate) ctdInterpBtn.click();
+                    if (typeof a.qc === 'boolean' && ctdQcBtn.classList.contains('active') !== a.qc) ctdQcBtn.click();
                     break;
                 }
                 case 'calc_mld': {

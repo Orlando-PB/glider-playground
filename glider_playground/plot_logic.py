@@ -9,6 +9,106 @@ import functools
 # Locked to 200k points max for optimal WebGL performance
 MAX_RENDER_POINTS = 200000
 
+CTD_VARS = ("PRES", "TEMP", "CNDC")
+CTD_SIGMA_THRESHOLD = 5.0
+CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
+
+
+def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, apply_ctd_qc=False):
+    """Return a new data_dict with CTD interpolation and/or custom QC applied.
+
+    CTD QC: flag exact 0.0 values as 9, auto-scale CNDC from S/m to mS/cm, and
+    cross-flag 5-sigma CNDC outliers as 4 on all three CTD vars. Synthesised
+    QC arrays default to 1 (good) so they pass standard flag filtering.
+
+    Interpolate: time-based linear fill of NaN in the CTD vars. Filled points
+    get QC=5 ("value changed"). When combined with CTD QC, bad values are
+    first nulled, then interpolation recovers them.
+    """
+    if not (interpolate or apply_ctd_qc):
+        return data_dict
+
+    present = [v for v in CTD_VARS if v in data_dict]
+    if not present:
+        return data_dict
+
+    new_dict = dict(data_dict)
+    for v in present:
+        new_dict[v] = np.asarray(new_dict[v], dtype=float).copy()
+        qc_name = f"{v}_QC"
+        if qc_name in new_dict:
+            new_dict[qc_name] = np.asarray(new_dict[qc_name]).astype(int, copy=True)
+        else:
+            new_dict[qc_name] = np.ones(len(new_dict[v]), dtype=int)
+
+    if apply_ctd_qc:
+        # Zero flagging — treat 0.0 as fill value
+        for v in present:
+            vals = new_dict[v]
+            zero_mask = (vals == 0.0)
+            if np.any(zero_mask):
+                new_dict[f"{v}_QC"][zero_mask] = 9
+                vals[zero_mask] = np.nan
+
+        # CNDC unit scaling (S/m -> mS/cm) so outlier check sees sensible magnitudes
+        if "CNDC" in new_dict:
+            cndc_vals = new_dict["CNDC"]
+            valid = ~np.isnan(cndc_vals)
+            if np.any(valid):
+                current_units = str((units_map or {}).get("CNDC", "")).strip().lower()
+                already_mscm = current_units in CTD_CNDC_MSCM_UNITS
+                if not already_mscm and np.nanmax(cndc_vals[valid]) < 10.0:
+                    cndc_vals[valid] = cndc_vals[valid] * 10.0
+                    new_dict["CNDC"] = cndc_vals
+
+        # 5-sigma outlier cross-flag on CNDC -> propagate to all three CTD vars
+        if "CNDC" in new_dict:
+            cndc_vals = new_dict["CNDC"]
+            cndc_qc = new_dict["CNDC_QC"]
+            valid = ~np.isnan(cndc_vals) & (cndc_qc != 9)
+            if np.any(valid):
+                mean = np.nanmean(cndc_vals[valid])
+                std = np.nanstd(cndc_vals[valid])
+                if std > 0:
+                    outlier_mask = valid & (np.abs(cndc_vals - mean) > CTD_SIGMA_THRESHOLD * std)
+                    if np.any(outlier_mask):
+                        for v in present:
+                            new_dict[v][outlier_mask] = np.nan
+                            qc = new_dict[f"{v}_QC"]
+                            # Only override non-bad flags so 9s stay 9s
+                            overwrite = outlier_mask & ~np.isin(qc, [3, 4, 9])
+                            qc[overwrite] = 4
+
+    if interpolate and time_var and time_var in new_dict:
+        t_vals = new_dict[time_var]
+        try:
+            t_index = pd.to_datetime(t_vals)
+            use_time_index = True
+        except Exception:
+            t_index = None
+            use_time_index = False
+
+        for v in present:
+            vals = new_dict[v]
+            nan_before = np.isnan(vals)
+            if not np.any(nan_before):
+                continue
+            try:
+                if use_time_index:
+                    s = pd.Series(vals, index=t_index)
+                    interp = s.interpolate(method='time', limit_direction='both').to_numpy()
+                else:
+                    raise ValueError("no time index")
+            except Exception:
+                interp = pd.Series(vals).interpolate(method='linear', limit_direction='both').to_numpy()
+
+            filled = nan_before & ~np.isnan(interp)
+            new_dict[v] = interp
+            qc = new_dict[f"{v}_QC"]
+            qc[filled] = 5
+
+    return new_dict
+
 @functools.lru_cache(maxsize=32)
 def _get_var_names(filepath):
     if not os.path.exists(filepath): return []
@@ -225,11 +325,11 @@ def _calculate_mld(plot_x, plot_y, plot_c, is_x_dt):
     return x_out, y_out
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, calc_mld=False):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, calc_mld=False, ctd_interpolate=False, ctd_qc=False):
     if isinstance(c_var, str) and "|mld" in c_var:
         calc_mld = True
         c_var = c_var.replace("|mld", "")
-        
+
     if c_var == "None":
         c_var = ""
 
@@ -255,6 +355,15 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
 
+    if ctd_interpolate or ctd_qc:
+        for v in CTD_VARS:
+            if v in var_names:
+                vars_to_extract.add(v)
+                if f"{v}_QC" in var_names:
+                    vars_to_extract.add(f"{v}_QC")
+        if actual_time_var in var_names:
+            vars_to_extract.add(actual_time_var)
+
     if apply_qc:
         qc_vars = {f"{v}_QC" for v in vars_to_extract}
         vars_to_extract.update(qc_vars)
@@ -262,6 +371,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
     if data_dict is None:
         return {"error": "Failed to extract variables from dataset"}
+
+    if ctd_interpolate or ctd_qc:
+        data_dict = _apply_ctd_processing(
+            data_dict, actual_time_var, _get_var_units(filepath),
+            interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+        )
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
@@ -392,7 +507,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
                           highlight_qc=False, filter_time=True,
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
-                          profile_num=None, calc_mld=False):
+                          profile_num=None, calc_mld=False, ctd_interpolate=False, ctd_qc=False):
     if isinstance(c_var, str) and "|mld" in c_var:
         calc_mld = True
         c_var = c_var.replace("|mld", "")
@@ -420,12 +535,26 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         vars_to_extract.add(actual_time_var)
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
+    if ctd_interpolate or ctd_qc:
+        for v in CTD_VARS:
+            if v in var_names:
+                vars_to_extract.add(v)
+                if f"{v}_QC" in var_names:
+                    vars_to_extract.add(f"{v}_QC")
+        if actual_time_var in var_names:
+            vars_to_extract.add(actual_time_var)
     if apply_qc:
         vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
 
     data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
     if data_dict is None:
         return {"error": "Failed to extract variables from dataset"}
+
+    if ctd_interpolate or ctd_qc:
+        data_dict = _apply_ctd_processing(
+            data_dict, actual_time_var, _get_var_units(filepath),
+            interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+        )
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))

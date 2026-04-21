@@ -50,6 +50,11 @@ TOGGLES (controls the user already has in the UI — use the set_qc action):
 - "Apply QC" (set_qc.apply): applies the dataset's own _QC variables using allowed flags (default 1,2,5,8). Turn this ON for "apply QC", "use quality flags", "clean the data".
 - "Highlight Bad QC" (set_qc.highlight): keeps bad-QC points visible but greyed out. Use when user says "show me which points failed QC" or "highlight bad data".
 
+CTD TOGGLES (use the set_ctd action — only available if context.current_plot.ctd_available is true):
+- "CTD Interp" (set_ctd.interpolate): time-based linear interpolation of PRES/TEMP/CNDC to fill NaN gaps. CTD sensors often sample less often than other sensors (e.g. oxygen), so a point where DOXY was measured may have NaN for PRES/TEMP/CNDC. Turn this ON when the user wants to compare CTD variables with non-CTD variables (oxygen, chlorophyll, backscatter) and needs them aligned, or says things like "interpolate CTD", "fill the CTD gaps", "align PRES with DOXY", "make CTD match other sensors". Filled points get QC flag 5 ("value changed").
+- "CTD QC" (set_ctd.qc): custom CTD quality control — flags exact 0.0 fill values as 9, auto-scales CNDC from S/m to mS/cm when magnitudes look wrong, and cross-flags any 5σ CNDC outliers as 4 on all three CTD variables. Turn this ON when the user says "clean the CTD", "the CTD looks bad", "remove bad CTD data", "flag CTD zeros", "fix conductivity units", or similar.
+When CTD QC + CTD Interp are both on, the QC step nulls bad points and interpolation fills them — good default for "clean and align the CTD".
+
 LOCATION: the context includes a `location` field with lat/lon min/max/center when the file has LATITUDE and LONGITUDE. Use those coordinates to answer "where is this from?" — name the actual ocean/sea/region (e.g. "Celtic Sea ~48.5 N, 9 W"). Never infer location only from the glider name.
 
 RESPONSE FORMAT (ALWAYS return a single valid JSON object, no markdown fences, no prose outside JSON):
@@ -64,6 +69,7 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 - {"type":"set_variables","x":"<var>","y":"<var>","c":"<var>","cmap":"<cmap>","invert_y":true|false}   // any field optional; "c":"" clears the colour variable
 - {"type":"set_profile","profile_num":<number|null>}
 - {"type":"set_qc","apply":true|false,"highlight":true|false,"filter_time":true|false,"flags":"1,2,5,8"}   // any subset of fields
+- {"type":"set_ctd","interpolate":true|false,"qc":true|false}   // CTD interpolation and/or custom CTD QC; only valid when current_plot.ctd_available is true
 - {"type":"set_title","title":"<text>"}                            // empty string clears
 - {"type":"set_color_mode","mode":"solid|gradient|default","colors":["#RRGGBB","#RRGGBB"]}
 - {"type":"set_color_limits","c_min":<number>,"c_max":<number>}     // absolute limits for the colour scale
