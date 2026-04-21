@@ -45,7 +45,7 @@
         }
 
         .toggle-btn {
-            background-color: #f1f3f4; color: #5f6368; border: none; transition: background-color 0.2s, color 0.2s;
+            background-color: #f1f3f4; color: #5f6368; border: none; transition: background-color 0.15s, color 0.15s; font-size: 11px; font-weight: 500;
         }
         .toggle-btn:hover {
             background-color: #e8eaed; color: #202124;
@@ -62,18 +62,18 @@
 
         @keyframes jellyFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-5px) rotate(-3deg); } }
         @keyframes jellyWiggle { 0%,100% { transform: rotate(-6deg) scale(1.05); } 50% { transform: rotate(6deg) scale(1.05); } }
-        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(236,72,153,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 10px rgba(236,72,153,0.55)); } }
+        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(26,115,232,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 10px rgba(26,115,232,0.4)); } }
         @keyframes jellyTyping { 0%,100% { transform: translateY(0) rotate(-2deg); } 25% { transform: translateY(-2px) rotate(2deg); } 50% { transform: translateY(-3px) rotate(-2deg); } 75% { transform: translateY(-1px) rotate(3deg); } }
         .jelly-img { display: block; object-fit: contain; animation: jellyFloat 3s ease-in-out infinite; }
         #jellyToggle:hover .jelly-img { animation: jellyWiggle 0.6s ease-in-out infinite; }
         #jellyToggle.thinking .jelly-img { animation: jellyPulse 0.9s ease-in-out infinite; }
         #jellyPanel.thinking .jelly-img-small { animation: jellyTyping 0.6s ease-in-out infinite; }
-        .jelly-bubble { max-width: 85%; padding: 6px 10px; border-radius: 12px; font-size: 11px; line-height: 1.4; word-wrap: break-word; }
-        .jelly-bubble.user { background: #e8f0fe; color: #1a237e; align-self: flex-end; border-bottom-right-radius: 4px; }
-        .jelly-bubble.jelly { background: #f3e8ff; color: #4a148c; align-self: flex-start; border-bottom-left-radius: 4px; }
-        .jelly-bubble.jelly.thinking { font-style: italic; opacity: 0.7; }
-        .jelly-bubble.error { background: #fde8e8; color: #9b1c1c; align-self: stretch; text-align: center; }
-        .jelly-actions { font-size: 9px; color: #6b7280; margin-top: 2px; }
+        .jelly-bubble { max-width: 85%; padding: 6px 10px; border-radius: 8px; font-size: 11px; line-height: 1.4; word-wrap: break-word; }
+        .jelly-bubble.user { background: #e8f0fe; color: #1a237e; align-self: flex-end; border-bottom-right-radius: 3px; }
+        .jelly-bubble.jelly { background: #f1f3f4; color: #202124; align-self: flex-start; border-bottom-left-radius: 3px; }
+        .jelly-bubble.jelly.thinking { font-style: italic; opacity: 0.6; }
+        .jelly-bubble.error { background: #fce8e6; color: #c5221f; align-self: stretch; text-align: center; border-radius: 6px; }
+        .jelly-actions { font-size: 9px; color: #80868b; margin-top: 2px; }
     </style>
 </head>
 <body class="overflow-hidden">
@@ -101,10 +101,10 @@
             </div>
 
             <div class="flex gap-2 items-center ml-auto shrink-0">
-                <button id="resetBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 border-none px-3 py-1.5 font-medium flex items-center gap-1 transition-colors rounded" title="Reset to Default Thermal Plot">
-                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset Plot
+                <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset to Default Thermal Plot">
+                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
                 </button>
-                <button id="downloadBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 border-none px-3 py-1.5 font-medium flex items-center gap-1 transition-colors rounded hidden" title="Download Plot">
+                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download Plot">
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
             </div>
@@ -121,15 +121,15 @@
             </div>
             
             <div class="flex items-center gap-2 border-l border-gray-300 pl-3 ml-1">
-                <button id="invertYBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded">Invert Y</button>
-                <button id="calcMldBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">Overlay MLD</button>
+                <button id="invertYBtn" class="toggle-btn px-2.5 py-1.5 rounded">Invert Y</button>
+                <button id="calcMldBtn" class="toggle-btn px-2.5 py-1.5 rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">Overlay MLD</button>
 
                 <div class="border-l border-gray-300 pl-3 ml-1 flex items-center gap-2">
-                    <button id="filterTimeBtn" class="toggle-btn active px-3 py-1.5 text-[10px] font-bold uppercase rounded" title="Filters out NaNs, pre-deployment, and future dates">Filter Bad Time</button>
-                    
-                    <button id="applyQcBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded">Apply QC</button>
-                    
-                    <button id="highlightQcBtn" class="toggle-btn px-3 py-1.5 text-[10px] font-bold uppercase rounded" style="display: none;">Highlight Bad QC</button>
+                    <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Filters out NaNs, pre-deployment, and future dates">Filter Time</button>
+
+                    <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded">Apply QC</button>
+
+                    <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;">Highlight Bad QC</button>
                     
                     <div id="qcFlagsContainer" class="flex items-center gap-1 relative group" style="display: none;">
                         <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
@@ -158,11 +158,11 @@
 
             <div id="profileContainer" class="flex items-center gap-1 border-l border-gray-300 pl-3 ml-1" style="display: none;">
                 <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Profile</label>
-                <button id="profilePrevBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold rounded" title="Previous profile">
+                <button id="profilePrevBtn" class="toggle-btn px-1.5 py-1 rounded" title="Previous profile">
                     <span class="material-symbols-outlined text-[14px]">chevron_left</span>
                 </button>
-                <input type="number" id="profileNumInput" class="w-14 p-1 border border-gray-300 bg-white text-[10px] text-center rounded outline-none focus:border-googleBlue" placeholder="All" title="Profile number (empty = all)">
-                <button id="profileNextBtn" class="toggle-btn px-2 py-1 text-[10px] font-bold rounded" title="Next profile">
+                <input type="number" id="profileNumInput" class="w-14 p-1 border border-gray-300 bg-white text-[11px] text-center rounded outline-none focus:border-googleBlue" placeholder="All" title="Profile number (empty = all)">
+                <button id="profileNextBtn" class="toggle-btn px-1.5 py-1 rounded" title="Next profile">
                     <span class="material-symbols-outlined text-[14px]">chevron_right</span>
                 </button>
                 <span id="profileDirIcon" class="material-symbols-outlined text-[14px] text-gray-500 w-4 text-center" title="Direction"></span>
@@ -241,9 +241,9 @@
                     <button id="tabAttributes" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
                 </div>
                 
-                <div id="view3DContainer" class="flex flex-col w-full flex-grow overflow-visible items-center justify-center">
-                    <div style="aspect-ratio: 1/1; max-height: 100%; max-width: 100%; display: flex;" class="w-full">
-                        <iframe id="iframe3D" src="/static/3d_view.html" class="w-full h-full border-none"></iframe>
+                <div id="view3DContainer" class="flex flex-col w-full flex-grow min-h-0 overflow-hidden items-center justify-center p-1">
+                    <div style="aspect-ratio: 1/1; width: 100%; max-height: 100%; max-width: 100%; position: relative; flex-shrink: 0;">
+                        <iframe id="iframe3D" src="/static/3d_view.html" style="position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block;"></iframe>
                     </div>
                 </div>
                 <div id="varList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
@@ -281,7 +281,7 @@
 
                 <div id="cTrimContainer" class="hidden flex-col items-center pt-4 pb-20 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
                     <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Colour</span>
-                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
+                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
                         <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
                         <div class="absolute h-full w-full cursor-pointer z-10" id="cTrimTrack">
@@ -291,9 +291,9 @@
                             <div class="absolute w-6 h-3 bg-gray-400 cursor-grab transition-colors z-20 rounded border-none" id="cTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%);"></div>
                         </div>
                     </div>
-                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[10px] text-gray-700 bg-white w-full text-center rounded" placeholder="Min">
-                    <button id="autoColorBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-1 py-1 text-[9px] font-medium transition-colors rounded w-full border-none">Auto</button>
-                    <button id="resetColorBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-1 py-1 text-[9px] font-medium transition-colors rounded w-full border-none">Reset</button>
+                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Min">
+                    <button id="autoColorBtn" class="toggle-btn px-1 py-1 rounded w-full">Auto</button>
+                    <button id="resetColorBtn" class="toggle-btn px-1 py-1 rounded w-full">Reset</button>
                 </div>
 
             </div>
@@ -301,44 +301,44 @@
     </div>
 
     <div id="jellyBubble" class="fixed bottom-4 right-4 z-[100]">
-        <button id="jellyToggle" class="rounded-full w-14 h-14 flex items-center justify-center shadow-lg border-none cursor-pointer bg-white/90 transition-transform hover:scale-105 overflow-hidden" style="background: radial-gradient(circle at 35% 30%, #ffffff, #fce7f3 60%, #f3e8ff);" title="Ask Jelly">
-            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-[52px] h-[52px]" />
+        <button id="jellyToggle" class="rounded-full w-12 h-12 flex items-center justify-center border border-gray-200 cursor-pointer bg-white transition-transform hover:scale-105 overflow-hidden" style="box-shadow: 0 2px 8px rgba(0,0,0,0.12);" title="Ask Jelly">
+            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-10 h-10" />
         </button>
     </div>
 
-    <div id="jellyPanel" class="fixed bottom-[80px] right-4 z-[100] w-80 max-w-[95vw] bg-white border border-gray-200 rounded-lg shadow-xl flex-col hidden" style="height: 460px;">
-        <div class="flex items-center justify-between px-3 py-2 rounded-t-lg text-white" style="background: linear-gradient(135deg, #a855f7, #ec4899);">
+    <div id="jellyPanel" class="fixed bottom-[68px] right-4 z-[100] w-72 max-w-[95vw] bg-white border border-gray-200 rounded-lg flex-col hidden" style="height: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
+        <div class="flex items-center justify-between px-3 py-2 rounded-t-lg border-b border-gray-200 bg-[#f8f9fa]">
             <div class="flex items-center gap-2">
-                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-6 h-6" />
-                <span class="font-bold text-sm">Jelly</span>
-                <span class="text-[9px] opacity-70" id="jellyElapsed"></span>
+                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-5 h-5" />
+                <span class="font-semibold text-xs text-gray-700">Jelly</span>
+                <span class="text-[9px] text-gray-400" id="jellyElapsed"></span>
             </div>
-            <div class="flex items-center gap-1">
-                <button id="jellyKeyBtn" class="text-[10px] hover:bg-white/20 px-1.5 py-0.5 rounded border-none bg-transparent text-white cursor-pointer" title="Manage API key">
+            <div class="flex items-center gap-0.5">
+                <button id="jellyKeyBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Manage API key">
                     <span class="material-symbols-outlined text-[14px]">key</span>
                 </button>
-                <button id="jellyClearBtn" class="text-[10px] hover:bg-white/20 px-1.5 py-0.5 rounded border-none bg-transparent text-white cursor-pointer" title="Clear chat">
+                <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Clear chat">
                     <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
                 </button>
-                <button id="jellyCloseBtn" class="hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-white cursor-pointer" title="Close">&#10005;</button>
+                <button id="jellyCloseBtn" class="hover:bg-gray-200 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-gray-500 cursor-pointer text-xs" title="Close">&#10005;</button>
             </div>
         </div>
 
-        <div id="jellyKeyPrompt" class="p-3 flex-col gap-2 hidden border-b border-gray-100 bg-purple-50/40">
-            <p class="text-[11px] text-gray-600 leading-snug">Paste your OpenAI API key so Jelly can think. Saved locally in <code class="bg-white px-1 rounded">.env</code>. Never leaves your machine.</p>
-            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-purple-500 w-full" />
+        <div id="jellyKeyPrompt" class="p-3 flex-col gap-2 hidden border-b border-gray-100 bg-[#f8f9fa]">
+            <p class="text-[11px] text-gray-600 leading-snug">Paste your OpenAI API key so Jelly can think. Saved locally in <code class="bg-white px-1 rounded border border-gray-200">.env</code>. Never leaves your machine.</p>
+            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#1a73e8] w-full" />
             <div class="flex gap-2">
-                <button id="jellyKeySave" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
-                <button id="jellyKeyDelete" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs border-none cursor-pointer hidden">Delete</button>
+                <button id="jellyKeySave" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
+                <button id="jellyKeyDelete" class="toggle-btn px-3 py-1.5 rounded text-xs border-none cursor-pointer hidden">Delete</button>
             </div>
             <p id="jellyKeyStatus" class="text-[10px] text-gray-500"></p>
         </div>
 
         <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs"></div>
 
-        <form id="jellyForm" class="p-2 border-t border-gray-200 flex gap-2 shrink-0">
-            <input id="jellyInput" type="text" placeholder="e.g. make a T-S plot" class="flex-grow border border-gray-300 p-2 text-xs rounded outline-none focus:border-purple-500" autocomplete="off" />
-            <button type="submit" id="jellySend" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
+        <form id="jellyForm" class="p-2 border-t border-gray-100 flex gap-2 shrink-0 bg-[#f8f9fa] rounded-b-lg">
+            <input id="jellyInput" type="text" placeholder="Ask Jelly anything…" class="flex-grow border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#1a73e8] bg-white" autocomplete="off" />
+            <button type="submit" id="jellySend" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
         </form>
     </div>
 

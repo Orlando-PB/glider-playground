@@ -16,7 +16,7 @@ BATHY_RESOLUTION = 40
 def standalone_qc(vals):
     bad_mask = np.zeros(len(vals), dtype=bool)
     
-    bad_mask |= (vals == -999.0) | (vals == -9999.0) | (vals == 999.0) | (vals == 9999.0) | (vals == 0.0)
+    bad_mask |= (vals == -999.0) | (vals == -9999.0) | (vals == 999.0) | (vals == 9999.0)
     
     diffs = np.diff(vals, append=np.nan)
     stuck_series = pd.Series(diffs == 0)
@@ -80,19 +80,14 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     temp = nc.variables['TEMP'][:] if 'TEMP' in nc.variables else None
     nc.close()
     
-    if len(lat) > max_points:
-        step = max(1, len(lat) // max_points)
-        lat = lat[::step]
-        lon = lon[::step]
-        pres = pres[::step]
-        if temp is not None:
-            temp = temp[::step]
-            
     lat = lat.filled(np.nan) if np.ma.isMaskedArray(lat) else lat
     lon = lon.filled(np.nan) if np.ma.isMaskedArray(lon) else lon
     pres = pres.filled(np.nan) if np.ma.isMaskedArray(pres) else pres
     if temp is not None:
         temp = temp.filled(np.nan) if np.ma.isMaskedArray(temp) else temp
+
+    lat = pd.Series(lat).interpolate(limit_direction='both').values
+    lon = pd.Series(lon).interpolate(limit_direction='both').values
         
     valid = ~np.isnan(lat) & ~np.isnan(lon) & ~np.isnan(pres)
     valid &= (lat >= -90.0) & (lat <= 90.0) & (lon >= -180.0) & (lon <= 180.0)
@@ -108,6 +103,14 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     if len(lat) == 0:
         raise ValueError("No valid spatial data after QC filters")
         
+    if len(lat) > max_points:
+        step = max(1, len(lat) // max_points)
+        lat = lat[::step]
+        lon = lon[::step]
+        pres = pres[::step]
+        if temp is not None:
+            temp = temp[::step]
+            
     return lat, lon, pres, temp
 
 def get_location_summary(filepath):
