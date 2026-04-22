@@ -21,7 +21,7 @@ pip install glider-playground
 If you experience issues with the standard pip installation, you can install the package directly from the source repository.
 
 ```bash
-git clone [https://github.com/Orlando-PB/glider-playground.git](https://github.com/Orlando-PB/glider-playground.git)
+git clone https://github.com/Orlando-PB/glider-playground.git
 cd glider-playground
 ```
 
