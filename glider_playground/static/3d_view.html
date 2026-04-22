@@ -5,28 +5,54 @@
     <title>3D Ocean Chunk</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
-        body { 
-            margin: 0; padding: 0; overflow: hidden; 
-            background-color: #f8f9fa; font-family: sans-serif;
+        :root, :root[data-theme="dark"] {
+            --bg-panel: #121420;
+            --text-primary: #e4e7ef;
+            --text-muted: #6b7280;
+            --accent: #5b9cff;
+            --spinner-track: #1f2432;
+        }
+        :root[data-theme="light"] {
+            --bg-panel: #f5f6f8;
+            --text-primary: #171a22;
+            --text-muted: #7d8492;
+            --accent: #1a73e8;
+            --spinner-track: #e2e5ec;
+        }
+        body {
+            margin: 0; padding: 0; overflow: hidden;
+            background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,sans-serif;
+            color: var(--text-primary);
         }
         #plot3d { width: 100vw; height: 100vh; }
-        
-        #overlay { 
-            position: absolute; inset: 0; 
-            display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px;
-            background: #f8f9fa; z-index: 50; 
+
+        #overlay {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px;
+            background: var(--bg-panel); z-index: 50;
             transition: opacity 0.5s ease-in-out;
-            color: #6b7280; font-size: 11px;
+            color: var(--text-muted); font-size: 11px;
         }
         .spinner {
-            width: 24px; height: 24px;
-            border: 3px solid #e5e7eb;
-            border-top: 3px solid #1a73e8;
+            width: 22px; height: 22px;
+            border: 3px solid var(--spinner-track);
+            border-top: 3px solid var(--accent);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
+    <script>
+        (function() {
+            try {
+                const p = new URLSearchParams(window.location.search);
+                const t = p.get('theme') === 'light' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (_) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
 </head>
 <body>
     <div id="overlay">
@@ -60,6 +86,12 @@
             return response;
         };
         // ------------------------------
+
+        window.addEventListener('message', function(event) {
+            if (!event.data || event.data.type !== 'setTheme') return;
+            const t = event.data.theme === 'light' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+        });
 
         const earthColour = '#c2b2a4';
         const earthGradientEnd = '#e5d9cc';

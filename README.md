@@ -10,8 +10,48 @@ A fast, web-based NetCDF explorer for viewing and validating glider data. This t
 
 To explore your own data locally with full performance, you can download the tool via pip. Ensure you have Python 3.9+ installed. It is recommended to install this inside a virtual environment to keep your system clean.
 
+### Standard Installation
+
 ```bash
 pip install glider-playground
+```
+
+### Installing from Source (Git)
+
+If you experience issues with the standard pip installation, you can install the package directly from the source repository.
+
+```bash
+git clone [https://github.com/Orlando-PB/glider-playground.git](https://github.com/Orlando-PB/glider-playground.git)
+cd glider-playground
+```
+
+It is highly recommended to install the tool within a virtual environment. Here is how you can set one up using either `venv` or `conda`:
+
+**Using venv:**
+```bash
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+```
+
+**Using Conda:**
+```bash
+conda create -n glider-env python=3.9
+conda activate glider-env
+```
+
+Once your environment is active, install the package:
+```bash
+pip install .
+```
+
+**macOS Specific Notes:**
+On a Mac, it is possible to install the package outside of a virtual environment, but you will need to ensure Python is added to your PATH. You will also likely want to alias `python` to `python3` and `pip` to `pip3`. You can apply these changes immediately for the default Zsh terminal by running the following command:
+
+```bash
+echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc && echo 'alias python="python3"' >> ~/.zshrc && echo 'alias pip="pip3"' >> ~/.zshrc && source ~/.zshrc
 ```
 
 ## How to Run
@@ -21,6 +61,8 @@ Once installed, you can start the application from anywhere in your terminal by 
 ```bash
 glider-playground
 ``` 
+
+*Note: If you installed the application inside a virtual environment (venv or conda), you must ensure that environment is activated first before running the command.*
 
 This will start the local server and automatically open the application in your default web browser. To stop the server, return to the terminal and press `Ctrl+C`.
 

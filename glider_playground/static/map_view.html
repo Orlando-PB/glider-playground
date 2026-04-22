@@ -8,25 +8,59 @@
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
     <script src="https://unpkg.com/globe.gl"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #a1cae6; overflow: hidden; }
+        :root, :root[data-theme="dark"] {
+            --bg-globe: #0b0d13;
+            --bg-panel: #121420;
+            --text-primary: #e4e7ef;
+            --text-muted: #6b7280;
+            --accent: #5b9cff;
+            --atmosphere: #ffffff;
+        }
+        :root[data-theme="light"] {
+            --bg-globe: #eef1f5;
+            --bg-panel: #f5f6f8;
+            --text-primary: #171a22;
+            --text-muted: #7d8492;
+            --accent: #1a73e8;
+            --atmosphere: #5b9cff;
+        }
+        body { margin: 0; padding: 0; font-family: 'Inter','Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-globe); overflow: hidden; color: var(--text-primary); }
         #globe-container { width: 100vw; height: 100vh; z-index: 1; cursor: grab; visibility: hidden; }
         #globe-container:active { cursor: grabbing; }
-        #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: #f8f9fa; }
+        #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: var(--bg-panel); color: var(--text-muted); }
     </style>
+    <script>
+        (function() {
+            try {
+                const p = new URLSearchParams(window.location.search);
+                const t = p.get('theme') === 'light' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (_) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
 </head>
 <body>
-    <div id="overlay" class="flex flex-col items-center gap-2 text-gray-500">
-        <span class="material-symbols-outlined text-2xl animate-spin" id="loadingIcon">progress_activity</span>
+    <div id="overlay" class="flex flex-col items-center gap-2">
+        <span class="material-symbols-outlined text-2xl animate-spin" id="loadingIcon" style="color:#5b9cff;">progress_activity</span>
         <span class="text-[10px] font-medium" id="statusText">Loading map data...</span>
     </div>
     
     <div id="globe-container"></div>
 
     <script>
+        function readThemeColors() {
+            const s = getComputedStyle(document.documentElement);
+            return {
+                bg: (s.getPropertyValue('--bg-globe').trim() || '#0b0d13'),
+                path: (s.getPropertyValue('--accent').trim() || '#5b9cff'),
+                atmosphere: (s.getPropertyValue('--atmosphere').trim() || '#ffffff')
+            };
+        }
+
         const CONFIG = {
-            backgroundColour: '#a1cae6',
-            pathColour: '#ffeb3b',
-            pathThickness: 2.5, 
+            pathThickness: 2.5,
             zoomScaleFactor: 30
         };
 
@@ -96,17 +130,18 @@
                 if (!myGlobe) {
                     document.getElementById('statusText').textContent = 'Rendering 3D globe...';
                     
+                    const tc = readThemeColors();
                     myGlobe = Globe()
                         (document.getElementById('globe-container'))
                         .globeTileEngineUrl((x, y, l) => `https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${l}/${y}/${x}`)
-                        .backgroundColor(CONFIG.backgroundColour)
+                        .backgroundColor(tc.bg)
                         .showAtmosphere(true)
-                        .atmosphereColor('#ffffff')
+                        .atmosphereColor(tc.atmosphere)
                         .pathsData([pathFeature])
                         .pathPoints('coordinates')
                         .pathPointLat('lat')
                         .pathPointLng('lng')
-                        .pathColor(() => CONFIG.pathColour)
+                        .pathColor(() => readThemeColors().path)
                         .pathStroke(() => CONFIG.pathThickness);
 
                     myGlobe.onGlobeReady(() => {
@@ -149,6 +184,18 @@
         window.addEventListener('resize', () => {
             if (myGlobe) {
                 myGlobe.width(window.innerWidth).height(window.innerHeight);
+            }
+        });
+
+        window.addEventListener('message', (event) => {
+            if (!event.data || event.data.type !== 'setTheme') return;
+            const t = event.data.theme === 'light' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+            if (myGlobe) {
+                const tc = readThemeColors();
+                myGlobe.backgroundColor(tc.bg).atmosphereColor(tc.atmosphere);
+                // trigger a re-colour of the existing path
+                myGlobe.pathColor(() => readThemeColors().path);
             }
         });
     </script>

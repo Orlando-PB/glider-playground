@@ -13,6 +13,14 @@ CTD_VARS = ("PRES", "TEMP", "CNDC")
 CTD_SIGMA_THRESHOLD = 5.0
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
 
+# For TEMP/CNDC fill: look for real (non-interpolated) samples within this
+# time and depth window around the target. If nothing is found the gap is
+# left as NaN — glider dive/climb asymmetries can mean there is no honest
+# neighbour at the same depth and a naive time interpolation would smear
+# bad values across unrelated water layers.
+CTD_FILL_TIME_WINDOW_S = 2 * 3600
+CTD_FILL_DEPTH_WINDOW_M = 5.0
+
 
 def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, apply_ctd_qc=False):
     """Return a new data_dict with CTD interpolation and/or custom QC applied.
@@ -80,32 +88,115 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                             qc[overwrite] = 4
 
     if interpolate and time_var and time_var in new_dict:
+        # Only touch rows where TIME is valid and the sample sits inside a
+        # monotonically-increasing run. Broken/NaN/out-of-order times would
+        # otherwise smear bad values across unrelated samples.
         t_vals = new_dict[time_var]
         try:
-            t_index = pd.to_datetime(t_vals)
-            use_time_index = True
+            t_dt = pd.DatetimeIndex(pd.to_datetime(t_vals, errors='coerce'))
         except Exception:
-            t_index = None
-            use_time_index = False
+            t_dt = None
 
-        for v in present:
-            vals = new_dict[v]
-            nan_before = np.isnan(vals)
-            if not np.any(nan_before):
-                continue
-            try:
-                if use_time_index:
-                    s = pd.Series(vals, index=t_index)
-                    interp = s.interpolate(method='time', limit_direction='both').to_numpy()
-                else:
-                    raise ValueError("no time index")
-            except Exception:
-                interp = pd.Series(vals).interpolate(method='linear', limit_direction='both').to_numpy()
+        if t_dt is not None and len(t_dt) == len(new_dict[present[0]]):
+            min_time = pd.Timestamp("1990-01-01")
+            now_time = pd.Timestamp.now()
+            nat_mask = np.asarray(pd.isna(t_dt))
+            range_ok = np.asarray((t_dt >= min_time) & (t_dt <= now_time))
+            valid_time = ~nat_mask & range_ok
 
-            filled = nan_before & ~np.isnan(interp)
-            new_dict[v] = interp
-            qc = new_dict[f"{v}_QC"]
-            qc[filled] = 5
+            INT_MIN = np.iinfo(np.int64).min
+            t_int = t_dt.asi8.copy()
+            safe = np.where(valid_time, t_int, INT_MIN)
+            run_max = np.maximum.accumulate(safe)
+            prev_max = np.empty_like(run_max)
+            prev_max[0] = INT_MIN
+            prev_max[1:] = run_max[:-1]
+            valid_time = valid_time & (t_int >= prev_max)
+
+            if valid_time.any():
+                # --- PRES: straight time-linear interpolation ---
+                if "PRES" in present:
+                    pres = new_dict["PRES"]
+                    target = np.isnan(pres) & valid_time
+                    if target.any():
+                        sub_vals = pres[valid_time]
+                        sub_index = t_dt[valid_time]
+                        interp_sub = (
+                            pd.Series(sub_vals, index=sub_index)
+                            .interpolate(method='time', limit_direction='both')
+                            .to_numpy()
+                        )
+                        out = pres.copy()
+                        out[valid_time] = interp_sub
+                        filled = target & ~np.isnan(out)
+                        new_dict["PRES"] = out
+                        new_dict["PRES_QC"][filled] = 5
+
+                # --- TEMP / CNDC: depth-proximity fill from real samples ---
+                # Time interpolation of temperature across a dive is wrong when
+                # the glider is only going down (or only up) in that window:
+                # there is no measurement at the target depth so pandas would
+                # smear values across unrelated water layers. Instead, for
+                # each gap we look for original (non-interpolated) readings
+                # within +/-2h and +/-5m and average them; if no qualifying
+                # sample exists we leave the gap as NaN.
+                pres_ref = new_dict.get("PRES")
+                if pres_ref is not None:
+                    t_ns = t_int  # int64 ns since epoch, aligned to full array
+                    time_window_ns = np.int64(CTD_FILL_TIME_WINDOW_S) * np.int64(10**9)
+
+                    for v in ("TEMP", "CNDC"):
+                        if v not in present:
+                            continue
+                        vals = new_dict[v]
+                        orig_non_nan = ~np.isnan(vals)  # snapshot BEFORE fills
+                        target_mask = (
+                            np.isnan(vals) & valid_time & ~np.isnan(pres_ref)
+                        )
+                        if not target_mask.any():
+                            continue
+
+                        ref_mask = (
+                            orig_non_nan & valid_time & ~np.isnan(pres_ref)
+                        )
+                        if not ref_mask.any():
+                            continue
+
+                        ref_idx = np.where(ref_mask)[0]
+                        ref_t = t_ns[ref_idx]
+                        ref_p = pres_ref[ref_idx]
+                        ref_v = vals[ref_idx]
+
+                        target_idx = np.where(target_mask)[0]
+                        # target_idx and ref_idx are both index-sorted, and
+                        # valid_time guarantees their times are non-decreasing
+                        # in that order — so a single sweep with two pointers
+                        # is correct.
+                        new_vals = vals.copy()
+                        qc_arr = new_dict[f"{v}_QC"]
+
+                        lo = 0
+                        hi = 0
+                        n_ref = len(ref_t)
+                        for i in target_idx:
+                            ti = t_ns[i]
+                            pi = pres_ref[i]
+                            lo_cut = ti - time_window_ns
+                            hi_cut = ti + time_window_ns
+                            while lo < n_ref and ref_t[lo] < lo_cut:
+                                lo += 1
+                            while hi < n_ref and ref_t[hi] <= hi_cut:
+                                hi += 1
+                            if hi <= lo:
+                                continue
+                            win_p = ref_p[lo:hi]
+                            win_v = ref_v[lo:hi]
+                            depth_ok = np.abs(win_p - pi) <= CTD_FILL_DEPTH_WINDOW_M
+                            if depth_ok.any():
+                                new_vals[i] = win_v[depth_ok].mean()
+                                qc_arr[i] = 5
+
+                        new_dict[v] = new_vals
 
     return new_dict
 
@@ -180,7 +271,12 @@ def get_dataset_info(filepath):
     for name, var in nc.variables.items():
         if len(var.dimensions) > 0:
             description = getattr(var, 'long_name', 'No description available')
-            variables.append({"name": name, "description": str(description)})
+            units = getattr(var, 'units', '')
+            variables.append({
+                "name": name,
+                "description": str(description),
+                "units": str(units),
+            })
             
     global_attrs = {attr: str(getattr(nc, attr)) for attr in nc.ncattrs()}
     nc.close()
