@@ -115,28 +115,55 @@
                 .then(response => response.json())
                 .then(data => {
                     const traces = [];
-                    const minZ = Math.min(...data.bathy_z.flat());
-                    const baseZ = minZ - (Math.abs(minZ) * 0.15); 
+
+                    // Horizontal extent, needed up front so the focus depth
+                    // stays within a sensible aspect ratio for the viewport.
+                    const METERS_PER_DEGREE = 111111;
+                    const avgLat = (data.bounds.max_lat + data.bounds.min_lat) / 2;
+                    const distY = (data.bounds.max_lat - data.bounds.min_lat) * METERS_PER_DEGREE;
+                    const distX = (data.bounds.max_lon - data.bounds.min_lon) * METERS_PER_DEGREE * Math.cos(avgLat * Math.PI / 180);
+                    const maxHoriz = Math.max(distX, distY, 1);
+
+                    // Focus vertical range on the glider path, but bound the
+                    // focus depth so the scene doesn't clip (too tall) or look
+                    // flat (too shallow relative to horizontal extent).
+                    let gliderDeepest = 0;
+                    for (const z of data.elevation) if (z < gliderDeepest) gliderDeepest = z;
+                    const gliderFocusDepth = Math.abs(gliderDeepest) * 1.3 + 20;
+                    const minFocusDepth = (1.0 * maxHoriz) / verticalExaggeration;
+                    const maxFocusDepth = (3.0 * maxHoriz) / verticalExaggeration;
+                    const desiredFocusDepth = Math.min(
+                        Math.max(gliderFocusDepth, minFocusDepth, 50),
+                        maxFocusDepth
+                    );
+
+                    const trueMinZ = Math.min(...data.bathy_z.flat());
+                    const displayMinZ = Math.max(-desiredFocusDepth, trueMinZ);
+                    const clampZ = z => (z < displayMinZ ? displayMinZ : z);
+                    const bathyZ = data.bathy_z.map(row => row.map(clampZ));
+
+                    const minZ = displayMinZ;
+                    const baseZ = minZ - (Math.abs(minZ) * 0.15);
 
                     const xLen = data.bathy_lon.length;
                     const yLen = data.bathy_lat.length;
 
-                    const tiny = 0.00001; 
-                    
+                    const tiny = 0.00001;
+
                     const lon0 = data.bathy_lon[0];
                     const lon1 = data.bathy_lon[xLen - 1];
                     const lat0 = data.bathy_lat[0];
                     const lat1 = data.bathy_lat[yLen - 1];
-                    
-                    const zSouth = data.bathy_z[0];
-                    const zNorth = data.bathy_z[yLen - 1];
-                    const zWest = data.bathy_z.map(row => row[0]);
-                    const zEast = data.bathy_z.map(row => row[xLen - 1]);
+
+                    const zSouth = bathyZ[0];
+                    const zNorth = bathyZ[yLen - 1];
+                    const zWest = bathyZ.map(row => row[0]);
+                    const zEast = bathyZ.map(row => row[xLen - 1]);
 
                     const noContours = { contours: { x: {show: false}, y: {show: false}, z: {show: false} } };
 
                     traces.push({
-                        x: data.bathy_lon, y: data.bathy_lat, z: data.bathy_z,
+                        x: data.bathy_lon, y: data.bathy_lat, z: bathyZ,
                         type: 'surface', colorscale: [[0, earthColour], [1, earthGradientEnd]], 
                         showscale: false, hoverinfo: 'skip',
                         lighting: { ambient: 0.6, diffuse: 0.8, specular: 0.1, roughness: 0.6 },
@@ -192,14 +219,7 @@
                         type: 'scatter3d', name: 'Glider', hoverinfo: 'skip'
                     });
 
-                    const METERS_PER_DEGREE = 111111;
-                    const avgLat = (data.bounds.max_lat + data.bounds.min_lat) / 2;
-                    
-                    const distY = (data.bounds.max_lat - data.bounds.min_lat) * METERS_PER_DEGREE;
-                    const distX = (data.bounds.max_lon - data.bounds.min_lon) * METERS_PER_DEGREE * Math.cos(avgLat * Math.PI / 180);
-                    const distZ = Math.abs(baseZ); 
-                    
-                    const maxHoriz = Math.max(distX, distY);
+                    const distZ = Math.abs(baseZ);
                     const aspectX = distX / maxHoriz;
                     const aspectY = distY / maxHoriz;
                     const aspectZ = (distZ / maxHoriz) * verticalExaggeration;

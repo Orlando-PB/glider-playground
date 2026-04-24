@@ -80,7 +80,7 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 - {"type":"calc_mld"}   // triggers the built-in Mixed Layer Depth calculation (ONLY valid when x=TIME, y=PRES, c=TEMP; do NOT try to calculate MLD yourself)
 - {"type":"clear_overlays"}
 
-CMAP NAMES: viridis, viridis_r, plasma, plasma_r, inferno, magma, cividis, YlGnBu, YlGnBu_r, Spectral_r, coolwarm, coolwarm_r, RdBu_r, black
+CMAP NAMES (cmocean palettes — append "_r" to any for reversed): thermal, haline, solar, ice, gray, oxy, deep, dense, algae, matter, turbid, speed, amp, tempo, rain, phase, topo, balance, delta, curl, diff, tarn, black. Sensible defaults by variable: TEMP→thermal, PRAC_SALINITY/ABS_SALINITY→haline, DENSITY→dense, CHLA→delta, DOXY/MOLAR_DOXY→oxy, BBP*→turbid, PRES/DEPTH→deep.
 
 MIXED LAYER DEPTH: When the user asks for MLD, mixed layer depth, or to "overlay MLD", ALWAYS use the calc_mld action — never attempt to compute or annotate it yourself. It requires the plot to be in TIME vs PRES mode with TEMP as the colour variable. If it is not, first emit set_variables to set x=TIME, y=PRES, c=TEMP (using fallback variable names from the current file), then emit calc_mld. Do not describe any algorithm.
 

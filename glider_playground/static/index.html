@@ -542,7 +542,7 @@
                             </tbody>
                         </table>
                     </div>
-                    <input type="text" id="qcFlags" value="1,2,5,8" class="w-[54px] p-1 text-[10px] text-center transition-colors" title="Comma-separated list of allowed QC flags">
+                    <input type="text" id="qcFlags" value="0,1,2,5,8" class="w-[64px] p-1 text-[10px] text-center transition-colors" title="Comma-separated list of allowed QC flags">
                 </div>
             </div>
 
@@ -587,25 +587,10 @@
                 </select>
                 
                 <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #440154, #21918c, #fde725);" aria-haspopup="true" aria-expanded="false"></button>
-                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-24 max-h-48 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded">
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="viridis" style="background: linear-gradient(to right, #440154, #482878, #3e4a89, #31688e, #26828e, #1f9e89, #35b779, #6ece58, #b5de2b, #fde725);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="viridis_r" style="background: linear-gradient(to right, #fde725, #b5de2b, #6ece58, #35b779, #1f9e89, #26828e, #31688e, #3e4a89, #482878, #440154);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="plasma" style="background: linear-gradient(to right, #0d0887, #46039f, #7201a8, #9c179e, #bd3786, #d8576b, #ed7953, #fb9f3a, #fdca26, #f0f921);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="plasma_r" style="background: linear-gradient(to right, #f0f921, #fdca26, #fb9f3a, #ed7953, #d8576b, #bd3786, #9c179e, #7201a8, #46039f, #0d0887);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="inferno" style="background: linear-gradient(to right, #000004, #1b0c41, #4a0c6b, #781c6d, #a52c60, #cf4446, #ed6925, #fb9b06, #f7d03c, #fcffa4);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="magma" style="background: linear-gradient(to right, #000004, #180f3d, #440f76, #721f81, #9e2f7f, #cd4071, #f1605d, #fd9668, #feca8d, #fcfdbf);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="cividis" style="background: linear-gradient(to right, #00204d, #00336f, #39486b, #575c6d, #707173, #8a8779, #a69d75, #c4b56c, #e4ce5b, #ffea46);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="YlGnBu" style="background: linear-gradient(to right, #ffffd9, #edf8b1, #c7e9b4, #7fcdbb, #41b6c4, #1d91c0, #225ea8, #253494, #081d58);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="YlGnBu_r" style="background: linear-gradient(to right, #081d58, #253494, #225ea8, #1d91c0, #41b6c4, #7fcdbb, #c7e9b4, #edf8b1, #ffffd9);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="Spectral_r" style="background: linear-gradient(to right, #5e4fa2, #3288bd, #66c2a5, #abdda4, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d53e4f, #9e0142);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="coolwarm" style="background: linear-gradient(to right, #3b4cc0, #6788ee, #9abbff, #c9d7f0, #edd1c2, #f7a889, #e26952, #b40426);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="coolwarm_r" style="background: linear-gradient(to right, #b40426, #e26952, #f7a889, #edd1c2, #c9d7f0, #9abbff, #6788ee, #3b4cc0);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="RdBu_r" style="background: linear-gradient(to right, #053061, #2166ac, #4393c3, #92c5de, #d1e5f0, #f7f7f7, #fddbc7, #f4a582, #d6604d, #b2182b, #67001f);"></button>
-                        <button class="cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue" data-val="black" style="background: #000000;"></button>
-                    </div>
+                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
                 </div>
-                <input type="hidden" id="cmap" value="viridis">
+                <input type="hidden" id="cmap" value="thermal">
             </div>
 
         </div>
@@ -816,6 +801,51 @@
         
         const gliderMap = document.getElementById('gliderMap');
         const cmapTrigger = document.getElementById('cmapTrigger'), cmapMenu = document.getElementById('cmapMenu');
+
+        const cmoceanPalettes = {
+            thermal: ['#042333','#1d1147','#45155e','#781f5e','#a13058','#bd4a38','#cc6c1a','#d5901c','#ddb33a','#e6d274','#e9f6ae'],
+            haline:  ['#2a186c','#2a348a','#1d4ca7','#0e65a4','#0d7a95','#1a8e83','#3ea06d','#72ae4a','#b2ba38','#e8c75a','#fdef9a'],
+            solar:   ['#331901','#512208','#702912','#8a311b','#a13e20','#b35120','#c06717','#ca8115','#cf9d24','#d6ba4c','#dfd77f'],
+            ice:     ['#03051e','#101448','#1c2b69','#27396d','#34517e','#496d97','#6587b0','#87a2c3','#abbdd4','#cfd7e2','#ecedf1'],
+            gray:    ['#000000','#1a1a1a','#333333','#4d4d4d','#666666','#808080','#999999','#b3b3b3','#cccccc','#e6e6e6','#ffffff'],
+            oxy:     ['#400000','#5c0000','#780000','#808080','#8c8c8c','#979797','#a3a3a3','#aeaeae','#baba10','#dbdb0a','#fdfd00'],
+            deep:    ['#fdfecc','#c9e3a9','#93c4a9','#61a1b5','#4883b5','#3d65a8','#3a4c93','#383779','#322263','#2c1050','#190628'],
+            dense:   ['#e6f1f7','#c4d8e8','#a6bed9','#8ba4c9','#7489b8','#636c9f','#595388','#55406e','#4e3055','#3f2040','#2e1226'],
+            algae:   ['#d6f5d6','#b5e4a9','#87cd80','#59b561','#319a4c','#0c7f3d','#006630','#00521e','#003d10','#002b08','#001b04'],
+            matter:  ['#fff7cc','#f9d0a3','#f3a781','#ea8161','#de594e','#c7353f','#a91b3c','#812139','#5a2130','#331821','#160e12'],
+            turbid:  ['#e8f6b1','#d3dba0','#bdc091','#a6a682','#928c74','#807364','#6e5a55','#5c4344','#4a2e32','#361a1f','#200910'],
+            speed:   ['#fffdcc','#d9e7a5','#add28a','#7fbb7d','#56a377','#37886c','#26695b','#1c4848','#1b2838','#1b1024','#0c0412'],
+            amp:     ['#fff5f0','#fcd1b3','#f7a788','#ef7963','#e24c3b','#c53126','#9c2121','#741313','#4d0707','#270303','#0a0000'],
+            tempo:   ['#fff6cc','#d3e4bd','#a9d0b3','#80bca9','#5aa69e','#3b8d8f','#27707d','#1a5267','#133749','#0d2130','#050c17'],
+            rain:    ['#eefcff','#cbe8f0','#a9d1df','#85b9cc','#68a0c0','#5f85b5','#5a67a3','#504c8c','#3a3a73','#232958','#11133d'],
+            phase:   ['#a9795e','#c2656a','#c85080','#ad4ba6','#7652c5','#3f63c6','#1778a2','#0e8765','#3c933e','#7c9136','#a87d40'],
+            topo:    ['#2d1451','#36276b','#3e3d7d','#3e5298','#3671a9','#5cb5ae','#cfe5a8','#b3a060','#8c6b35','#5f3d1b','#3b1e0a'],
+            balance: ['#181c44','#3952a1','#5f89ca','#99b3d8','#cad4df','#f5f5f5','#e7c6a5','#d09168','#b35d40','#802b24','#400000'],
+            delta:   ['#112f46','#164872','#275a8f','#3d7ea0','#5aa294','#97c07d','#e0d18a','#dba04b','#bd4e40','#7d2f38','#3b152f'],
+            curl:    ['#150b2e','#2a245d','#3a3f85','#56659f','#8596b5','#c9c9c3','#d4c58b','#bfa05a','#a76b3e','#6d2e3e','#371032'],
+            diff:    ['#241c2f','#2c3d6a','#38689e','#6098b8','#a3bfc5','#e2e2e2','#d0b6a9','#b37773','#874441','#51252b','#241414'],
+            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35']
+        };
+
+        (function buildCmapMenu() {
+            const menu = document.getElementById('cmapMenu');
+            const btnClass = 'cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue';
+            const addBtn = (val, bg, title) => {
+                const b = document.createElement('button');
+                b.className = btnClass;
+                b.dataset.val = val;
+                b.title = title;
+                b.style.background = bg;
+                menu.appendChild(b);
+            };
+            for (const [name, stops] of Object.entries(cmoceanPalettes)) {
+                addBtn(name, `linear-gradient(to right, ${stops.join(', ')})`, name);
+                const rev = stops.slice().reverse();
+                addBtn(name + '_r', `linear-gradient(to right, ${rev.join(', ')})`, name + ' (reversed)');
+            }
+            addBtn('black', '#000000', 'solid black');
+        })();
+
         const cmapInput = document.getElementById('cmap'), cmapOptions = Array.from(document.querySelectorAll('.cmap-option'));
 
         const profileContainer = document.getElementById('profileContainer');
@@ -849,13 +879,13 @@
         let isDraggingCTop = false, isDraggingCBottom = false;
 
         const OceanPresets = {
-            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'Spectral_r', invert: true },
-            preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'viridis_r', invert: false },
-            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'YlGnBu_r', invert: true },
-            preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'plasma', invert: true },
-            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'viridis', invert: true },
-            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'magma', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'inferno', invert: true }
+            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'thermal', invert: true },
+            preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'deep', invert: false },
+            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'haline', invert: true },
+            preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'dense', invert: true },
+            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'delta', invert: true },
+            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'oxy', invert: true },
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'turbid', invert: true }
         };
 
         const COOKIE_FOLDER = 'gp_folder';
