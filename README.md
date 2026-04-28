@@ -1,97 +1,96 @@
 # Glider Playground
 
-A fast, web-based NetCDF explorer for viewing and validating glider data. This tool provides a highly responsive UI to explore oceanographic `.nc` files without running computationally heavy processing steps on the fly. It was built as a simple tool to learn about glider data at NOC (National Oceanography Centre).
+A fast, web-based NetCDF explorer for glider data. Load your `.nc` files and instantly explore, plot, and QC your data — no scripting required.
 
-**Live Demo:** You can try out the site with demo data right now at [glider-playground.co.uk](https://glider-playground.co.uk). *(Please note: this is running on my personal Raspberry Pi, so it might be a little slow!)*
+**Live demo:** [glider-playground.co.uk](https://glider-playground.co.uk) *(running on a Raspberry Pi — may be slow)*
 
 ![Glider Playground Home View](glider_playground/static/home_view.png)
 
-## Installation
+---
 
-To explore your own data locally with full performance, you can download the tool via pip. Ensure you have Python 3.9+ installed. It is recommended to install this inside a virtual environment to keep your system clean.
-
-### Standard Installation
+## Install & Run
 
 ```bash
 pip install glider-playground
+glider-playground
 ```
 
-### Installing from Source (Git)
+This opens the app in your browser. Press `Ctrl+C` in the terminal to stop it.
 
-If you experience issues with the standard pip installation, you can install the package directly from the source repository.
+> **Virtual environment recommended.** If you use one, activate it before running.
+
+<details>
+<summary>Install from source</summary>
 
 ```bash
 git clone https://github.com/Orlando-PB/glider-playground.git
 cd glider-playground
-```
-
-It is highly recommended to install the tool within a virtual environment. Here is how you can set one up using either `venv` or `conda`:
-
-**Using venv:**
-```bash
-python -m venv venv
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-```
-
-**Using Conda:**
-```bash
-conda create -n glider-env python=3.9
-conda activate glider-env
-```
-
-Once your environment is active, install the package:
-```bash
 pip install .
 ```
+</details>
 
-**macOS Specific Notes:**
-On a Mac, it is possible to install the package outside of a virtual environment, but you will need to ensure Python is added to your PATH. You will also likely want to alias `python` to `python3` and `pip` to `pip3`. You can apply these changes immediately for the default Zsh terminal by running the following command:
+---
 
-```bash
-echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc && echo 'alias python="python3"' >> ~/.zshrc && echo 'alias pip="pip3"' >> ~/.zshrc && source ~/.zshrc
-```
+## Loading Data
 
-## How to Run
+Click the **file button** (top-left) to open the file panel. From there you can:
 
-Once installed, you can start the application from anywhere in your terminal by simply typing:
+- **Add files** — pick individual `.nc` files
+- **Add folder** — load an entire folder of `.nc` files at once
+- **Download demo data** — grab two example files to try immediately
 
-```bash
-glider-playground
-``` 
+Files are processed in the background. Once ready, click one to load it.
 
-*Note: If you installed the application inside a virtual environment (venv or conda), you must ensure that environment is activated first before running the command.*
+> Sample data is available from the [BODC Deployment Catalogue](https://platforms.bodc.ac.uk/deployment-catalogue/BIO-Carbon/).
 
-This will start the local server and automatically open the application in your default web browser. To stop the server, return to the terminal and press `Ctrl+C`.
+---
 
-## How to Use
+## Exploring Data
 
-### Loading Data
-`.nc` data files must be placed inside a local `data` folder (this folder is created automatically in your current directory the first time you run the app). You can click the **Folder** icon in the top navigation bar to open this directory. Once files are added, select your dataset from the dropdown.
+### Plot
+Pick your **X**, **Y**, and optionally a **Colour** variable from the dropbdowns. The plot updates automatically.
 
-*Need sample data?* OG NetCDF files can be downloaded from the [BIO-Carbon Deployment Catalogue](https://platforms.bodc.ac.uk/deployment-catalogue/BIO-Carbon/). Thanks to NOC for making these resources available.
+Use the **View** menu for built-in presets: Thermal Structure, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter. Save your own combinations as **Custom Views**.
 
-### Views & Plotting
-* **Basic Plotting:** Select your X and Y variables. You can optionally select a third variable to map to the **Colour** axis and choose a specific colourmap. 
-* **Presets:** Use the **View** dropdown to select built-in, pre-configured oceanographic views (e.g., Thermal Structure, Salinity Profile). You can also save your own axes and colour combinations as **Custom Views**.
+### Zoom & Inspect
+- **Box zoom** — click and drag on the plot
+- **Axis sliders** — trim the X, Y, or colour range precisely
+- **Click a point** — see exact values in the sidebar and the glider's GPS position on the map
+- **Reset Lims** — return to the full view
 
-### Interaction & Analysis
-* **Smart Zoom:** Click and drag a box directly on the plot to zoom. When you zoom on X or Y, the **Colour axis auto-scales** its contrast to focus on the data currently in view.
-* **Manual Trimming:** Use the interactive range sliders on the X, Y, and Colour axes to precisely trim data limits.
-* **Data Inspector:** Click any point on the plot to trigger the Inspector. This reveals exact values in the sidebar and updates the mini-map to show the glider's GPS location at that moment.
-* **Reset:** Click **Reset Lims** to return to the full dataset overview and original colour scaling.
+### Profiles
+If your file contains dive profiles, a profile selector appears in the toolbar. Step through individual profiles or view them all at once.
 
-### Quality Control (QC) Filtering
-If your dataset contains standard `_QC` variables, the tool cleans the data automatically. 
-* You can adjust which data points are visible by providing a list of flags (default is `1,2,5,8` for good/interpolated data).
+### 3D View & Map
+The right sidebar shows:
+- **3D View** — an interactive 3D track with bathymetry
+- **Map** — glider GPS track; updates to the clicked position when using the inspector
 
-### Exporting
-* **Plot All:** By default, the tool downsamples to ~250,000 points to keep the UI snappy. Tick **Plot All** to render every single point at high resolution.
-* **Download:** Click the **Download** icon to save your current view as a PNG.
+---
 
-## Uninstalling
+## Quality Control
+
+| Toggle | What it does |
+|---|---|
+| **Apply QC** | Hides points whose `_QC` flag isn't in the allowed list (default: `0,1,2,5,8`) |
+| **Highlight** | Shows bad-QC points in red instead of hiding them |
+| **Interpolate** | Fills NaN gaps in PRES/TEMP/CNDC by time (filled points flagged QC=5) |
+| **Clean** | Flags zero fill-values, auto-scales CNDC units, cross-flags 5σ CNDC outliers |
+| **MLD** | Overlays Mixed Layer Depth (ΔT = 0.2 °C threshold) |
+
+Edit the **QC flags** field to customise which flags count as good.
+
+---
+
+## Other Features
+
+- **Plot All** — disables the 200k-point cap to render every sample
+- **Download** — saves the current plot as a PNG
+- **Jelly** — an AI assistant (bottom-right bubble); paste your OpenAI key to enable it. The key is saved locally and never leaves your machine.
+
+---
+
+## Uninstall
 
 ```bash
 pip uninstall glider-playground

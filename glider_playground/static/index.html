@@ -5,6 +5,7 @@
     <title>Glider Playground</title>
     <link rel="icon" href="/static/icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/console_log.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
     <script>
         // Apply saved theme before any CSS variable is consumed to avoid FOUC.
@@ -20,7 +21,7 @@
 
         const uiConfig = {
             colours: {
-                googleBlue: '#1a73e8', googleBlueHover: '#1557b0', googleRed: '#ea4335',
+                googleBlue: '#41658a', googleBlueHover: '#2e4a68', googleRed: '#ea4335',
                 googleYellow: '#fbbc04', googleGreen: '#34a853', bgMain: '#ffffff', panelBg: '#f8f9fa'
             },
             borderRadius: '4px'
@@ -43,15 +44,15 @@
             --bg-panel-3: #20242f;
             --bg-input: #0f1220;
             --bg-hover: #252936;
-            --border: #262b38;
-            --border-strong: #343a49;
+            --border: transparent;
+            --border-strong: transparent;
             --text-primary: #e4e7ef;
             --text-secondary: #a1a9b8;
             --text-muted: #6b7280;
-            --accent: #5b9cff;
-            --accent-hover: #7fb3ff;
-            --accent-soft: rgba(91,156,255,0.18);
-            --accent-ring: rgba(91,156,255,0.35);
+            --accent: #41658a;
+            --accent-hover: #527ba3;
+            --accent-soft: rgba(65,101,138,0.18);
+            --accent-ring: rgba(65,101,138,0.30);
             --success: #34d399;
             --warning: #fbbf24;
             --danger: #f87171;
@@ -76,15 +77,15 @@
             --bg-panel-3: #eef1f6;
             --bg-input: #f2f4f8;
             --bg-hover: #e4e8ef;
-            --border: #e2e5ec;
-            --border-strong: #c5cad4;
+            --border: transparent;
+            --border-strong: transparent;
             --text-primary: #171a22;
             --text-secondary: #4b525f;
             --text-muted: #7d8492;
-            --accent: #1a73e8;
-            --accent-hover: #1557b0;
-            --accent-soft: rgba(26,115,232,0.10);
-            --accent-ring: rgba(26,115,232,0.28);
+            --accent: #41658a;
+            --accent-hover: #2e4a68;
+            --accent-soft: rgba(65,101,138,0.12);
+            --accent-ring: rgba(65,101,138,0.25);
             --success: #15803d;
             --warning: #b45309;
             --danger: #dc2626;
@@ -136,7 +137,7 @@
         nav, [class*="bg-[#f8f9fa]"], .bg-panelBg { background-color: var(--bg-panel) !important; }
         .bg-white { background-color: var(--bg-panel-2) !important; }
         .bg-gray-50, .bg-gray-100, [class*="bg-[#eee]"] { background-color: var(--bg-input) !important; }
-        .bg-blue-50\/50 { background-color: rgba(91,156,255,0.08) !important; }
+        .bg-blue-50\/50 { background-color: rgba(65,101,138,0.08) !important; }
 
         .text-gray-400, .text-gray-500 { color: var(--text-muted) !important; }
         .text-gray-600, .text-gray-700 { color: var(--text-secondary) !important; }
@@ -145,8 +146,13 @@
         .text-googleRed { color: var(--danger) !important; }
         .text-googleGreen { color: var(--success) !important; }
 
-        .border-gray-100, .border-gray-200, .border-gray-300 { border-color: var(--border) !important; }
-        .border-blue-100 { border-color: rgba(91,156,255,0.25) !important; }
+        /* Flat theme: kill all visible borders from Tailwind classes too */
+        .border, .border-2, .border-b, .border-t, .border-l, .border-r,
+        .border-b-2, .border-t-2, .border-l-2, .border-r-2,
+        .border-gray-100, .border-gray-200, .border-gray-300,
+        .border-blue-100, .border-googleBlue, .border-transparent {
+            border-color: transparent !important;
+        }
         .hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover { background-color: var(--bg-hover) !important; }
 
         .flat-border { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -215,15 +221,24 @@
             font-weight: 500;
             cursor: pointer;
         }
+        :root[data-theme="light"] .toggle-btn {
+            background-color: #c8d0dc;
+            color: #1f2937;
+        }
         .toggle-btn:hover:not(:disabled) {
             background-color: var(--bg-hover);
             color: var(--text-primary);
         }
-        .toggle-btn.active {
-            background-color: var(--accent-soft);
-            color: var(--accent-hover);
-            border-color: rgba(91,156,255,0.35);
-            box-shadow: inset 0 0 0 1px rgba(91,156,255,0.3);
+        :root[data-theme="light"] .toggle-btn:hover:not(:disabled) {
+            background-color: #b8c0cd;
+        }
+        :root[data-theme="dark"] .toggle-btn.active {
+            background-color: rgba(65,101,138,0.38);
+            color: #c8dff0;
+        }
+        :root[data-theme="light"] .toggle-btn.active {
+            background-color: #41658a;
+            color: #ffffff;
         }
         .toggle-btn:disabled {
             opacity: 0.45;
@@ -247,6 +262,207 @@
         }
         nav select:hover, nav input:hover { border-color: var(--border-strong); }
 
+        /* ---------- Colormap menu ---------- */
+        /* Use inset shadow on focus so the highlight stays inside the button —
+           the menu has overflow:auto and the default focus ring was getting
+           clipped on the left edge of the first option. */
+        .cmap-option:focus, .cmap-option:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 1px rgba(0,0,0,0.2);
+        }
+
+        /* ---------- Files trigger / panel ---------- */
+        .dataset-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 5px 8px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            min-width: 200px;
+            max-width: 280px;
+            transition: border-color 0.12s, background-color 0.12s;
+        }
+        .dataset-trigger:hover { border-color: var(--border-strong); }
+        .dataset-trigger.open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+        .dataset-trigger-label {
+            flex: 1;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .dataset-trigger-caret { color: var(--text-muted); margin-left: auto; }
+        .dataset-trigger.open .dataset-trigger-caret { transform: rotate(180deg); }
+        .dataset-trigger-count {
+            font-size: 9.5px;
+            font-weight: 700;
+            background: var(--accent-soft);
+            color: var(--accent);
+            padding: 1px 6px;
+            border-radius: 999px;
+            line-height: 1.4;
+        }
+
+        .files-panel {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            width: 360px;
+            max-width: calc(100vw - 24px);
+            background: var(--bg-panel-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-md);
+            z-index: 80;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .files-panel[hidden] { display: none; }
+        .files-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+        }
+        .files-panel-title {
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .files-panel-close {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 2px;
+            border-radius: var(--radius-sm);
+        }
+        .files-panel-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+        .files-list {
+            max-height: 340px;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+        .files-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 24px 16px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+        .files-empty p { margin: 0; font-size: 11px; }
+        .files-empty-hint { font-size: 10px; color: var(--text-muted); }
+
+        .file-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            position: relative;
+            transition: background-color 0.12s;
+        }
+        .file-card:last-child { border-bottom: none; }
+        .file-card:hover { background: var(--bg-panel-3); }
+        .file-card.active { background: var(--accent-soft); }
+        .file-card.active .file-card-name { color: var(--accent); }
+        .file-card.disabled { cursor: progress; }
+        .file-card.disabled.error { cursor: not-allowed; }
+        .file-card-icon {
+            width: 22px; height: 22px;
+            display: inline-flex; align-items: center; justify-content: center;
+            border-radius: 999px;
+            flex-shrink: 0;
+            background: var(--bg-panel-3);
+            color: var(--text-muted);
+        }
+        .file-card-icon.ready { background: rgba(52,211,153,0.15); color: var(--success); }
+        .file-card-icon.processing { background: var(--accent-soft); color: var(--accent); }
+        .file-card-icon.error { background: rgba(248,113,113,0.18); color: var(--danger); }
+        .file-card-icon .material-symbols-outlined { font-size: 14px; }
+        .file-card-icon.processing .material-symbols-outlined { animation: spin 1s linear infinite; }
+
+        .file-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .file-card-name { font-size: 11px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .file-card-meta { font-size: 9.5px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; }
+        .file-card-stage { color: var(--text-secondary); }
+        .file-card-error { color: var(--danger); }
+        .file-card-progress {
+            position: relative;
+            height: 3px;
+            background: var(--bg-panel-3);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .file-card-progress-bar {
+            position: absolute;
+            top: 0; left: 0; bottom: 0;
+            background: var(--accent);
+            transition: width 0.25s ease-out;
+        }
+        .file-card-actions {
+            display: flex;
+            gap: 2px;
+            opacity: 0;
+            transition: opacity 0.12s;
+        }
+        .file-card:hover .file-card-actions { opacity: 1; }
+        .file-card-action {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: var(--radius-sm);
+        }
+        .file-card-action:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .file-card-action.danger:hover { color: var(--danger); }
+
+        .files-panel-actions {
+            display: flex;
+            gap: 6px;
+            padding: 8px 10px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-panel);
+        }
+        .files-action-btn {
+            flex: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 6px 8px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color 0.12s, background-color 0.12s;
+        }
+        .files-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .files-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
         /* ---------- Preset chips ---------- */
         .preset-btn {
             transition: transform 0.15s, filter 0.15s, background-color 0.15s;
@@ -259,8 +475,7 @@
         .preset-btn:not(:disabled):hover { filter: brightness(1.15); }
         .preset-btn:not(:disabled).active {
             transform: scale(1.04);
-            border-color: rgba(255,255,255,0.15);
-            box-shadow: 0 0 0 3px rgba(91,156,255,0.18);
+            box-shadow: 0 0 0 3px rgba(65,101,138,0.22);
         }
         .preset-btn:disabled { opacity: 0.25 !important; filter: grayscale(100%); cursor: not-allowed; }
         /* Override light preset backgrounds for dark theme */
@@ -268,7 +483,7 @@
         .preset-btn.text-red-800  { color: #fca5a5 !important; }
         .preset-btn.bg-purple-100 { background-color: rgba(167,139,250,0.16) !important; }
         .preset-btn.text-purple-800 { color: #c4b5fd !important; }
-        .preset-btn.bg-blue-100   { background-color: rgba(91,156,255,0.16) !important; }
+        .preset-btn.bg-blue-100   { background-color: rgba(65,101,138,0.20) !important; }
         .preset-btn.text-blue-800 { color: #93c5fd !important; }
         .preset-btn.bg-indigo-100 { background-color: rgba(129,140,248,0.16) !important; }
         .preset-btn.text-indigo-800 { color: #a5b4fc !important; }
@@ -279,11 +494,30 @@
         .preset-btn.bg-amber-100  { background-color: rgba(251,191,36,0.16) !important; }
         .preset-btn.text-amber-800 { color: #fcd34d !important; }
 
+        /* Light theme: stronger saturation so presets stand out on white */
+        :root[data-theme="light"] .preset-btn.bg-red-100    { background-color: #fecaca !important; }
+        :root[data-theme="light"] .preset-btn.text-red-800  { color: #7f1d1d !important; }
+        :root[data-theme="light"] .preset-btn.bg-purple-100 { background-color: #ddd6fe !important; }
+        :root[data-theme="light"] .preset-btn.text-purple-800 { color: #5b21b6 !important; }
+        :root[data-theme="light"] .preset-btn.bg-blue-100   { background-color: #bfdbfe !important; }
+        :root[data-theme="light"] .preset-btn.text-blue-800 { color: #1e3a8a !important; }
+        :root[data-theme="light"] .preset-btn.bg-indigo-100 { background-color: #c7d2fe !important; }
+        :root[data-theme="light"] .preset-btn.text-indigo-800 { color: #312e81 !important; }
+        :root[data-theme="light"] .preset-btn.bg-green-100  { background-color: #bbf7d0 !important; }
+        :root[data-theme="light"] .preset-btn.text-green-800 { color: #14532d !important; }
+        :root[data-theme="light"] .preset-btn.bg-cyan-100   { background-color: #a5f3fc !important; }
+        :root[data-theme="light"] .preset-btn.text-cyan-800 { color: #164e63 !important; }
+        :root[data-theme="light"] .preset-btn.bg-amber-100  { background-color: #fde68a !important; }
+        :root[data-theme="light"] .preset-btn.text-amber-800 { color: #78350f !important; }
+
+        :root[data-theme="light"] .toggle-btn { background-color: #c8d0dc; color: #1f2937; }
+        :root[data-theme="light"] .toggle-btn:hover:not(:disabled) { background-color: #b8c0cd; }
+
         /* ---------- Badges ---------- */
         #qcBadge {
             background: rgba(52,211,153,0.15) !important;
             color: var(--success) !important;
-            border: 1px solid rgba(52,211,153,0.35) !important;
+            border: none !important;
             border-radius: 999px !important;
             padding: 4px 10px !important;
             backdrop-filter: blur(6px);
@@ -291,7 +525,7 @@
 
         /* ---------- Inspector card ---------- */
         #inspectorContainer {
-            background: linear-gradient(180deg, rgba(91,156,255,0.06), rgba(91,156,255,0)) !important;
+            background: linear-gradient(180deg, rgba(65,101,138,0.06), rgba(65,101,138,0)) !important;
             border-bottom: 1px solid var(--border) !important;
             border-radius: 0;
         }
@@ -322,24 +556,32 @@
         .attr-row .attr-val { font-size: 10px; color: var(--text-secondary); word-break: break-word; }
 
         /* ---------- Tabs ---------- */
-        #datasetInfoContainer .tab-btn {
-            transition: color 0.15s, border-color 0.15s, background-color 0.15s;
-        }
         #datasetInfoContainer button[id^="tab"] {
             background: transparent;
             border: none !important;
-            border-bottom: 2px solid transparent !important;
             color: var(--text-muted);
-            padding: 8px 4px;
-            font-size: 9px;
+            padding: 9px 4px;
+            font-size: 9.5px;
             font-weight: 700;
             letter-spacing: 0.1em;
             cursor: pointer;
+            transition: color 0.15s, background-color 0.15s;
+            position: relative;
         }
-        #datasetInfoContainer button[id^="tab"]:hover { color: var(--text-secondary); background: var(--bg-panel-3); }
+        #datasetInfoContainer button[id^="tab"]:hover { color: var(--text-primary); }
         #datasetInfoContainer button[id^="tab"].text-googleBlue {
-            color: var(--accent) !important;
-            border-bottom-color: var(--accent) !important;
+            color: var(--text-primary) !important;
+            background: var(--bg-panel-3) !important;
+        }
+        /* Active-tab indicator: a thin solid bar at the bottom — easier to read
+           than the previous low-contrast bottom border, especially in light mode. */
+        #datasetInfoContainer button[id^="tab"].text-googleBlue::after {
+            content: '';
+            position: absolute;
+            left: 12%; right: 12%; bottom: 0;
+            height: 2px;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
         }
 
         /* ---------- Plot area ---------- */
@@ -401,7 +643,7 @@
 
         @keyframes jellyFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-5px) rotate(-3deg); } }
         @keyframes jellyWiggle { 0%,100% { transform: rotate(-6deg) scale(1.05); } 50% { transform: rotate(6deg) scale(1.05); } }
-        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(91,156,255,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 12px rgba(91,156,255,0.5)); } }
+        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(65,101,138,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 12px rgba(65,101,138,0.5)); } }
         @keyframes jellyTyping { 0%,100% { transform: translateY(0) rotate(-2deg); } 25% { transform: translateY(-2px) rotate(2deg); } 50% { transform: translateY(-3px) rotate(-2deg); } 75% { transform: translateY(-1px) rotate(3deg); } }
         .jelly-img { display: block; object-fit: contain; animation: jellyFloat 3s ease-in-out infinite; }
         #jellyToggle:hover .jelly-img { animation: jellyWiggle 0.6s ease-in-out infinite; }
@@ -417,10 +659,10 @@
             word-wrap: break-word;
         }
         .jelly-bubble.user {
-            background: linear-gradient(180deg, rgba(91,156,255,0.28), rgba(91,156,255,0.18));
-            color: #dde8ff;
+            background: #41658a;
+            color: #ffffff;
             align-self: flex-end;
-            border: 1px solid rgba(91,156,255,0.3);
+            border: 1px solid rgba(65,101,138,0.5);
             border-bottom-right-radius: 3px;
         }
         .jelly-bubble.jelly {
@@ -459,15 +701,45 @@
                     <img src="/static/icon.png" alt="Logo" class="w-5 h-5"> Glider Playground
                 </div>
 
-                <div class="toolbar-group">
+                <div class="toolbar-group" id="datasetGroup" style="position: relative;">
                     <span class="group-label">
-                        Dataset
-                        <span class="info-dot" data-tip="Select a NetCDF file from your data folder. Use the folder icon to change folders."><span class="material-symbols-outlined">info</span></span>
+                        Files
+                        <span class="info-dot" data-tip="Each file is processed once. The map, 3D view and plots all read pre-computed arrays in memory after that, so switching files and panning the plot is fast."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <select id="dataset" class="p-1.5 w-48 transition-all"></select>
-                    <button id="openFolderBtn" class="p-1.5 text-gray-400 hover:text-googleBlue transition-colors flex items-center" title="Open data folder">
-                        <span class="material-symbols-outlined text-[18px]">folder_open</span>
+                    <button id="datasetTrigger" class="dataset-trigger" type="button" aria-haspopup="dialog">
+                        <span class="material-symbols-outlined text-[16px]" id="datasetTriggerIcon">database</span>
+                        <span id="datasetTriggerLabel" class="dataset-trigger-label">No files</span>
+                        <span id="datasetTriggerCount" class="dataset-trigger-count" style="display:none;"></span>
+                        <span class="material-symbols-outlined text-[16px] dataset-trigger-caret">expand_more</span>
                     </button>
+                    <select id="dataset" hidden></select>
+                    <input type="file" id="filesUploadInput" multiple accept=".nc" hidden>
+
+                    <div id="filesPanel" class="files-panel" hidden role="dialog" aria-label="Files">
+                        <div class="files-panel-header">
+                            <span class="files-panel-title">Files</span>
+                            <button id="filesPanelCloseBtn" class="files-panel-close" type="button" title="Close">
+                                <span class="material-symbols-outlined text-[14px]">close</span>
+                            </button>
+                        </div>
+                        <div id="filesList" class="files-list"></div>
+                        <div id="filesEmpty" class="files-empty">
+                            <span class="material-symbols-outlined" style="font-size: 28px; color: var(--text-muted);">inbox</span>
+                            <p>No files yet.</p>
+                            <p class="files-empty-hint">Add NetCDF files or load the demo to get started.</p>
+                        </div>
+                        <div class="files-panel-actions">
+                            <button id="addFilesBtn" class="files-action-btn" type="button">
+                                <span class="material-symbols-outlined text-[15px]">add</span> Add files
+                            </button>
+                            <button id="addFolderBtn" class="files-action-btn" type="button">
+                                <span class="material-symbols-outlined text-[15px]">folder_open</span> Add folder
+                            </button>
+                            <button id="demoFilesBtn" class="files-action-btn" type="button" title="Download two example NetCDF files">
+                                <span class="material-symbols-outlined text-[15px]">cloud_download</span> Demo
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="group-divider"></div>
@@ -477,7 +749,7 @@
                         Presets
                         <span class="info-dot" data-tip="One-click templates for common ocean plots. Greyed-out presets need variables your file doesn't have."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto flex-nowrap py-1 flex-1 min-w-0 custom-scrollbar transition-opacity duration-200"></div>
+                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto flex-nowrap py-1 px-2 flex-1 min-w-0 custom-scrollbar transition-opacity duration-200"></div>
                 </div>
             </div>
 
@@ -550,10 +822,10 @@
             <div class="toolbar-group" id="ctdContainer" style="display: none;">
                 <span class="group-label">
                     CTD
-                    <span class="info-dot" data-tip="Interp: time-aligns PRES/TEMP/CNDC with other sensors (filled points get QC=5). QC: flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, cross-flags 5σ conductivity outliers as bad."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot" data-tip="Interpolate: time-aligns PRES/TEMP/CNDC with other sensors (filled points get QC=5). Clean: flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
                 </span>
-                <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interp</button>
-                <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Custom CTD QC: flag 0.0 fill values (9), auto-scale CNDC S/m → mS/cm, cross-flag 5σ CNDC outliers (4) on PRES/TEMP/CNDC.">Clean</button>
+                <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
+                <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
             </div>
 
             <div id="profileDivider" class="group-divider" style="display: none;"></div>
@@ -653,14 +925,31 @@
 
                     <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
                         <div class="text-center">
-                            <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">folder_off</span>
-                            <p class="text-sm mt-2" style="color: var(--text-secondary);">No NetCDF (.nc) files found.</p>
-                            <p class="text-[10px]" style="color: var(--text-muted);">Select a different folder or try the demo data.</p>
+                            <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">database_off</span>
+                            <p class="text-sm mt-2" style="color: var(--text-secondary);">No NetCDF files added yet.</p>
+                            <p class="text-[10px]" style="color: var(--text-muted);">Add your own .nc files (or a folder of them), or try the demo data.</p>
                         </div>
-                        <button id="downloadDemoBtn" class="px-6 py-2.5 text-xs font-medium flex items-center gap-2 border-none cursor-pointer" style="background: var(--accent); color: #fff; border-radius: var(--radius-md); transition: filter 0.15s;" onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter=''">
-                            <span class="material-symbols-outlined text-sm">cloud_download</span>
-                            Download Demo Files
-                        </button>
+                        <div class="flex gap-2">
+                            <button id="addFromPromptBtn" class="px-5 py-2.5 text-xs font-medium flex items-center gap-2 border-none cursor-pointer" style="background: var(--accent); color: #fff; border-radius: var(--radius-md); transition: filter 0.15s;" onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter=''">
+                                <span class="material-symbols-outlined text-sm">add</span>
+                                Add Files
+                            </button>
+                            <button id="downloadDemoBtn" class="px-5 py-2.5 text-xs font-medium flex items-center gap-2 border-none cursor-pointer" style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-md); transition: border-color 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                                <span class="material-symbols-outlined text-sm">cloud_download</span>
+                                Demo Files
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="processingOverlay" class="hidden flex flex-col items-center gap-3 z-40 absolute inset-0 m-auto h-fit pointer-events-none">
+                        <div style="width: 28px; height: 28px; border: 3px solid var(--bg-panel-3); border-top: 3px solid var(--accent); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <div class="text-center">
+                            <p class="text-sm" style="color: var(--text-primary);" id="processingTitle">Processing file…</p>
+                            <p class="text-[10px] mt-1" style="color: var(--text-muted);" id="processingStage">Reading variables</p>
+                        </div>
+                        <div style="width: 220px; height: 4px; background: var(--bg-panel-3); border-radius: 999px; overflow: hidden;">
+                            <div id="processingBar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.25s ease-out;"></div>
+                        </div>
                     </div>
 
                     <div id="qcBadge" class="hidden absolute top-6 right-6 text-[10px] font-bold px-3 py-1.5 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
@@ -703,9 +992,8 @@
     <div id="jellyPanel" class="fixed bottom-[68px] right-4 z-[100] w-72 max-w-[95vw] bg-white border border-gray-200 rounded-lg flex-col hidden" style="height: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
         <div class="flex items-center justify-between px-3 py-2 rounded-t-lg border-b border-gray-200 bg-[#f8f9fa]">
             <div class="flex items-center gap-2">
-                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-5 h-5" />
+                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-12 h-12" />
                 <span class="font-semibold text-xs text-gray-700">Jelly</span>
-                <span class="text-[9px] text-gray-400" id="jellyElapsed"></span>
             </div>
             <div class="flex items-center gap-0.5">
                 <button id="jellyKeyBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Manage API key">
@@ -720,9 +1008,9 @@
 
         <div id="jellyKeyPrompt" class="p-3 flex-col gap-2 hidden border-b border-gray-100 bg-[#f8f9fa]">
             <p class="text-[11px] text-gray-600 leading-snug">Paste your OpenAI API key so Jelly can think. Saved locally in <code class="bg-white px-1 rounded border border-gray-200">.env</code>. Never leaves your machine.</p>
-            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#1a73e8] w-full" />
+            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#41658a] w-full" />
             <div class="flex gap-2">
-                <button id="jellyKeySave" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
+                <button id="jellyKeySave" class="bg-[#41658a] hover:bg-[#2e4a68] text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
                 <button id="jellyKeyDelete" class="toggle-btn px-3 py-1.5 rounded text-xs border-none cursor-pointer hidden">Delete</button>
             </div>
             <p id="jellyKeyStatus" class="text-[10px] text-gray-500"></p>
@@ -731,35 +1019,12 @@
         <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs"></div>
 
         <form id="jellyForm" class="p-2 border-t border-gray-100 flex gap-2 shrink-0 bg-[#f8f9fa] rounded-b-lg">
-            <input id="jellyInput" type="text" placeholder="Ask Jelly anything…" class="flex-grow border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#1a73e8] bg-white" autocomplete="off" />
-            <button type="submit" id="jellySend" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
+            <input id="jellyInput" type="text" placeholder="Ask Jelly anything…" class="flex-grow border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#41658a] bg-white" autocomplete="off" />
+            <button type="submit" id="jellySend" class="bg-[#41658a] hover:bg-[#2e4a68] text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
         </form>
     </div>
 
     <script>
-        // --- Shared Console Logging ---
-        const consoleStyles = {
-            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
-            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
-        };
-
-        const originalFetch = window.fetch;
-        window.fetch = async function(...args) {
-            const response = await originalFetch.apply(this, args);
-            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
-            if (url.includes('/api/')) {
-                const processTime = response.headers.get('X-Process-Time');
-                if (processTime) {
-                    const timeInSeconds = parseFloat(processTime).toFixed(4);
-                    const path = new URL(url, window.location.origin).pathname;
-                    console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
-                }
-            }
-            return response;
-        };
-        // ------------------------------
 
         const tabVariables = document.getElementById('tabVariables');
         const tabAttributes = document.getElementById('tabAttributes');
@@ -888,8 +1153,7 @@
             preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'turbid', invert: true }
         };
 
-        const COOKIE_FOLDER = 'gp_folder';
-        const COOKIE_FILE = 'gp_file';
+        const COOKIE_FILE = 'gp_file_id';
         const COOKIE_THEME = 'gp_theme';
         const COOKIE_DAYS = 365;
 
@@ -1327,43 +1591,30 @@
         tab3D.addEventListener('click', () => switchTab('tab3D'));
 
         async function init() {
-            let isServer = false;
             try {
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
-                isServer = !!cfg.is_server;
-                if (isServer) {
-                    document.getElementById('openFolderBtn').style.display = 'none';
-                }
+                isServerMode = !!cfg.is_server;
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }
 
-            if (!isServer) {
-                const savedFolder = getCookie(COOKIE_FOLDER);
-                if (savedFolder) {
-                    try {
-                        const res = await fetch(`/api/set_folder?path=${encodeURIComponent(savedFolder)}`, { method: 'POST' });
-                        const data = await res.json();
-                        if (data.status !== 'success') {
-                            clearCookie(COOKIE_FOLDER);
-                            clearCookie(COOKIE_FILE);
-                        }
-                    } catch (e) {
-                        console.error("Failed to restore folder:", e);
-                    }
-                }
+            if (isServerMode) {
+                // Native folder/file pickers aren't available across the network.
+                addFolderBtn.style.display = 'none';
             }
 
             renderPresetsDropdown();
-            await checkFilesAndTogglePrompt();
+            await refreshFiles({ activate: true });
         }
+
+        let isServerMode = false;
 
         datasetSelect.addEventListener('change', handleDatasetChange);
 
-        async function loadDatasetInfo(filename) {
+        async function loadDatasetInfo(fileId) {
             try {
-                const res = await fetch(`/api/dataset_info?filename=${encodeURIComponent(filename)}`);
+                const res = await fetch(`/api/dataset_info?id=${encodeURIComponent(fileId)}`);
                 const data = await res.json();
                 
                 varList.innerHTML = '';
@@ -1447,10 +1698,10 @@
         }
 
         async function loadVariables() {
-            const filename = datasetSelect.value;
-            if (!filename) return;
-            
-            const response = await fetch(`/api/variables?filename=${encodeURIComponent(filename)}`);
+            const fileId = datasetSelect.value;
+            if (!fileId) return;
+
+            const response = await fetch(`/api/variables?id=${encodeURIComponent(fileId)}`);
             const data = await response.json();
             
             const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
@@ -1463,8 +1714,25 @@
             });
 
             if (hasAnyCtd) {
-                ctdContainer.style.display = 'flex';
-                ctdDivider.style.display = 'block';
+                const activeRec = fileById(datasetSelect.value);
+                const interpUseful = !!(activeRec && activeRec.ctd_interp_recommended);
+                const cleanUseful  = !!(activeRec && activeRec.ctd_clean_recommended);
+
+                ctdInterpBtn.style.display = interpUseful ? '' : 'none';
+                ctdQcBtn.style.display     = cleanUseful  ? '' : 'none';
+
+                // Hide the whole section if neither button does anything for this file.
+                const anyCtdUseful = interpUseful || cleanUseful;
+                ctdContainer.style.display = anyCtdUseful ? 'flex' : 'none';
+                ctdDivider.style.display   = anyCtdUseful ? 'block' : 'none';
+
+                // First time we activate this file apply recommended defaults.
+                // Re-selecting the same file later doesn't override user's choice.
+                if (activeRec && activeRec.id !== _ctdDefaultsAppliedFor) {
+                    _ctdDefaultsAppliedFor = activeRec.id;
+                    updateToggleBtn(ctdInterpBtn, interpUseful);
+                    updateToggleBtn(ctdQcBtn, cleanUseful);
+                }
             } else {
                 ctdContainer.style.display = 'none';
                 ctdDivider.style.display = 'none';
@@ -1588,10 +1856,10 @@
         const DIR_ICONS = { 1: 'arrow_upward', '-1': 'arrow_downward', 0: 'swap_horiz' };
         const DIR_LABELS = { 1: 'Ascending', '-1': 'Descending', 0: 'Transect' };
 
-        async function loadProfiles(filename) {
+        async function loadProfiles(fileId) {
             profileList = [];
             try {
-                const res = await fetch(`/api/profiles?filename=${encodeURIComponent(filename)}`);
+                const res = await fetch(`/api/profiles?id=${encodeURIComponent(fileId)}`);
                 const data = await res.json();
                 if (data.has_profiles && data.profiles.length > 0) {
                     profileList = data.profiles;
@@ -1687,14 +1955,14 @@
         });
 
         async function loadMapImage() {
-            const selectedDataset = datasetSelect.value;
-            if (!selectedDataset) return;
-            
+            const fileId = datasetSelect.value;
+            if (!fileId) return;
+
             gliderMap.classList.remove('hidden');
             mapEmptyText.classList.add('hidden');
-            
-            gliderMap.src = `/static/map_view.html?filename=${encodeURIComponent(selectedDataset)}&theme=${getCurrentTheme()}`;
-            currentMapDataset = selectedDataset;
+
+            gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            currentMapDataset = fileId;
         }
 
         const resetInspectorState = () => {
@@ -1703,104 +1971,538 @@
         };
         resetInspectorBtn.addEventListener('click', resetInspectorState);
 
+        // ===== Files panel =====
         const demoPrompt = document.getElementById('demoPrompt');
         const downloadDemoBtn = document.getElementById('downloadDemoBtn');
+        const addFromPromptBtn = document.getElementById('addFromPromptBtn');
+        const datasetTrigger = document.getElementById('datasetTrigger');
+        const datasetTriggerLabel = document.getElementById('datasetTriggerLabel');
+        const datasetTriggerIcon = document.getElementById('datasetTriggerIcon');
+        const datasetTriggerCount = document.getElementById('datasetTriggerCount');
+        const filesPanel = document.getElementById('filesPanel');
+        const filesPanelCloseBtn = document.getElementById('filesPanelCloseBtn');
+        const filesList = document.getElementById('filesList');
+        const filesEmpty = document.getElementById('filesEmpty');
+        const addFilesBtn = document.getElementById('addFilesBtn');
+        const addFolderBtn = document.getElementById('addFolderBtn');
+        const demoFilesBtn = document.getElementById('demoFilesBtn');
+        const filesUploadInput = document.getElementById('filesUploadInput');
+        const processingOverlay = document.getElementById('processingOverlay');
+        const processingTitle = document.getElementById('processingTitle');
+        const processingStage = document.getElementById('processingStage');
+        const processingBar = document.getElementById('processingBar');
 
-        async function checkFilesAndTogglePrompt() {
-            const fileRes = await fetch('/api/files');
-            const fileData = await fileRes.json();
-            
+        let fileRecords = [];               // last response from /api/files
+        let pollingTimer = null;            // active when any file is processing
+        let pendingActivateId = null;       // file we want to load once it's ready
+        let _ctdDefaultsAppliedFor = null;  // file id whose CTD defaults were applied
+
+        function fileById(id) {
+            return fileRecords.find(f => f.id === id);
+        }
+
+        function fileByName(name) {
+            return fileRecords.find(f => f.name === name);
+        }
+
+        function escapeHtmlSafe(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        function formatSize(bytes) {
+            if (!bytes) return '';
+            const units = ['B','KB','MB','GB'];
+            let v = bytes, i = 0;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+        }
+
+        function renderFilesList() {
+            filesList.innerHTML = '';
+            if (fileRecords.length === 0) {
+                filesList.style.display = 'none';
+                filesEmpty.style.display = 'flex';
+                return;
+            }
+            filesList.style.display = 'block';
+            filesEmpty.style.display = 'none';
+
+            const activeId = datasetSelect.value;
+            for (const f of fileRecords) {
+                const card = document.createElement('div');
+                const isActive = f.id === activeId;
+                card.className = 'file-card' + (isActive ? ' active' : '') +
+                    (f.status === 'processing' || f.status === 'pending' ? ' disabled' : '') +
+                    (f.status === 'error' ? ' disabled error' : '');
+                card.dataset.id = f.id;
+
+                let iconClass = '';
+                let iconName = 'database';
+                if (f.status === 'ready') { iconClass = 'ready'; iconName = 'check'; }
+                else if (f.status === 'processing' || f.status === 'pending') { iconClass = 'processing'; iconName = 'progress_activity'; }
+                else if (f.status === 'error') { iconClass = 'error'; iconName = 'error'; }
+
+                const sizeStr = formatSize(f.size);
+                const sourceTag = f.uploaded ? '· uploaded' : '';
+                let metaLine = '';
+                if (f.status === 'ready') {
+                    metaLine = `<span>${escapeHtmlSafe(sizeStr)}</span>${sourceTag ? `<span>${sourceTag}</span>` : ''}`;
+                } else if (f.status === 'error') {
+                    metaLine = `<span class="file-card-error" title="${escapeHtmlSafe(f.error)}">${escapeHtmlSafe(f.error || 'Failed')}</span>`;
+                } else {
+                    metaLine = `<span class="file-card-stage">${escapeHtmlSafe(f.stage || 'Queued')}</span><span>${f.progress}%</span>`;
+                }
+
+                card.innerHTML = `
+                    <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
+                    <div class="file-card-body">
+                        <div class="file-card-name" title="${escapeHtmlSafe(f.path)}">${escapeHtmlSafe(f.name)}</div>
+                        <div class="file-card-meta">${metaLine}</div>
+                        ${(f.status === 'processing' || f.status === 'pending') ? `
+                            <div class="file-card-progress"><div class="file-card-progress-bar" style="width: ${Math.max(2, f.progress)}%;"></div></div>
+                        ` : ''}
+                    </div>
+                    <div class="file-card-actions">
+                        ${f.status === 'error' || f.status === 'ready' ? `<button class="file-card-action" data-act="refresh" title="Reprocess this file"><span class="material-symbols-outlined text-[14px]">refresh</span></button>` : ''}
+                        <button class="file-card-action danger" data-act="remove" title="Remove from list"><span class="material-symbols-outlined text-[14px]">delete</span></button>
+                    </div>
+                `;
+                filesList.appendChild(card);
+            }
+        }
+
+        function updateTrigger() {
+            const activeId = datasetSelect.value;
+            const active = fileById(activeId);
+            const processingCount = fileRecords.filter(f => f.status === 'processing' || f.status === 'pending').length;
+            const errorCount = fileRecords.filter(f => f.status === 'error').length;
+
+            if (active) {
+                datasetTriggerLabel.textContent = active.name;
+                datasetTriggerLabel.title = active.path;
+                if (active.status === 'ready') {
+                    datasetTriggerIcon.textContent = 'database';
+                    datasetTriggerIcon.style.color = '';
+                    datasetTriggerIcon.style.animation = '';
+                } else if (active.status === 'processing' || active.status === 'pending') {
+                    datasetTriggerIcon.textContent = 'progress_activity';
+                    datasetTriggerIcon.style.color = 'var(--accent)';
+                    datasetTriggerIcon.style.animation = 'spin 1s linear infinite';
+                } else if (active.status === 'error') {
+                    datasetTriggerIcon.textContent = 'error';
+                    datasetTriggerIcon.style.color = 'var(--danger)';
+                }
+            } else {
+                datasetTriggerLabel.textContent = fileRecords.length ? 'Select a file' : 'No files';
+                datasetTriggerLabel.title = '';
+                datasetTriggerIcon.textContent = 'database';
+                datasetTriggerIcon.style.color = '';
+                datasetTriggerIcon.style.animation = '';
+            }
+
+            if (processingCount + errorCount > 0) {
+                datasetTriggerCount.textContent = errorCount > 0
+                    ? `${errorCount}!`
+                    : `${processingCount}…`;
+                datasetTriggerCount.style.display = '';
+                datasetTriggerCount.style.background = errorCount > 0 ? 'rgba(248,113,113,0.18)' : 'var(--accent-soft)';
+                datasetTriggerCount.style.color = errorCount > 0 ? 'var(--danger)' : 'var(--accent)';
+            } else {
+                datasetTriggerCount.style.display = 'none';
+            }
+        }
+
+        function syncDatasetOptions() {
+            // Include non-ready files too: the <select> is hidden and only
+            // used to track the active id. Excluding processing files caused
+            // the value to snap back to the first ready file mid-poll, which
+            // looked like the UI "swapping back" to the previous dataset.
+            const previousValue = datasetSelect.value;
             datasetSelect.innerHTML = '';
-            
-            if (fileData.files.length === 0) {
+            for (const f of fileRecords) {
+                const opt = new Option(f.name, f.id);
+                opt.dataset.name = f.name;
+                opt.dataset.path = f.path;
+                datasetSelect.add(opt);
+            }
+            if (previousValue && Array.from(datasetSelect.options).some(o => o.value === previousValue)) {
+                datasetSelect.value = previousValue;
+            }
+        }
+
+        function showProcessingOverlay(rec) {
+            if (!rec) {
+                processingOverlay.classList.add('hidden');
+                return;
+            }
+            processingOverlay.classList.remove('hidden');
+            emptyState.classList.add('hidden');
+            demoPrompt.classList.add('hidden');
+            plotIframe.classList.add('hidden');
+            qcBadge.classList.add('hidden');
+            downloadBtn.classList.add('hidden');
+            processingTitle.textContent = rec.status === 'error'
+                ? 'Failed to process file'
+                : `Processing ${rec.name}…`;
+            processingStage.textContent = rec.status === 'error'
+                ? (rec.error || 'Unknown error')
+                : (rec.stage || 'Queued');
+            processingBar.style.width = `${Math.max(2, rec.progress)}%`;
+            processingBar.style.background = rec.status === 'error' ? 'var(--danger)' : 'var(--accent)';
+        }
+
+        function hideProcessingOverlay() {
+            processingOverlay.classList.add('hidden');
+        }
+
+        async function refreshFiles({ activate = false } = {}) {
+            try {
+                const res = await fetch('/api/files');
+                const data = await res.json();
+                fileRecords = data.files || [];
+            } catch (e) {
+                console.error('Failed to refresh files:', e);
+                return;
+            }
+
+            syncDatasetOptions();
+            renderFilesList();
+            updateTrigger();
+
+            if (activate) {
+                const saved = getCookie(COOKIE_FILE);
+                let target = saved && fileById(saved) ? saved : null;
+                if (!target) {
+                    const firstReady = fileRecords.find(f => f.status === 'ready');
+                    target = firstReady ? firstReady.id : null;
+                }
+                if (target) {
+                    await selectFile(target);
+                }
+            }
+
+            // Plot-area state is mutually exclusive: at most ONE of
+            // {demoPrompt, processingOverlay, emptyState, plotIframe} is visible.
+            // Drive it from the active file's status here so we never end up
+            // with two overlays stacked on top of each other.
+            const activeId = datasetSelect.value;
+            const active = activeId ? fileById(activeId) : null;
+
+            if (fileRecords.length === 0) {
                 demoPrompt.classList.remove('hidden');
                 emptyState.classList.add('hidden');
-                datasetSelect.disabled = true;
+                hideProcessingOverlay();
+                plotIframe.classList.add('hidden');
                 resetBtn.disabled = true;
                 resetBtn.classList.add('opacity-50');
             } else {
                 demoPrompt.classList.add('hidden');
-                emptyState.classList.remove('hidden');
-                datasetSelect.disabled = false;
                 resetBtn.disabled = false;
                 resetBtn.classList.remove('opacity-50');
-                
-                fileData.files.forEach(f => datasetSelect.add(new Option(f, f)));
 
-                const savedFile = getCookie(COOKIE_FILE);
-                if (savedFile && fileData.files.includes(savedFile)) {
-                    datasetSelect.value = savedFile;
+                if (active && active.status === 'ready' && active.id === pendingActivateId) {
+                    pendingActivateId = null;
+                    hideProcessingOverlay();
+                    await handleDatasetChange();
+                } else if (active && (active.status === 'processing' || active.status === 'pending' || active.status === 'error')) {
+                    showProcessingOverlay(active);
+                } else if (active && active.status === 'ready') {
+                    hideProcessingOverlay();
+                    // emptyState only shows when iframe isn't yet loaded; updatePlot hides it when it kicks off.
+                    if (plotIframe.classList.contains('hidden')) emptyState.classList.remove('hidden');
+                } else {
+                    // No active selection — invite user to pick one.
+                    hideProcessingOverlay();
+                    plotIframe.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
                 }
+            }
 
-                await handleDatasetChange();
+            const anyProcessing = fileRecords.some(f => f.status === 'processing' || f.status === 'pending');
+            if (anyProcessing) {
+                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), 700);
+            } else if (pollingTimer) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
             }
         }
 
-        async function loadLocation(filename) {
+        async function selectFile(fileId) {
+            const rec = fileById(fileId);
+            if (!rec) return;
+
+            if (rec.status === 'error') {
+                datasetSelect.value = '';
+                showProcessingOverlay(rec);
+                updateTrigger();
+                renderFilesList();
+                return;
+            }
+
+            // Make sure the option exists, even if not ready (we want value to track).
+            if (!Array.from(datasetSelect.options).some(o => o.value === fileId)) {
+                const opt = new Option(rec.name, fileId);
+                opt.dataset.name = rec.name;
+                opt.dataset.path = rec.path;
+                datasetSelect.add(opt);
+            }
+            datasetSelect.value = fileId;
+            setCookie(COOKIE_FILE, fileId);
+
+            updateTrigger();
+            renderFilesList();
+
+            if (rec.status === 'ready') {
+                hideProcessingOverlay();
+                await handleDatasetChange();
+            } else {
+                // File is still processing — tear down any visualisations
+                // from the previously-loaded file so the user isn't looking
+                // at stale plot/map/3D data while waiting. The overlay only
+                // covers the plot area, so the side panels would otherwise
+                // keep showing the old file's contents.
+                pendingActivateId = fileId;
+                plotIframe.src = '';
+                plotIframe.classList.add('hidden');
+                isPlotting = false;
+                plotQueued = false;
+                const iframe3D = document.getElementById('iframe3D');
+                if (iframe3D) iframe3D.src = '';
+                currentMapDataset = null;
+                gliderMap.src = '';
+                gliderMap.classList.add('hidden');
+                mapEmptyText.classList.remove('hidden');
+                showProcessingOverlay(rec);
+                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), 700);
+            }
+        }
+
+        async function loadLocation(fileId) {
             currentLocation = null;
             try {
-                const res = await fetch(`/api/location?filename=${encodeURIComponent(filename)}`);
+                const res = await fetch(`/api/location?id=${encodeURIComponent(fileId)}`);
                 const data = await res.json();
                 if (!data.error) currentLocation = data;
             } catch (e) { console.error('Failed to load location:', e); }
         }
 
         async function handleDatasetChange() {
+            // Abort any in-flight plot fetch from the previously selected file.
+            // Without this, swapping files while a slow request (e.g. CTD
+            // interp) is loading can leave the UI stuck on "Fetching data..."
+            // until the old fetch finishes.
+            plotIframe.src = '';
+            isPlotting = false;
+            plotQueued = false;
+
             resetPlotState(true);
             currentProfileNum = null;
             parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
-            const filename = datasetSelect.value;
-            if (!filename) return;
+            const fileId = datasetSelect.value;
+            if (!fileId) return;
 
-            setCookie(COOKIE_FILE, filename);
-
-            await loadDatasetInfo(filename);
+            await loadDatasetInfo(fileId);
             await loadMapImage();
             await loadVariables();
-            await loadProfiles(filename);
-            loadLocation(filename);
+            await loadProfiles(fileId);
+            loadLocation(fileId);
 
             switchTab('tab3D');
 
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) {
-                iframe3D.src = `/static/3d_view.html?filename=${encodeURIComponent(filename)}&theme=${getCurrentTheme()}`;
+                iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             }
 
             updatePlot();
         }
 
-        downloadDemoBtn.addEventListener('click', async () => {
-            setLoading(true);
-            try {
-                const res = await fetch('/api/download_demo', { method: 'POST' });
-                const data = await res.json();
-                
-                if (data.status === "success") {
-                    await checkFilesAndTogglePrompt();
-                } else {
-                    alert("Download failed: " + data.message);
+        // --- File panel actions ---
+
+        function openFilesPanel() {
+            filesPanel.hidden = false;
+            datasetTrigger.classList.add('open');
+            renderFilesList();
+        }
+
+        function closeFilesPanel() {
+            filesPanel.hidden = true;
+            datasetTrigger.classList.remove('open');
+        }
+
+        datasetTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (filesPanel.hidden) openFilesPanel(); else closeFilesPanel();
+        });
+
+        filesPanelCloseBtn.addEventListener('click', () => closeFilesPanel());
+
+        document.addEventListener('click', (e) => {
+            if (filesPanel.hidden) return;
+            if (e.target.closest('#filesPanel') || e.target.closest('#datasetTrigger')) return;
+            closeFilesPanel();
+        });
+
+        filesList.addEventListener('click', async (e) => {
+            const card = e.target.closest('.file-card');
+            if (!card) return;
+            const id = card.dataset.id;
+            const actBtn = e.target.closest('.file-card-action');
+            if (actBtn) {
+                e.stopPropagation();
+                const action = actBtn.dataset.act;
+                if (action === 'remove') {
+                    await fetch(`/api/files/${id}`, { method: 'DELETE' });
+                    // Clear state if the deleted file was active OR pending-activate.
+                    const wasActive = datasetSelect.value === id || pendingActivateId === id;
+                    if (wasActive) {
+                        pendingActivateId = null;
+                        datasetSelect.value = '';
+                        clearCookie(COOKIE_FILE);
+                        currentMapDataset = null;
+                        gliderMap.classList.add('hidden');
+                        mapEmptyText.classList.remove('hidden');
+                        plotIframe.classList.add('hidden');
+                        plotIframe.src = '';
+                        isPlotting = false;
+                        plotQueued = false;
+                        emptyState.classList.remove('hidden');
+                        datasetInfoContainer.classList.add('hidden');
+                        statsEmptyState.classList.remove('hidden');
+                    }
+                    await refreshFiles();
+                    // After refresh, if we just cleared the active file try to
+                    // fall back to the first ready file rather than leaving the
+                    // user on an empty screen.
+                    if (wasActive && !datasetSelect.value) {
+                        const nextReady = fileRecords.find(f => f.status === 'ready' && f.id !== id);
+                        if (nextReady) await selectFile(nextReady.id);
+                    }
+                } else if (action === 'refresh') {
+                    await fetch(`/api/files/refresh/${id}`, { method: 'POST' });
+                    await refreshFiles();
                 }
-            } catch (err) {
-                console.error("Demo download error:", err);
+                return;
+            }
+            // Card body click → activate
+            await selectFile(id);
+            closeFilesPanel();
+        });
+
+        async function pickAndAddFiles() {
+            if (isServerMode) {
+                filesUploadInput.click();
+                return;
+            }
+            try {
+                const res = await fetch('/api/files/pick', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'cancelled') return;
+                if (data.status === 'error') {
+                    // Fall back to browser upload — picker may not be available.
+                    filesUploadInput.click();
+                    return;
+                }
+                await refreshFiles();
+                const firstNew = (data.results || []).find(r => r.status === 'success');
+                if (firstNew && firstNew.file && !datasetSelect.value) {
+                    await selectFile(firstNew.file.id);
+                }
+            } catch (e) {
+                console.error('File pick failed:', e);
+                filesUploadInput.click();
+            }
+        }
+
+        async function pickAndAddFolder() {
+            if (isServerMode) return; // hidden in server mode
+            try {
+                const res = await fetch('/api/files/pick_folder', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'cancelled') return;
+                if (data.status === 'empty') {
+                    alert(`No .nc files found in: ${data.path}`);
+                    return;
+                }
+                if (data.status === 'error') {
+                    alert(`Failed to read folder: ${data.message}`);
+                    return;
+                }
+                await refreshFiles();
+                const firstNew = (data.results || []).find(r => r.status === 'success');
+                if (firstNew && firstNew.file && !datasetSelect.value) {
+                    await selectFile(firstNew.file.id);
+                }
+            } catch (e) {
+                console.error('Folder pick failed:', e);
+            }
+        }
+
+        async function uploadFiles(fileList) {
+            if (!fileList || !fileList.length) return;
+            const fd = new FormData();
+            for (const f of fileList) fd.append('files', f);
+            try {
+                const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+                await refreshFiles();
+                const firstNew = (data.results || []).find(r => r.status === 'success');
+                if (firstNew && firstNew.file && !datasetSelect.value) {
+                    await selectFile(firstNew.file.id);
+                }
+            } catch (e) {
+                console.error('Upload failed:', e);
+            }
+        }
+
+        addFilesBtn.addEventListener('click', () => pickAndAddFiles());
+        addFolderBtn.addEventListener('click', () => pickAndAddFolder());
+        filesUploadInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            await uploadFiles(files);
+        });
+
+        addFromPromptBtn.addEventListener('click', () => pickAndAddFiles());
+
+        demoFilesBtn.addEventListener('click', async () => {
+            demoFilesBtn.disabled = true;
+            try {
+                const res = await fetch('/api/files/demo', { method: 'POST' });
+                const data = await res.json();
+                if (data.status !== 'success' && data.status !== undefined && data.status !== 'success') {
+                    if (data.message) alert(`Demo download failed: ${data.message}`);
+                }
+                await refreshFiles();
+                const firstNew = (data.results || []).find(r => r.status === 'success');
+                if (firstNew && firstNew.file && !datasetSelect.value) {
+                    await selectFile(firstNew.file.id);
+                }
+            } catch (e) {
+                console.error('Demo download failed:', e);
             } finally {
-                setLoading(false);
+                demoFilesBtn.disabled = false;
             }
         });
+
+        downloadDemoBtn.addEventListener('click', () => demoFilesBtn.click());
 
         async function updatePlot() {
             if (isPlotting) { plotQueued = true; return; }
 
             setLoading(true);
             resetInspectorState();
-            
+
             baseCMin = null; baseCMax = null;
 
             try {
-                if (!xSelect.value) { setLoading(false); return; }
+                if (!datasetSelect.value || !xSelect.value) { setLoading(false); return; }
+                hideProcessingOverlay();
                 
                 const params = new URLSearchParams({
-                    filename: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
+                    id: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
                     c_var: cVarSelect.value + (calcMldBtn.classList.contains('active') ? '|mld' : ''), cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
                     apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
                     highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active'),
@@ -1834,7 +2536,8 @@
 
         function setLoading(isLoading) {
             isPlotting = isLoading;
-            [resetBtn, datasetSelect].forEach(b => b.disabled = isLoading);
+            resetBtn.disabled = isLoading;
+            datasetTrigger.disabled = isLoading;
             if (isLoading) {
                 presetContainer.classList.add('opacity-50', 'pointer-events-none');
             } else {
@@ -1855,19 +2558,6 @@
             }
         });
 
-        document.getElementById('openFolderBtn').addEventListener('click', async () => {
-            try {
-                const res = await fetch('/api/open_folder', { method: 'POST' });
-                const data = await res.json();
-                if (data.status === "success") {
-                    setCookie(COOKIE_FOLDER, data.path);
-                    clearCookie(COOKIE_FILE);
-                    await checkFilesAndTogglePrompt();
-                }
-            } catch (err) {
-                console.error("Failed to open folder:", err);
-            }
-        });
 
         resetBtn.addEventListener('click', () => {
             currentPreset = 'preset_temp';
@@ -1885,7 +2575,6 @@
             // Clear Jelly chat history and messages
             jellyHistory = [];
             jellyMessages.innerHTML = '';
-            jellyElapsed.textContent = '';
             resetPlotState(true);
             updatePlot();
         });
@@ -1905,7 +2594,6 @@
         const jellyForm = document.getElementById('jellyForm');
         const jellyInput = document.getElementById('jellyInput');
         const jellySend = document.getElementById('jellySend');
-        const jellyElapsed = document.getElementById('jellyElapsed');
 
         let jellyHistory = [];
         let jellyHasKey = false;
@@ -1947,7 +2635,6 @@
         jellyClearBtn.addEventListener('click', () => {
             jellyHistory = [];
             jellyMessages.innerHTML = '';
-            jellyElapsed.textContent = '';
             addJellyMessage('jelly', 'Cleared — fresh start.');
         });
 
@@ -2011,7 +2698,8 @@
         });
 
         function gatherJellyContext() {
-            const files = Array.from(datasetSelect.options).map(o => o.value);
+            const files = fileRecords.filter(f => f.status === 'ready').map(f => f.name);
+            const activeRec = fileById(datasetSelect.value);
             const vars = variableCache.map(v => ({ name: v.name, units: v.units, description: v.description }));
             const userCTrimMin = parseFloat(cTrimMinInput.value);
             const userCTrimMax = parseFloat(cTrimMaxInput.value);
@@ -2023,7 +2711,7 @@
             };
             return {
                 files,
-                current_file: datasetSelect.value || '',
+                current_file: activeRec ? activeRec.name : '',
                 variables: vars,
                 profile_info: {
                     has_profiles: profileList.length > 0,
@@ -2137,8 +2825,9 @@
         async function runJellyAction(a) {
             switch(a.type) {
                 case 'load_file': {
-                    const opts = Array.from(datasetSelect.options).map(o => o.value);
-                    if (opts.includes(a.filename) && datasetSelect.value !== a.filename) {
+                    const target = fileByName(a.filename);
+                    const activeRec = fileById(datasetSelect.value);
+                    if (target && target.status === 'ready' && (!activeRec || activeRec.id !== target.id)) {
                         const snapshot = a.preserve_style ? {
                             x: xSelect.value,
                             y: ySelect.value,
@@ -2146,10 +2835,8 @@
                             cmap: cmapInput.value,
                             invert_y: invertYBtn.classList.contains('active')
                         } : null;
-                        datasetSelect.value = a.filename;
-                        setCookie(COOKIE_FILE, a.filename);
                         _jellyOverlayArmed = false;
-                        await handleDatasetChange();
+                        await selectFile(target.id);
                         if (snapshot) {
                             const has = (sel, val) => Array.from(sel.options).some(o => o.value === val);
                             let changed = false;
@@ -2318,7 +3005,6 @@
                     addJellyMessage('jelly', reply, extra);
                     jellyHistory.push({ role: 'assistant', content: reply });
                     if (jellyHistory.length > 24) jellyHistory = jellyHistory.slice(-24);
-                    if (d.elapsed_s !== undefined) jellyElapsed.textContent = `${d.elapsed_s}s`;
                     if (d.actions && d.actions.length) await runJellyActions(d.actions);
                 }
             } catch (err) {
@@ -2363,20 +3049,23 @@
             const tip = t.getAttribute('data-tip');
             if (!tip) return;
             customTooltip.textContent = tip;
+            customTooltip.style.transform = '';
+            // Place at origin first so width can be measured without affecting layout
+            customTooltip.style.left = '0px';
+            customTooltip.style.top = '0px';
             const rect = t.getBoundingClientRect();
-            const pad = 8;
-            let left = rect.left + rect.width / 2;
-            let top = rect.bottom + pad;
+            const tipW = customTooltip.offsetWidth;
+            const margin = 6;
+            let left = rect.left + rect.width / 2 - tipW / 2;
+            left = Math.max(margin, Math.min(left, window.innerWidth - tipW - margin));
             customTooltip.style.left = `${left}px`;
-            customTooltip.style.top = `${top}px`;
-            customTooltip.style.transform = 'translateX(-50%)';
+            customTooltip.style.top = `${rect.bottom + 8}px`;
             customTooltip.style.opacity = '1';
         });
         document.addEventListener('mouseout', (e) => {
             const t = e.target.closest && e.target.closest('[data-tip]');
             if (!t) return;
             customTooltip.style.opacity = '0';
-            customTooltip.style.transform = '';
         });
 
     </script>

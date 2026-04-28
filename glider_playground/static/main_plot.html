@@ -5,13 +5,14 @@
     <title>Glider Plot</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="/static/console_log.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
             --text-primary: #e4e7ef;
             --text-secondary: #a1a9b8;
             --text-muted: #6b7280;
-            --accent: #5b9cff;
+            --accent: #41658a;
             --border: #262b38;
             --spinner-track: #1f2432;
             --grid: rgba(255,255,255,0.05);
@@ -24,7 +25,7 @@
             --text-primary: #171a22;
             --text-secondary: #4b525f;
             --text-muted: #7d8492;
-            --accent: #1a73e8;
+            --accent: #41658a;
             --border: #e2e5ec;
             --spinner-track: #e2e5ec;
             --grid: rgba(0,0,0,0.06);
@@ -120,8 +121,8 @@
         }
 
         const plotConfig = {
-            defaultMarkerSize: 4,
-            defaultColour: '#1a73e8'
+            defaultMarkerSize: 8,
+            defaultColour: '#41658a'
         };
 
         function readThemeColors() {
@@ -173,28 +174,6 @@
             return out;
         })();
 
-        const consoleStyles = {
-            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
-            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
-        };
-
-        const originalFetch = window.fetch;
-        window.fetch = async function(...args) {
-            const response = await originalFetch.apply(this, args);
-            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
-            if (url.includes('/api/')) {
-                const processTime = response.headers.get('X-Process-Time');
-                if (processTime) {
-                    const timeInSeconds = parseFloat(processTime).toFixed(4);
-                    const path = new URL(url, window.location.origin).pathname;
-                    console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
-                }
-            }
-            return response;
-        };
-
         const urlParams = new URLSearchParams(window.location.search);
         let plotData = null;
 
@@ -226,8 +205,7 @@
 
                 renderPlot();
 
-                const endTime = performance.now();
-                console.log(`%cRENDER%cWebGL Plot%c${((endTime - startTime) / 1000).toFixed(4)}s`, consoleStyles.renderBadge, consoleStyles.path, consoleStyles.time);
+                window.logRender('WebGL Plot', performance.now() - startTime);
                 
                 const overlay = document.getElementById('overlay');
                 overlay.style.opacity = '0';
@@ -416,7 +394,7 @@
         function renderPlot() {
             _originalPlotData = plotData;
 
-            Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true }).then(function(plotDiv) {
+            Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
@@ -462,8 +440,11 @@
                 if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
                 const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
-                const xAuto = eventData['xaxis.autorange'] === true;
-                const yAuto = eventData['yaxis.autorange'] === true;
+                // Plotly fires `'xaxis.autorange': true` for a normal axis and
+                // `'yaxis.autorange': 'reversed'` for an inverted axis after
+                // a dbl-click — treat any truthy value as "autoranged".
+                const xAuto = !!eventData['xaxis.autorange'];
+                const yAuto = !!eventData['yaxis.autorange'];
 
                 if (!hasXRange && !hasYRange && !xAuto && !yAuto) return;
 

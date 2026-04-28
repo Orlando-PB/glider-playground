@@ -5,12 +5,51 @@ from netCDF4 import Dataset
 import datetime
 import os
 import functools
+import threading
 
 # Locked to 200k points max for optimal WebGL performance
 MAX_RENDER_POINTS = 200000
 
+# Filled by cache_logic during processing. When a file is preloaded its
+# variable arrays live entirely in RAM, so reads no longer touch the netCDF
+# at all. Every cached read path here checks _PRELOADED first.
+_PRELOADED: dict[str, dict] = {}
+_PRELOADED_LOCK = threading.RLock()
+
+
+def _bust_caches():
+    """Drop every lru_cache that's keyed by filepath. Cheap and safe.
+
+    _ctd_processed_arrays is intentionally excluded: it keys by (filepath,
+    interp, clean) so its entries are safe to keep across file loads.
+    Busting it would throw away prewarmed CTD results the moment any other
+    file is opened, which is why Interpolate felt slow after switching files.
+    """
+    for fn in (_get_var_names, _read_vars_cached, _get_var_units,
+               get_variables, get_dataset_info, get_profiles):
+        try:
+            fn.cache_clear()
+        except AttributeError:
+            pass
+
+
+def set_preloaded(filepath: str, all_vars: dict):
+    with _PRELOADED_LOCK:
+        _PRELOADED[filepath] = all_vars
+    _bust_caches()
+
+
+def clear_preloaded(filepath: str):
+    with _PRELOADED_LOCK:
+        _PRELOADED.pop(filepath, None)
+    _bust_caches()
+
+
+def _get_preloaded(filepath: str):
+    with _PRELOADED_LOCK:
+        return _PRELOADED.get(filepath)
+
 CTD_VARS = ("PRES", "TEMP", "CNDC")
-CTD_SIGMA_THRESHOLD = 5.0
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
 
 # For TEMP/CNDC fill: look for real (non-interpolated) samples within this
@@ -18,20 +57,139 @@ CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"
 # left as NaN — glider dive/climb asymmetries can mean there is no honest
 # neighbour at the same depth and a naive time interpolation would smear
 # bad values across unrelated water layers.
-CTD_FILL_TIME_WINDOW_S = 2 * 3600
-CTD_FILL_DEPTH_WINDOW_M = 5.0
+
+# Set by cache_logic during prewarm so _apply_ctd_processing can report
+# fine-grained stage updates. Cleared after prewarm. Not persisted.
+_ctd_stage_cb = None
+
+
+def _report_ctd_stage(msg: str):
+    if _ctd_stage_cb is not None:
+        try:
+            _ctd_stage_cb(msg)
+        except Exception:
+            pass
+
+
+@functools.lru_cache(maxsize=12)
+def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
+    """Pre-compute CTD-processed PRES/TEMP/CNDC (+ their _QC) once per
+    (file, interp, qc) combo and cache the result.
+
+    For the (interp=True, qc=True) combo the result is composed from the
+    already-cached clean result + a single interpolation pass, rather than
+    re-running everything from scratch. If clean changed nothing (already
+    clean data) it returns the interp-only result instantly from cache.
+    """
+    if not (interpolate or apply_ctd_qc):
+        return None
+    pre = _get_preloaded(filepath)
+    if pre is None or not any(v in pre for v in CTD_VARS):
+        return None
+
+    time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
+
+    needed = set()
+    for v in CTD_VARS:
+        if v in pre:
+            needed.add(v)
+            if f"{v}_QC" in pre:
+                needed.add(f"{v}_QC")
+    if time_var:
+        needed.add(time_var)
+
+    if interpolate and apply_ctd_qc:
+        # Compose: get the clean overlay (cheap, already cached from prewarm
+        # step 1), check if it actually changed anything, then apply only
+        # the interpolation step on top — avoids running the slow depth-
+        # proximity fill twice.
+        clean = _ctd_processed_arrays(filepath, False, True)
+        clean_changed = clean is not None and any(
+            v in clean and v in pre
+            and np.any(np.isnan(clean[v]) != np.isnan(pre[v]))
+            for v in CTD_VARS
+        )
+        if not clean_changed:
+            # Data was already clean — interp+clean == interp alone.
+            return _ctd_processed_arrays(filepath, True, False)
+
+        # Merge clean results over raw arrays, then interpolate once.
+        data_dict = {k: pre[k] for k in needed}
+        for k, arr in clean.items():
+            if k in data_dict:
+                data_dict[k] = arr.copy()
+        processed = _apply_ctd_processing(
+            data_dict, time_var, _get_var_units(filepath),
+            interpolate=True, apply_ctd_qc=False,
+        )
+    else:
+        data_dict = {k: pre[k] for k in needed}
+        processed = _apply_ctd_processing(
+            data_dict, time_var, _get_var_units(filepath),
+            interpolate=interpolate, apply_ctd_qc=apply_ctd_qc,
+        )
+
+    overlay = {}
+    for v in CTD_VARS:
+        if v in processed: overlay[v] = processed[v]
+        if f"{v}_QC" in processed: overlay[f"{v}_QC"] = processed[f"{v}_QC"]
+    return overlay
+
+
+def ctd_interp_recommended(filepath) -> bool:
+    """True if interpolation fills any PRES gaps for this file.
+
+    Only PRES is interpolated, so this checks whether the overlay actually
+    reduces the NaN count in PRES. If PRES is already fully populated the
+    button is hidden as it would do nothing visible.
+    """
+    pre = _get_preloaded(filepath)
+    if pre is None or "PRES" not in pre:
+        return False
+    pres = pre["PRES"]
+    if not np.any(np.isnan(pres)):
+        return False  # already fully populated — nothing to fill
+    overlay = _ctd_processed_arrays(filepath, True, False)
+    if overlay is None or "PRES" not in overlay:
+        return False
+    orig_nan = int(np.isnan(pres).sum())
+    new_nan = int(np.isnan(overlay["PRES"]).sum())
+    return (orig_nan - new_nan) > 0
+
+
+def ctd_clean_recommended(filepath) -> bool:
+    """True if the Clean step would actually change any values in this file.
+
+    Returns False for pre-processed files where there are no zero fill-values
+    and all CNDC readings already fall within [20, 50] mS/cm — in that case
+    the button is hidden rather than shown as a no-op.
+    """
+    pre = _get_preloaded(filepath)
+    if pre is None or not any(v in pre for v in CTD_VARS):
+        return False
+    overlay = _ctd_processed_arrays(filepath, False, True)
+    if overlay is None:
+        return False
+    for v in CTD_VARS:
+        if v in overlay and v in pre:
+            orig_nan = np.isnan(pre[v])
+            new_nan = np.isnan(overlay[v])
+            if np.any(new_nan & ~orig_nan):
+                return True
+    return False
 
 
 def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, apply_ctd_qc=False):
     """Return a new data_dict with CTD interpolation and/or custom QC applied.
 
-    CTD QC: flag exact 0.0 values as 9, auto-scale CNDC from S/m to mS/cm, and
-    cross-flag 5-sigma CNDC outliers as 4 on all three CTD vars. Synthesised
-    QC arrays default to 1 (good) so they pass standard flag filtering.
+    CTD QC: flag exact 0.0 values as 9, auto-scale CNDC from S/m to mS/cm,
+    then cross-flag all three CTD vars as 4 where CNDC falls outside [20, 50]
+    mS/cm after scaling. Synthesised QC arrays default to 1 (good).
 
-    Interpolate: time-based linear fill of NaN in the CTD vars. Filled points
-    get QC=5 ("value changed"). When combined with CTD QC, bad values are
-    first nulled, then interpolation recovers them.
+    Interpolate: time-based fill of NaN in the CTD vars. Filled points get
+    QC=5 ("value changed"). When combined with CTD QC, bad values are first
+    nulled, then interpolation recovers them where a real neighbour exists
+    within ±2 h and ±5 m.
     """
     if not (interpolate or apply_ctd_qc):
         return data_dict
@@ -45,11 +203,15 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
         new_dict[v] = np.asarray(new_dict[v], dtype=float).copy()
         qc_name = f"{v}_QC"
         if qc_name in new_dict:
-            new_dict[qc_name] = np.asarray(new_dict[qc_name]).astype(int, copy=True)
+            qc_arr = np.asarray(new_dict[qc_name])
+            if np.issubdtype(qc_arr.dtype, np.floating):
+                qc_arr = np.where(np.isnan(qc_arr), 0, qc_arr)
+            new_dict[qc_name] = qc_arr.astype(int).copy()
         else:
             new_dict[qc_name] = np.ones(len(new_dict[v]), dtype=int)
 
     if apply_ctd_qc:
+        _report_ctd_stage("CTD clean: flagging zero fill-values")
         # Zero flagging — treat 0.0 as fill value
         for v in present:
             vals = new_dict[v]
@@ -58,6 +220,7 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                 new_dict[f"{v}_QC"][zero_mask] = 9
                 vals[zero_mask] = np.nan
 
+        _report_ctd_stage("CTD clean: scaling CNDC units & range filter")
         # CNDC unit scaling (S/m -> mS/cm) so outlier check sees sensible magnitudes
         if "CNDC" in new_dict:
             cndc_vals = new_dict["CNDC"]
@@ -65,32 +228,27 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
             if np.any(valid):
                 current_units = str((units_map or {}).get("CNDC", "")).strip().lower()
                 already_mscm = current_units in CTD_CNDC_MSCM_UNITS
-                if not already_mscm and np.nanmax(cndc_vals[valid]) < 10.0:
+                if not already_mscm and np.nanmedian(cndc_vals[valid]) < 10.0:
                     cndc_vals[valid] = cndc_vals[valid] * 10.0
                     new_dict["CNDC"] = cndc_vals
 
-        # 5-sigma outlier cross-flag on CNDC -> propagate to all three CTD vars
+        # Hard range filter: CNDC must be in [20, 50] mS/cm; cross-flag all CTD vars
         if "CNDC" in new_dict:
             cndc_vals = new_dict["CNDC"]
             cndc_qc = new_dict["CNDC_QC"]
-            valid = ~np.isnan(cndc_vals) & (cndc_qc != 9)
-            if np.any(valid):
-                mean = np.nanmean(cndc_vals[valid])
-                std = np.nanstd(cndc_vals[valid])
-                if std > 0:
-                    outlier_mask = valid & (np.abs(cndc_vals - mean) > CTD_SIGMA_THRESHOLD * std)
-                    if np.any(outlier_mask):
-                        for v in present:
-                            new_dict[v][outlier_mask] = np.nan
-                            qc = new_dict[f"{v}_QC"]
-                            # Only override non-bad flags so 9s stay 9s
-                            overwrite = outlier_mask & ~np.isin(qc, [3, 4, 9])
-                            qc[overwrite] = 4
+            valid_for_range = ~np.isnan(cndc_vals) & (cndc_qc != 9)
+            if np.any(valid_for_range):
+                range_bad = valid_for_range & ((cndc_vals < 20.0) | (cndc_vals > 50.0))
+                if np.any(range_bad):
+                    for v in present:
+                        qc = new_dict[f"{v}_QC"]
+                        overwrite = range_bad & ~np.isin(qc, [3, 4, 9])
+                        qc[overwrite] = 4
+                        new_dict[v][range_bad] = np.nan
+
 
     if interpolate and time_var and time_var in new_dict:
-        # Only touch rows where TIME is valid and the sample sits inside a
-        # monotonically-increasing run. Broken/NaN/out-of-order times would
-        # otherwise smear bad values across unrelated samples.
+        _report_ctd_stage("CTD interp: parsing timestamps")
         t_vals = new_dict[time_var]
         try:
             t_dt = pd.DatetimeIndex(pd.to_datetime(t_vals, errors='coerce'))
@@ -118,6 +276,7 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                 if "PRES" in present:
                     pres = new_dict["PRES"]
                     target = np.isnan(pres) & valid_time
+                    _report_ctd_stage(f"CTD interp: filling {int(target.sum())} PRES gaps")
                     if target.any():
                         sub_vals = pres[valid_time]
                         sub_index = t_dt[valid_time]
@@ -132,76 +291,14 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                         new_dict["PRES"] = out
                         new_dict["PRES_QC"][filled] = 5
 
-                # --- TEMP / CNDC: depth-proximity fill from real samples ---
-                # Time interpolation of temperature across a dive is wrong when
-                # the glider is only going down (or only up) in that window:
-                # there is no measurement at the target depth so pandas would
-                # smear values across unrelated water layers. Instead, for
-                # each gap we look for original (non-interpolated) readings
-                # within +/-2h and +/-5m and average them; if no qualifying
-                # sample exists we leave the gap as NaN.
-                pres_ref = new_dict.get("PRES")
-                if pres_ref is not None:
-                    t_ns = t_int  # int64 ns since epoch, aligned to full array
-                    time_window_ns = np.int64(CTD_FILL_TIME_WINDOW_S) * np.int64(10**9)
-
-                    for v in ("TEMP", "CNDC"):
-                        if v not in present:
-                            continue
-                        vals = new_dict[v]
-                        orig_non_nan = ~np.isnan(vals)  # snapshot BEFORE fills
-                        target_mask = (
-                            np.isnan(vals) & valid_time & ~np.isnan(pres_ref)
-                        )
-                        if not target_mask.any():
-                            continue
-
-                        ref_mask = (
-                            orig_non_nan & valid_time & ~np.isnan(pres_ref)
-                        )
-                        if not ref_mask.any():
-                            continue
-
-                        ref_idx = np.where(ref_mask)[0]
-                        ref_t = t_ns[ref_idx]
-                        ref_p = pres_ref[ref_idx]
-                        ref_v = vals[ref_idx]
-
-                        target_idx = np.where(target_mask)[0]
-                        # target_idx and ref_idx are both index-sorted, and
-                        # valid_time guarantees their times are non-decreasing
-                        # in that order — so a single sweep with two pointers
-                        # is correct.
-                        new_vals = vals.copy()
-                        qc_arr = new_dict[f"{v}_QC"]
-
-                        lo = 0
-                        hi = 0
-                        n_ref = len(ref_t)
-                        for i in target_idx:
-                            ti = t_ns[i]
-                            pi = pres_ref[i]
-                            lo_cut = ti - time_window_ns
-                            hi_cut = ti + time_window_ns
-                            while lo < n_ref and ref_t[lo] < lo_cut:
-                                lo += 1
-                            while hi < n_ref and ref_t[hi] <= hi_cut:
-                                hi += 1
-                            if hi <= lo:
-                                continue
-                            win_p = ref_p[lo:hi]
-                            win_v = ref_v[lo:hi]
-                            depth_ok = np.abs(win_p - pi) <= CTD_FILL_DEPTH_WINDOW_M
-                            if depth_ok.any():
-                                new_vals[i] = win_v[depth_ok].mean()
-                                qc_arr[i] = 5
-
-                        new_dict[v] = new_vals
 
     return new_dict
 
 @functools.lru_cache(maxsize=32)
 def _get_var_names(filepath):
+    pre = _get_preloaded(filepath)
+    if pre is not None:
+        return list(pre.keys())
     if not os.path.exists(filepath): return []
     try:
         with xr.open_dataset(filepath) as ds:
@@ -211,6 +308,9 @@ def _get_var_names(filepath):
 
 @functools.lru_cache(maxsize=16)
 def _read_vars_cached(filepath, var_names_tuple):
+    pre = _get_preloaded(filepath)
+    if pre is not None:
+        return {name: pre[name] for name in var_names_tuple if name in pre}
     if not os.path.exists(filepath): return None
     try:
         with xr.open_dataset(filepath) as ds:
@@ -469,10 +569,14 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         return {"error": "Failed to extract variables from dataset"}
 
     if ctd_interpolate or ctd_qc:
-        data_dict = _apply_ctd_processing(
-            data_dict, actual_time_var, _get_var_units(filepath),
-            interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
-        )
+        overlay = _ctd_processed_arrays(filepath, ctd_interpolate, ctd_qc)
+        if overlay is not None:
+            data_dict = {**data_dict, **overlay}
+        else:
+            data_dict = _apply_ctd_processing(
+                data_dict, actual_time_var, _get_var_units(filepath),
+                interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+            )
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
@@ -647,10 +751,14 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         return {"error": "Failed to extract variables from dataset"}
 
     if ctd_interpolate or ctd_qc:
-        data_dict = _apply_ctd_processing(
-            data_dict, actual_time_var, _get_var_units(filepath),
-            interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
-        )
+        overlay = _ctd_processed_arrays(filepath, ctd_interpolate, ctd_qc)
+        if overlay is not None:
+            data_dict = {**data_dict, **overlay}
+        else:
+            data_dict = _apply_ctd_processing(
+                data_dict, actual_time_var, _get_var_units(filepath),
+                interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+            )
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))

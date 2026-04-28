@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>3D Ocean Chunk</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="/static/console_log.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
@@ -13,7 +14,7 @@
             --spinner-track: #1f2432;
         }
         :root[data-theme="light"] {
-            --bg-panel: #f5f6f8;
+            --bg-panel: #ffffff;
             --text-primary: #171a22;
             --text-muted: #7d8492;
             --accent: #1a73e8;
@@ -63,30 +64,6 @@
     <div id="plot3d"></div>
 
     <script>
-        // --- Shared Console Logging ---
-        const consoleStyles = {
-            badge: "background: #005f73; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            renderBadge: "background: #780000; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;",
-            path: "color: #0a9396; font-weight: bold; margin-right: 8px;",
-            time: "background: #ee9b00; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;"
-        };
-
-        const originalFetch = window.fetch;
-        window.fetch = async function(...args) {
-            const response = await originalFetch.apply(this, args);
-            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : 'Unknown');
-            if (url.includes('/api/')) {
-                const processTime = response.headers.get('X-Process-Time');
-                if (processTime) {
-                    const timeInSeconds = parseFloat(processTime).toFixed(4);
-                    const path = new URL(url, window.location.origin).pathname;
-                    console.log(`%cAPI%c${path}%c${timeInSeconds}s`, consoleStyles.badge, consoleStyles.path, consoleStyles.time);
-                }
-            }
-            return response;
-        };
-        // ------------------------------
-
         window.addEventListener('message', function(event) {
             if (!event.data || event.data.type !== 'setTheme') return;
             const t = event.data.theme === 'light' ? 'light' : 'dark';
@@ -105,13 +82,16 @@
         const orbitSpeed = 0.0015;
 
         const urlParams = new URLSearchParams(window.location.search);
-        const filename = urlParams.get('filename');
+        const fileId = urlParams.get('id') || urlParams.get('filename');
 
-        if (filename) {
+        if (!fileId) {
+            document.getElementById('loadingIcon').style.display = 'none';
+            document.getElementById('statusText').textContent = "No dataset selected.";
+        } else {
             document.getElementById('statusText').textContent = "Rendering Ocean...";
             const startTime = performance.now();
-            
-            fetch(`/api/3d_data?filename=${encodeURIComponent(filename)}`)
+
+            fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`)
                 .then(response => response.json())
                 .then(data => {
                     const traces = [];
@@ -236,8 +216,7 @@
                     const config = { displayModeBar: false, responsive: true };
 
                     Plotly.newPlot('plot3d', traces, layout, config).then(() => {
-                        const endTime = performance.now();
-                        console.log(`%cRENDER%c3D Map Frontend%c${((endTime - startTime) / 1000).toFixed(4)}s`, consoleStyles.renderBadge, consoleStyles.path, consoleStyles.time);
+                        window.logRender('3D Map Frontend', performance.now() - startTime);
 
                         // Fade out the loading overlay
                         const overlay = document.getElementById('overlay');
