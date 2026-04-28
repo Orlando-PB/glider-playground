@@ -50,7 +50,7 @@ Files are processed in the background. Once ready, click one to load it.
 ### Plot
 Pick your **X**, **Y**, and optionally a **Colour** variable from the dropbdowns. The plot updates automatically.
 
-Use the **View** menu for built-in presets: Thermal Structure, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter. Save your own combinations as **Custom Views**.
+Use the **View** menu for built-in presets: Thermal Structure, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter.
 
 ### Zoom & Inspect
 - **Box zoom** — click and drag on the plot

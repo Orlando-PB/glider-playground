@@ -12,10 +12,10 @@
         (function() {
             try {
                 const saved = document.cookie.split('; ').find(c => c.startsWith('gp_theme='));
-                const theme = saved ? decodeURIComponent(saved.slice(9)) : 'dark';
+                const theme = saved ? decodeURIComponent(saved.slice(9)) : 'light';
                 document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
             } catch (_) {
-                document.documentElement.setAttribute('data-theme', 'dark');
+                document.documentElement.setAttribute('data-theme', 'light');
             }
         })();
 
@@ -755,7 +755,7 @@
 
             <div class="toolbar-group shrink-0">
                 <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
-                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">dark_mode</span>
+                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
                 </button>
                 <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset view, overlays and chat">
                     <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
