@@ -871,8 +871,8 @@
     <div class="flex flex-grow w-full overflow-hidden bg-white">
         <div id="statsPanel" class="w-72 bg-panelBg flat-border flex-shrink-0 flex flex-col relative z-20">
             
-            <div class="flex justify-center items-center shrink-0" style="border-bottom: 1px solid var(--border); background: var(--bg-app);">
-                <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0">
+            <div class="flex justify-center items-center shrink-0" style="border-bottom: 1px solid var(--border);">
+                <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0" style="background: var(--bg-panel);">
                     <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
                     <iframe id="gliderMap" src="" class="w-full h-full border-none hidden"></iframe>
                 </div>
@@ -2177,6 +2177,12 @@
                 if (!target) {
                     const firstReady = fileRecords.find(f => f.status === 'ready');
                     target = firstReady ? firstReady.id : null;
+                }
+                if (!target) {
+                    // No ready files yet (all pending after startup reset) — select the first
+                    // pending one so pendingActivateId is set and the plot auto-loads once done.
+                    const firstPending = fileRecords.find(f => f.status === 'pending' || f.status === 'processing');
+                    target = firstPending ? firstPending.id : null;
                 }
                 if (target) {
                     await selectFile(target);
