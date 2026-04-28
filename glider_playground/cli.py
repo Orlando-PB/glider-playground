@@ -25,8 +25,9 @@ def main():
     current_hostname = socket.gethostname().lower()
     
     is_server = is_server_env or current_hostname in SERVER_HOSTNAMES
-    
+
     if is_server:
+        os.environ["IS_SERVER"] = "True"
         host = "0.0.0.0"
         print(f"Running in Server Mode (0.0.0.0) on {current_hostname}")
     else:

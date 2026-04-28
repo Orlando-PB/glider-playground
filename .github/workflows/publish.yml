@@ -1,0 +1,59 @@
+name: Publish to PyPI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          python - <<'EOF'
+          import re, pathlib
+
+          text = pathlib.Path("pyproject.toml").read_text()
+          m = re.search(r'(version\s*=\s*")(\d+)\.(\d+)\.(\d+)(")', text)
+          major, minor, patch = int(m.group(2)), int(m.group(3)), int(m.group(4))
+          new_version = f"{major}.{minor}.{patch + 1}"
+          new_text = text[:m.start()] + f'{m.group(1)}{new_version}{m.group(5)}' + text[m.end():]
+          pathlib.Path("pyproject.toml").write_text(new_text)
+          print(f"new_version={new_version}")
+          EOF
+          python -c "
+          import re, pathlib
+          text = pathlib.Path('pyproject.toml').read_text()
+          m = re.search(r'version\s*=\s*\"(\d+\.\d+\.\d+)\"', text)
+          print('new_version=' + m.group(1))
+          " >> $GITHUB_OUTPUT
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+          git push
+
+      - name: Build
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

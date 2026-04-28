@@ -19,12 +19,10 @@ dependencies = [
     "xarray",
     "pandas",
     "numpy",
-    "matplotlib",
     "httpx",
+    "requests",
     "h5netcdf",
-    "netcdf4",
-    "geopandas",
-    "geodatasets"
+    "netcdf4"
 ]
 
 [project.scripts]
@@ -33,4 +31,4 @@ glider-playground = "glider_playground.cli:main"
 [tool.setuptools.packages.find]
 include = ["glider_playground*"]
 [tool.setuptools.package-data]
-"glider_playground" = ["static/index.html", "static/icon.png"]
+"glider_playground" = ["static/*"]

@@ -86,6 +86,8 @@ def get_file(file_id: str):
 
 @app.delete("/api/files/{file_id}")
 def delete_file(file_id: str):
+    if os.getenv("IS_SERVER") == "True":
+        raise HTTPException(status_code=403, detail="File deletion not available in server mode")
     if not cache_logic.remove_file(file_id):
         raise HTTPException(status_code=404, detail="Unknown file id")
     return {"status": "success"}

@@ -31,6 +31,11 @@ from . import spatial_logic
 CACHE_ROOT = Path.home() / ".glider_playground"
 UPLOADS_DIR = CACHE_ROOT / "uploads"
 REGISTRY_FILE = CACHE_ROOT / "registry.json"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# Bump this whenever processing logic changes and cached results should be
+# invalidated (e.g. new QC algorithm, changed map generation, etc.).
+CACHE_VERSION = "2"
 
 CACHE_ROOT.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
@@ -70,6 +75,7 @@ def _persist_locked():
         rid: {k: v for k, v in rec.items() if k not in _TRANSIENT_KEYS}
         for rid, rec in _registry.items()
     }
+    safe["_cache_version"] = CACHE_VERSION
     try:
         REGISTRY_FILE.write_text(json.dumps(safe, indent=2))
     except Exception:
@@ -88,7 +94,13 @@ def _load_once():
             data = json.loads(REGISTRY_FILE.read_text())
         except Exception:
             return
+        # If the processing code has changed, drop all cached results so every
+        # file gets reprocessed with the new logic. Just bump CACHE_VERSION.
+        if data.get("_cache_version") != CACHE_VERSION:
+            return
         for rid, rec in data.items():
+            if rid == "_cache_version":
+                continue
             # Anything mid-flight at shutdown becomes pending again.
             if rec.get("status") in (STATUS_PROCESSING, STATUS_READY):
                 rec["status"] = STATUS_PENDING
@@ -166,8 +178,24 @@ def _refresh(rec: dict):
 
 # ---------- public API ----------
 
+def _scan_data_dir():
+    """Register any .nc files in DATA_DIR not yet in the registry."""
+    if not DATA_DIR.is_dir():
+        return
+    for p in sorted(DATA_DIR.rglob("*.nc")):
+        rid = _file_id(p)
+        with _lock:
+            known = rid in _registry
+        if not known:
+            try:
+                register_path(str(p))
+            except Exception:
+                pass
+
+
 def list_files() -> list[dict]:
     _load_once()
+    _scan_data_dir()
     with _lock:
         recs = list(_registry.values())
     for rec in recs:
