@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import os
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,11 @@ import xarray as xr
 
 from . import plot_logic
 from . import spatial_logic
+
+# --- Configurable Variables ---
+THROTTLE_PI_VARIABLES = 0.05
+THROTTLE_PI_STAGES = 0.5
+# ------------------------------
 
 CACHE_ROOT = Path.home() / ".glider_playground"
 UPLOADS_DIR = CACHE_ROOT / "uploads"
@@ -310,7 +316,6 @@ def request_refresh(file_id: str) -> Optional[dict]:
 def _is_removed(rec: dict) -> bool:
     return rec.get("_removed", False)
 
-
 def _process(file_id: str):
     rec = _registry.get(file_id)
     if rec is None:
@@ -321,6 +326,8 @@ def _process(file_id: str):
         with _lock:
             _persist_locked()
         return
+
+    is_server = os.getenv("IS_SERVER") == "True"
 
     try:
         # 1. Load the entire dataset into RAM.
@@ -337,11 +344,18 @@ def _process(file_id: str):
                         all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
                     except Exception:
                         pass
+
+                    if is_server:
+                        time.sleep(THROTTLE_PI_VARIABLES)
+
             if _is_removed(rec):
                 return
             plot_logic.set_preloaded(p, all_vars)
         except Exception as e:
             raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
 
         # 2. Variables / attributes / profiles.
         if _is_removed(rec):
@@ -350,10 +364,16 @@ def _process(file_id: str):
         rec["dataset_info"] = plot_logic.get_dataset_info(p)
         rec["variables"] = plot_logic.get_variables(p)
 
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
+
         if _is_removed(rec):
             return
         _set(rec, progress=50, stage="indexing profiles")
         rec["profiles"] = plot_logic.get_profiles(p)
+
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
 
         # 3. Spatial QC + map path.
         if _is_removed(rec):
@@ -371,11 +391,17 @@ def _process(file_id: str):
         finally:
             spatial_logic._spatial_stage_cb = None
 
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
+
         # 4. 3D + bathy.
         if _is_removed(rec):
             return
         _set(rec, progress=75, stage="fetching bathymetry")
         rec["spatial_3d"] = spatial_logic.generate_3d_data(p)
+
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
 
         # 5. Pre-warm CTD overlays. The stage callback lets _apply_ctd_processing
         #    push fine-grained sub-step names into rec.stage in real time so the
@@ -400,6 +426,10 @@ def _process(file_id: str):
                     return
                 _set(rec, progress=pct, stage=label)
                 plot_logic._ctd_processed_arrays(p, interp, clean)
+
+                if is_server:
+                    time.sleep(THROTTLE_PI_STAGES)
+
             _set(rec, progress=99, stage="checking CTD recommendations")
             rec["ctd_interp_recommended"] = bool(plot_logic.ctd_interp_recommended(p))
             rec["ctd_clean_recommended"] = bool(plot_logic.ctd_clean_recommended(p))
