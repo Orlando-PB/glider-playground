@@ -67,7 +67,12 @@ def read_root():
 
 @app.get("/api/config")
 def get_config():
-    return {"is_server": os.getenv("IS_SERVER") == "True"}
+    try:
+        import importlib.metadata
+        version = importlib.metadata.version("glider-playground")
+    except Exception:
+        version = "unknown"
+    return {"is_server": os.getenv("IS_SERVER") == "True", "version": version}
 
 
 # ---------- file management ----------

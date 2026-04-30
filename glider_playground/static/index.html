@@ -1669,6 +1669,7 @@
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
                 isServerMode = !!cfg.is_server;
+                console.log(`Glider Playground v${cfg.version ?? 'unknown'}`);
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }
