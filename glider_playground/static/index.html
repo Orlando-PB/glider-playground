@@ -1669,7 +1669,7 @@
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
                 isServerMode = !!cfg.is_server;
-                logVersion(cfg.version ?? 'unknown', isServerMode);
+                logVersion(cfg.version ?? 'unknown', isServerMode, !!cfg.throttle, !!cfg.low_memory);
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }

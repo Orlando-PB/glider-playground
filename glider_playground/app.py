@@ -72,7 +72,13 @@ def get_config():
         version = importlib.metadata.version("glider-playground")
     except Exception:
         version = "unknown"
-    return {"is_server": os.getenv("IS_SERVER") == "True", "version": version}
+    is_server = os.getenv("IS_SERVER") == "True"
+    return {
+        "is_server": is_server,
+        "version": version,
+        "throttle": is_server,
+        "low_memory": os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes"),
+    }
 
 
 # ---------- file management ----------

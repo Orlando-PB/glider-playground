@@ -85,15 +85,28 @@
         );
     };
 
-    window.logVersion = function (version, isServer) {
+    window.logVersion = function (version, isServer, throttle, lowMemory) {
         const modeLabel = isServer ? 'server' : 'local';
         const modeBg = isServer ? '#3b1f6e' : '#1a3a1a';
         const modeColor = isServer ? '#c4a8f5' : '#86efac';
-        console.log(
+        const throttleOn = !!throttle;
+        const lowMemOn = !!lowMemory;
+        const modeBorder = (throttleOn || lowMemOn) ? '0' : '0 3px 3px 0';
+        const parts = [
             `%c Glider Playground %c v${version} %c ${modeLabel} `,
             'background:#1e3a5f;color:#7ec8f7;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px',
             'background:#0f2540;color:#aac8e8;padding:2px 6px',
-            `background:${modeBg};color:${modeColor};padding:2px 6px;border-radius:0 3px 3px 0`
-        );
+            `background:${modeBg};color:${modeColor};padding:2px 6px;border-radius:${modeBorder}`,
+        ];
+        if (throttleOn) {
+            const isLast = !lowMemOn;
+            parts[0] += `%c throttle ON `;
+            parts.push(`background:#5a3a0a;color:#fbbf24;padding:2px 6px;border-radius:${isLast ? '0 3px 3px 0' : '0'}`);
+        }
+        if (lowMemOn) {
+            parts[0] += `%c low-mem `;
+            parts.push('background:#3a1a1a;color:#fca5a5;padding:2px 6px;border-radius:0 3px 3px 0');
+        }
+        console.log(...parts);
     };
 })();

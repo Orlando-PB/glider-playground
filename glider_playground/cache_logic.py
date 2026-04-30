@@ -38,15 +38,38 @@ THROTTLE_PI_STAGES = 0.5
 
 CACHE_ROOT = Path.home() / ".glider_playground"
 UPLOADS_DIR = CACHE_ROOT / "uploads"
+PAYLOADS_DIR = CACHE_ROOT / "payloads"
 REGISTRY_FILE = CACHE_ROOT / "registry.json"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-CACHE_VERSION = "2"
+CACHE_VERSION = "3"
 
 CACHE_ROOT.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
+PAYLOADS_DIR.mkdir(exist_ok=True)
+
+
+# Best-effort: ask glibc to return freed memory to the OS. On Linux/glibc
+# this is the difference between RSS slowly creeping up across files and
+# staying flat. No-op on macOS/musl.
+try:
+    import ctypes
+    _libc = ctypes.CDLL("libc.so.6")
+    def _malloc_trim():
+        try:
+            _libc.malloc_trim(0)
+        except Exception:
+            pass
+except Exception:
+    def _malloc_trim():
+        pass
+
+
+def _release_memory():
+    gc.collect()
+    _malloc_trim()
 
 STATUS_PENDING = "pending"
 STATUS_PROCESSING = "processing"
@@ -58,7 +81,20 @@ STATUS_ERROR = "error"
 # round-trip through registry.json.
 _PAYLOAD_KEYS = ("map", "spatial_3d", "location",
                  "variables", "dataset_info", "profiles")
-_TRANSIENT_KEYS = {"_future", *_PAYLOAD_KEYS}
+_TRANSIENT_KEYS = {"_future", "_done_steps", *_PAYLOAD_KEYS}
+
+# Step identifiers used to skip work already completed before a crash.
+STEP_PRELOAD = "preload"
+STEP_DATASET_INFO = "dataset_info"
+STEP_PROFILES = "profiles"
+STEP_SPATIAL = "spatial"
+STEP_3D = "spatial_3d"
+STEP_CTD_CLEAN = "ctd_clean"
+STEP_CTD_INTERP = "ctd_interp"
+STEP_CTD_BOTH = "ctd_both"
+STEP_CTD_RECS = "ctd_recs"
+ALL_STEPS = (STEP_PRELOAD, STEP_DATASET_INFO, STEP_PROFILES, STEP_SPATIAL,
+             STEP_3D, STEP_CTD_CLEAN, STEP_CTD_INTERP, STEP_CTD_BOTH, STEP_CTD_RECS)
 
 _lock = threading.RLock()
 _registry: dict[str, dict] = {}
@@ -75,6 +111,74 @@ def _file_id(path: Path) -> str:
 def _signature(path: Path) -> tuple[int, int]:
     st = path.stat()
     return (st.st_size, st.st_mtime_ns)
+
+
+def _payload_path(file_id: str) -> Path:
+    return PAYLOADS_DIR / f"{file_id}.json"
+
+
+def _save_payload_sidecar(rec: dict):
+    """Write the per-file sidecar containing payloads + done_steps + signature.
+
+    Called after every step completes so a crash mid-file only loses the
+    in-progress step. Best-effort: a write failure does not abort processing.
+    """
+    rid = rec.get("id")
+    if not rid:
+        return
+    body = {
+        "id": rid,
+        "path": rec.get("path", ""),
+        "size": rec.get("size", 0),
+        "mtime": rec.get("mtime", 0),
+        "cache_version": CACHE_VERSION,
+        "done_steps": list(rec.get("_done_steps", [])),
+        "ctd_interp_recommended": rec.get("ctd_interp_recommended", False),
+        "ctd_clean_recommended": rec.get("ctd_clean_recommended", False),
+        "payloads": {k: rec[k] for k in _PAYLOAD_KEYS if k in rec},
+    }
+    tmp = _payload_path(rid).with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(body))
+        os.replace(str(tmp), str(_payload_path(rid)))
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _load_payload_sidecar(rec: dict) -> set:
+    """Restore payloads from the sidecar if signature + version match.
+
+    Returns the set of completed steps so the worker can skip them.
+    """
+    rid = rec.get("id")
+    if not rid:
+        return set()
+    p = _payload_path(rid)
+    if not p.exists():
+        return set()
+    try:
+        body = json.loads(p.read_text())
+    except Exception:
+        return set()
+    if body.get("cache_version") != CACHE_VERSION:
+        return set()
+    if (body.get("size"), body.get("mtime")) != (rec.get("size"), rec.get("mtime")):
+        return set()
+    for k, v in (body.get("payloads") or {}).items():
+        rec[k] = v
+    rec["ctd_interp_recommended"] = bool(body.get("ctd_interp_recommended", False))
+    rec["ctd_clean_recommended"] = bool(body.get("ctd_clean_recommended", False))
+    return set(body.get("done_steps") or [])
+
+
+def _drop_payload_sidecar(file_id: str):
+    try:
+        _payload_path(file_id).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _persist_locked():
@@ -109,11 +213,45 @@ def _load_once():
         for rid, rec in data.items():
             if rid == "_cache_version":
                 continue
-            # Anything mid-flight at shutdown becomes pending again.
-            if rec.get("status") in (STATUS_PROCESSING, STATUS_READY):
-                rec["status"] = STATUS_PENDING
-                rec["progress"] = 0
-                rec["stage"] = "queued"
+            # Try to restore the per-file sidecar. If it matches signature
+            # + version, the file is fully ready (or partially done) and we
+            # can resume from where we left off without redoing work.
+            done_steps = _load_payload_sidecar(rec)
+            if done_steps:
+                rec["_done_steps"] = list(done_steps)
+                # Re-register the disk-backed preload sentinel so plot
+                # endpoints find variables fast without a fresh xarray open.
+                # Only meaningful in LOW_MEMORY mode — in RAM mode the
+                # arrays are gone and plots fall back to opening NetCDF.
+                if STEP_PRELOAD in done_steps and plot_logic._LOW_MEMORY:
+                    try:
+                        d = plot_logic._preload_dir(rec.get("path", ""))
+                        if (d / "_names.json").exists():
+                            with plot_logic._PRELOADED_LOCK:
+                                plot_logic._PRELOADED[rec["path"]] = True
+                        else:
+                            # Disk preload is gone — must redo this step
+                            done_steps.discard(STEP_PRELOAD)
+                            rec["_done_steps"] = list(done_steps)
+                    except Exception:
+                        pass
+                if set(done_steps) >= set(ALL_STEPS):
+                    rec["status"] = STATUS_READY
+                    rec["progress"] = 100
+                    rec["stage"] = "ready"
+                    rec["error"] = ""
+                else:
+                    rec["status"] = STATUS_PENDING
+                    rec["progress"] = 0
+                    rec["stage"] = "resuming"
+                    rec["error"] = ""
+            else:
+                # No sidecar (or stale) — anything mid-flight at shutdown
+                # becomes pending again and gets reprocessed from scratch.
+                if rec.get("status") in (STATUS_PROCESSING, STATUS_READY):
+                    rec["status"] = STATUS_PENDING
+                    rec["progress"] = 0
+                    rec["stage"] = "queued"
             _registry[rid] = rec
 
 
@@ -149,6 +287,8 @@ def _reset(rec: dict, size: int, mtime: int):
     })
     for k in _PAYLOAD_KEYS:
         rec.pop(k, None)
+    rec["_done_steps"] = []
+    _drop_payload_sidecar(rec["id"])
     plot_logic.clear_preloaded(rec.get("path", ""))
     spatial_logic.get_core_spatial_data.cache_clear()
 
@@ -281,6 +421,7 @@ def remove_file(file_id: str, *, delete_upload: bool = True) -> bool:
             fut.cancel()
         path = rec.get("path", "")
         plot_logic.clear_preloaded(path)
+        _drop_payload_sidecar(file_id)
         _persist_locked()
     # Delete the upload file *after* releasing the lock so the worker's
     # open file handle can close cleanly before the path disappears.
@@ -322,6 +463,16 @@ def _is_removed(rec: dict) -> bool:
 _LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
 
 
+def _mark_step_done(rec: dict, step: str):
+    """Mark a step complete and flush sidecar so a crash can resume after it."""
+    with _lock:
+        done = list(rec.get("_done_steps") or [])
+        if step not in done:
+            done.append(step)
+        rec["_done_steps"] = done
+        _save_payload_sidecar(rec)
+
+
 def _process(file_id: str):
     rec = _registry.get(file_id)
     if rec is None:
@@ -334,91 +485,129 @@ def _process(file_id: str):
         return
 
     is_server = os.getenv("IS_SERVER") == "True"
+    done_steps = set(rec.get("_done_steps") or [])
+
+    def _is_done(step: str) -> bool:
+        return step in done_steps
 
     try:
-        # 1. Preload variable arrays.
+        # 1. Preload variable arrays. The preload cache is on disk in
+        # LOW_MEMORY mode, so it survives a crash; we only redo it if the
+        # sidecar says the step never finished.
         _set(rec, status=STATUS_PROCESSING, progress=15,
-             stage="loading variables", error="")
-        if _LOW_MEMORY:
-            # Stream each variable directly to disk, one at a time, so RAM
-            # never fills up with the full dataset simultaneously.
-            try:
-                plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
-            except Exception as e:
-                raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+             stage="loading variables" if not _is_done(STEP_PRELOAD) else "resuming",
+             error="")
+        if not _is_done(STEP_PRELOAD):
+            if _LOW_MEMORY:
+                try:
+                    plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
+                except Exception as e:
+                    raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+            else:
+                all_vars: dict = {}
+                try:
+                    with xr.open_dataset(p) as ds:
+                        for name in ds.variables:
+                            if _is_removed(rec):
+                                return
+                            try:
+                                arr = ds.variables[name].values
+                                all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
+                            except Exception:
+                                pass
+                    if _is_removed(rec):
+                        return
+                    plot_logic.set_preloaded(p, all_vars)
+                    del all_vars
+                except Exception as e:
+                    raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+            _release_memory()
+            _mark_step_done(rec, STEP_PRELOAD)
+            done_steps.add(STEP_PRELOAD)
         else:
-            all_vars: dict = {}
+            # Make sure preload is registered in the in-RAM sentinel map even
+            # though the actual arrays are still on disk from the previous run.
+            if _LOW_MEMORY:
+                d = plot_logic._preload_dir(p)
+                if (d / "_names.json").exists():
+                    with plot_logic._PRELOADED_LOCK:
+                        plot_logic._PRELOADED[p] = True
+                else:
+                    # Disk preload was wiped between runs — redo it.
+                    done_steps.discard(STEP_PRELOAD)
+                    rec["_done_steps"] = [s for s in (rec.get("_done_steps") or []) if s != STEP_PRELOAD]
+                    plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
+                    _release_memory()
+                    _mark_step_done(rec, STEP_PRELOAD)
+                    done_steps.add(STEP_PRELOAD)
+
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
+
+        # 2. Dataset info + variables list.
+        if _is_removed(rec):
+            return
+        if not _is_done(STEP_DATASET_INFO):
+            _set(rec, progress=35, stage="indexing variables")
+            rec["dataset_info"] = plot_logic.get_dataset_info(p)
+            rec["variables"] = plot_logic.get_variables(p)
+            _release_memory()
+            _mark_step_done(rec, STEP_DATASET_INFO)
+            done_steps.add(STEP_DATASET_INFO)
+
+        # 3. Profiles.
+        if _is_removed(rec):
+            return
+        if not _is_done(STEP_PROFILES):
+            _set(rec, progress=50, stage="indexing profiles")
+            rec["profiles"] = plot_logic.get_profiles(p)
+            _release_memory()
+            _mark_step_done(rec, STEP_PROFILES)
+            done_steps.add(STEP_PROFILES)
+
+        if is_server:
+            time.sleep(THROTTLE_PI_STAGES)
+
+        # 4. Spatial QC + map path + location.
+        if _is_removed(rec):
+            return
+        if not _is_done(STEP_SPATIAL):
+            _set(rec, progress=60, stage="spatial QC")
+
+            def _spatial_cb(stage_msg: str):
+                if not _is_removed(rec):
+                    _set(rec, stage=stage_msg)
+
+            spatial_logic._spatial_stage_cb = _spatial_cb
             try:
-                with xr.open_dataset(p) as ds:
-                    for name in ds.variables:
-                        if _is_removed(rec):
-                            return
-                        try:
-                            arr = ds.variables[name].values
-                            all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
-                        except Exception:
-                            pass
-                if _is_removed(rec):
-                    return
-                plot_logic.set_preloaded(p, all_vars)
-            except Exception as e:
-                raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+                rec["map"] = spatial_logic.generate_map_image(p)
+                rec["location"] = spatial_logic.get_location_summary(p)
+            finally:
+                spatial_logic._spatial_stage_cb = None
+            _release_memory()
+            _mark_step_done(rec, STEP_SPATIAL)
+            done_steps.add(STEP_SPATIAL)
 
-        if is_server:
-            time.sleep(THROTTLE_PI_STAGES)
-
-        # 2. Variables / attributes / profiles.
+        # 5. 3D + bathymetry.
         if _is_removed(rec):
             return
-        _set(rec, progress=35, stage="indexing variables")
-        rec["dataset_info"] = plot_logic.get_dataset_info(p)
-        rec["variables"] = plot_logic.get_variables(p)
-        if _LOW_MEMORY:
-            gc.collect()
+        if not _is_done(STEP_3D):
+            _set(rec, progress=75, stage="fetching bathymetry")
+            rec["spatial_3d"] = spatial_logic.generate_3d_data(p)
+            _release_memory()
+            _mark_step_done(rec, STEP_3D)
+            done_steps.add(STEP_3D)
 
+        # 6. Pre-warm CTD overlays — each combo is its own resumable step.
+        # The overlay arrays themselves are cached to disk by plot_logic in
+        # low-memory mode, so re-calling _ctd_processed_arrays after a
+        # successful run is a cheap disk read.
         if _is_removed(rec):
             return
-        _set(rec, progress=50, stage="indexing profiles")
-        rec["profiles"] = plot_logic.get_profiles(p)
-
-        if is_server:
-            time.sleep(THROTTLE_PI_STAGES)
-
-        # 3. Spatial QC + map path.
-        if _is_removed(rec):
-            return
-        _set(rec, progress=60, stage="spatial QC")
-
-        def _spatial_cb(stage_msg: str):
-            if not _is_removed(rec):
-                _set(rec, stage=stage_msg)
-
-        spatial_logic._spatial_stage_cb = _spatial_cb
-        try:
-            rec["map"] = spatial_logic.generate_map_image(p)
-            rec["location"] = spatial_logic.get_location_summary(p)
-        finally:
-            spatial_logic._spatial_stage_cb = None
-        if _LOW_MEMORY:
-            gc.collect()
-
-        # 4. 3D + bathy.
-        if _is_removed(rec):
-            return
-        _set(rec, progress=75, stage="fetching bathymetry")
-        rec["spatial_3d"] = spatial_logic.generate_3d_data(p)
-        if _LOW_MEMORY:
-            gc.collect()
-
-        # 5. Pre-warm CTD overlays. In low-memory mode each result is saved to
-        #    disk (as .npz) rather than kept in an lru_cache — full prewarm
-        #    still happens so first-use latency is the same.
-        if _is_removed(rec):
-            return
-        ctd_steps = [
-            (False, True,  90, "pre-warming CTD: clean"),
-            (True,  False, 93, "pre-warming CTD: interpolate"),
-            (True,  True,  96, "pre-warming CTD: interpolate + clean"),
+        ctd_plan = [
+            (STEP_CTD_CLEAN,  False, True,  90, "pre-warming CTD: clean"),
+            (STEP_CTD_INTERP, True,  False, 93, "pre-warming CTD: interpolate"),
+            (STEP_CTD_BOTH,   True,  True,  96, "pre-warming CTD: interpolate + clean"),
         ]
 
         def _ctd_cb(stage_msg: str):
@@ -427,19 +616,27 @@ def _process(file_id: str):
 
         plot_logic._ctd_stage_cb = _ctd_cb
         try:
-            for interp, clean, pct, label in ctd_steps:
+            for step, interp, clean, pct, label in ctd_plan:
                 if _is_removed(rec):
                     return
+                if _is_done(step):
+                    continue
                 _set(rec, progress=pct, stage=label)
                 plot_logic._ctd_processed_arrays(p, interp, clean)
-                if _LOW_MEMORY:
-                    gc.collect()
-            _set(rec, progress=99, stage="checking CTD recommendations")
-            rec["ctd_interp_recommended"] = bool(plot_logic.ctd_interp_recommended(p))
-            rec["ctd_clean_recommended"] = bool(plot_logic.ctd_clean_recommended(p))
-        except Exception:
-            rec["ctd_interp_recommended"] = False
-            rec["ctd_clean_recommended"] = False
+                _release_memory()
+                _mark_step_done(rec, step)
+                done_steps.add(step)
+
+            if not _is_done(STEP_CTD_RECS):
+                _set(rec, progress=99, stage="checking CTD recommendations")
+                try:
+                    rec["ctd_interp_recommended"] = bool(plot_logic.ctd_interp_recommended(p))
+                    rec["ctd_clean_recommended"] = bool(plot_logic.ctd_clean_recommended(p))
+                except Exception:
+                    rec["ctd_interp_recommended"] = False
+                    rec["ctd_clean_recommended"] = False
+                _mark_step_done(rec, STEP_CTD_RECS)
+                done_steps.add(STEP_CTD_RECS)
         finally:
             plot_logic._ctd_stage_cb = None
 
@@ -447,6 +644,8 @@ def _process(file_id: str):
             return
         _set(rec, status=STATUS_READY, progress=100, stage="ready",
              error="", processed_at=time.time())
+        _save_payload_sidecar(rec)
+        _release_memory()
     except Exception as e:
         if not _is_removed(rec):
             traceback.print_exc()
