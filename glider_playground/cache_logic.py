@@ -14,8 +14,10 @@ so registered files survive a restart; payloads are rebuilt on demand.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
+import os
 import threading
 import os
 import time
@@ -316,6 +318,10 @@ def request_refresh(file_id: str) -> Optional[dict]:
 def _is_removed(rec: dict) -> bool:
     return rec.get("_removed", False)
 
+
+_LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
+
+
 def _process(file_id: str):
     rec = _registry.get(file_id)
     if rec is None:
@@ -330,29 +336,33 @@ def _process(file_id: str):
     is_server = os.getenv("IS_SERVER") == "True"
 
     try:
-        # 1. Load the entire dataset into RAM.
+        # 1. Preload variable arrays.
         _set(rec, status=STATUS_PROCESSING, progress=15,
              stage="loading variables", error="")
-        all_vars: dict = {}
-        try:
-            with xr.open_dataset(p) as ds:
-                for name in ds.variables:
-                    if _is_removed(rec):
-                        return
-                    try:
-                        arr = ds.variables[name].values
-                        all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
-                    except Exception:
-                        pass
-
-                    if is_server:
-                        time.sleep(THROTTLE_PI_VARIABLES)
-
-            if _is_removed(rec):
-                return
-            plot_logic.set_preloaded(p, all_vars)
-        except Exception as e:
-            raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+        if _LOW_MEMORY:
+            # Stream each variable directly to disk, one at a time, so RAM
+            # never fills up with the full dataset simultaneously.
+            try:
+                plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
+            except Exception as e:
+                raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+        else:
+            all_vars: dict = {}
+            try:
+                with xr.open_dataset(p) as ds:
+                    for name in ds.variables:
+                        if _is_removed(rec):
+                            return
+                        try:
+                            arr = ds.variables[name].values
+                            all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
+                        except Exception:
+                            pass
+                if _is_removed(rec):
+                    return
+                plot_logic.set_preloaded(p, all_vars)
+            except Exception as e:
+                raise RuntimeError(f"Failed to read NetCDF: {e}") from e
 
         if is_server:
             time.sleep(THROTTLE_PI_STAGES)
@@ -363,9 +373,8 @@ def _process(file_id: str):
         _set(rec, progress=35, stage="indexing variables")
         rec["dataset_info"] = plot_logic.get_dataset_info(p)
         rec["variables"] = plot_logic.get_variables(p)
-
-        if is_server:
-            time.sleep(THROTTLE_PI_STAGES)
+        if _LOW_MEMORY:
+            gc.collect()
 
         if _is_removed(rec):
             return
@@ -390,23 +399,20 @@ def _process(file_id: str):
             rec["location"] = spatial_logic.get_location_summary(p)
         finally:
             spatial_logic._spatial_stage_cb = None
-
-        if is_server:
-            time.sleep(THROTTLE_PI_STAGES)
+        if _LOW_MEMORY:
+            gc.collect()
 
         # 4. 3D + bathy.
         if _is_removed(rec):
             return
         _set(rec, progress=75, stage="fetching bathymetry")
         rec["spatial_3d"] = spatial_logic.generate_3d_data(p)
+        if _LOW_MEMORY:
+            gc.collect()
 
-        if is_server:
-            time.sleep(THROTTLE_PI_STAGES)
-
-        # 5. Pre-warm CTD overlays. The stage callback lets _apply_ctd_processing
-        #    push fine-grained sub-step names into rec.stage in real time so the
-        #    user sees exactly what's happening (e.g. "CTD interp: filling 12k
-        #    TEMP gaps") instead of a static label for the whole slow pass.
+        # 5. Pre-warm CTD overlays. In low-memory mode each result is saved to
+        #    disk (as .npz) rather than kept in an lru_cache — full prewarm
+        #    still happens so first-use latency is the same.
         if _is_removed(rec):
             return
         ctd_steps = [
@@ -426,10 +432,8 @@ def _process(file_id: str):
                     return
                 _set(rec, progress=pct, stage=label)
                 plot_logic._ctd_processed_arrays(p, interp, clean)
-
-                if is_server:
-                    time.sleep(THROTTLE_PI_STAGES)
-
+                if _LOW_MEMORY:
+                    gc.collect()
             _set(rec, progress=99, stage="checking CTD recommendations")
             rec["ctd_interp_recommended"] = bool(plot_logic.ctd_interp_recommended(p))
             rec["ctd_clean_recommended"] = bool(plot_logic.ctd_clean_recommended(p))

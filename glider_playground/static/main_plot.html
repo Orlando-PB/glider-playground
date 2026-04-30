@@ -174,6 +174,26 @@
             return out;
         })();
 
+        // Fixed 10-colour palette for integer values 0-9 (phases, QC flags, etc.)
+        const DISCRETE_09_COLORS = [
+            '#9ca3af',  // 0 – unknown / no QC (grey)
+            '#22c55e',  // 1 – ascent / good (green)
+            '#3b82f6',  // 2 – descent / probably good (blue)
+            '#f97316',  // 3 – surfacing / correctable (orange)
+            '#a855f7',  // 4 – parking / bad (purple)
+            '#06b6d4',  // 5 – inflection / changed (cyan)
+            '#ef4444',  // 6 – propelled (red)
+            '#eab308',  // 7 – transition (yellow)
+            '#ec4899',  // 8 – (pink)
+            '#84cc16',  // 9 – (lime)
+        ];
+
+        const SCI_PHASE_NAMES = {
+            0: 'Unknown', 1: 'Ascent', 2: 'Descent', 3: 'Surfacing',
+            4: 'Parking', 5: 'Inflection', 6: 'Propelled', 7: 'Transition',
+            8: 'Phase 8', 9: 'Phase 9',
+        };
+
         const urlParams = new URLSearchParams(window.location.search);
         let plotData = null;
 
@@ -220,6 +240,132 @@
             }
         }
 
+        function buildJellyShapesAndAnnotations(TC) {
+            TC = TC || readThemeColors();
+            const shapes = [], annotations = [];
+            (_jellyOverrides.lines || []).forEach(ln => {
+                const numVal = typeof ln.value === 'number' ? ln.value : parseFloat(ln.value);
+                if (isNaN(numVal)) return;
+                const color = ln.color || '#ea4335';
+                if (ln.axis === 'y') {
+                    shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: numVal, y1: numVal, line: { color, width: 2, dash: 'dash' } });
+                    if (ln.label) annotations.push({ xref: 'paper', x: 0.99, xanchor: 'right', yref: 'y', y: numVal, yanchor: 'bottom', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
+                } else {
+                    shapes.push({ type: 'line', yref: 'paper', y0: 0, y1: 1, xref: 'x', x0: numVal, x1: numVal, line: { color, width: 2, dash: 'dash' } });
+                    if (ln.label) annotations.push({ yref: 'paper', y: 0.99, yanchor: 'top', xref: 'x', x: numVal, xanchor: 'left', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
+                }
+            });
+            return { shapes, annotations };
+        }
+
+        function applyJellyOverrides() {
+            const plotDiv = document.getElementById('plotDiv');
+            if (!plotDiv || !plotDiv.data) return;
+            console.log('[jelly] applyJellyOverrides', JSON.stringify({
+                overrides: _jellyOverrides,
+                currentZoom: _currentZoom,
+                plotDataPts: plotData && plotData.x ? plotData.x.length : 0,
+                zoomFetchedFor: plotData && plotData._zoomFetchedFor || null,
+                xaxisRange: plotDiv.layout && plotDiv.layout.xaxis ? plotDiv.layout.xaxis.range : null,
+                yaxisRange: plotDiv.layout && plotDiv.layout.yaxis ? plotDiv.layout.yaxis.range : null,
+                traceCount: plotDiv.data ? plotDiv.data.length : 0,
+                trace0pts: plotDiv.data && plotDiv.data[0] && plotDiv.data[0].x ? plotDiv.data[0].x.length : 0
+            }));
+
+            const TC = readThemeColors();
+            const layoutUpdate = {};
+            if (_jellyOverrides.title) {
+                layoutUpdate.title = { text: _jellyOverrides.title, font: { size: 16, color: TC.title }, x: 0.5, xanchor: 'center', y: 0.98, yanchor: 'top' };
+                layoutUpdate['margin.t'] = 40;
+                layoutUpdate['margin.l'] = 50;
+            } else {
+                layoutUpdate.title = null;
+                layoutUpdate['margin.t'] = 20;
+                layoutUpdate['margin.l'] = 60;
+            }
+            const { shapes, annotations } = buildJellyShapesAndAnnotations(TC);
+            layoutUpdate.shapes = shapes;
+            layoutUpdate.annotations = annotations;
+
+            _suppressRelayout = true;
+            Plotly.relayout('plotDiv', layoutUpdate).then(() => { _suppressRelayout = false; });
+
+            // Discrete 0-9 mode uses per-value traces with fixed colours; skip restyle.
+            if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') {
+                applyRunningMeanTrace();
+                return;
+            }
+
+            // Marker color: restyle the main scatter trace in place so we don't
+            // rebuild traces (which would risk dropping the high-res data).
+            let cmapName = urlParams.get('cmap') || 'thermal';
+            let effectiveColorscale = customColorscales[cmapName] || cmapName;
+            let forceSolidColor = null;
+            if (_jellyOverrides.colorMode === 'solid' && _jellyOverrides.colors.length >= 1) {
+                forceSolidColor = _jellyOverrides.colors[0];
+            } else if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
+                effectiveColorscale = [[0, _jellyOverrides.colors[0]], [1, _jellyOverrides.colors[1]]];
+            }
+            const isQc = plotData.qc_applied && urlParams.get('highlight_qc') === 'true';
+            const passIdx = isQc ? 1 : 0;
+            let newColor, newScale;
+            if (forceSolidColor) {
+                newColor = forceSolidColor;
+                newScale = null;
+            } else if (plotData.c && plotData.c.length) {
+                const trace = plotDiv.data[passIdx];
+                newColor = (trace && trace.customdata && trace.customdata.length) ? trace.customdata : plotData.c;
+                newScale = effectiveColorscale;
+            } else {
+                newColor = (cmapName === 'black' ? 'black' : plotConfig.defaultColour);
+                newScale = null;
+            }
+            Plotly.restyle('plotDiv', { 'marker.color': [newColor], 'marker.colorscale': [newScale] }, [passIdx]);
+
+            applyRunningMeanTrace();
+        }
+
+        function applyRunningMeanTrace() {
+            const plotDiv = document.getElementById('plotDiv');
+            const traces = plotDiv.data || [];
+            let existingIdx = -1;
+            for (let i = 0; i < traces.length; i++) {
+                if (traces[i] && traces[i]._isRunningMean) { existingIdx = i; break; }
+            }
+
+            if (!_jellyOverrides.runningMean) {
+                if (existingIdx >= 0) Plotly.deleteTraces('plotDiv', [existingIdx]);
+                return;
+            }
+            if (!plotData.x || !plotData.x.length) return;
+
+            const rm = _jellyOverrides.runningMean;
+            const axis = rm.axis || 'y';
+            const defaultWin = Math.max(10, Math.floor(plotData.x.length / 100));
+            const win = rm.window ? Math.max(3, Math.floor(rm.window)) : defaultWin;
+            let traceX, traceY;
+            if (axis === 'x') {
+                const sm = computeRunningMean(plotData.y, plotData.x.map(v => plotData.is_x_dt ? new Date(v).getTime() : v), win, false);
+                traceX = sm.y; traceY = sm.x;
+            } else {
+                const sm = computeRunningMean(plotData.x, plotData.y, win, !!plotData.is_x_dt);
+                traceX = sm.x; traceY = sm.y;
+            }
+
+            const newTrace = {
+                x: traceX, y: traceY, mode: 'lines', type: 'scattergl',
+                line: { color: rm.color || '#ea4335', width: 2.5 },
+                name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
+                _isRunningMean: true
+            };
+
+            if (existingIdx >= 0) {
+                Plotly.deleteTraces('plotDiv', [existingIdx]).then(() => Plotly.addTraces('plotDiv', newTrace));
+            } else {
+                Plotly.addTraces('plotDiv', newTrace);
+            }
+        }
+
         function buildLayout(xRange, yRange) {
             const isXDate = plotData.is_x_dt;
             const isInverted = urlParams.get('invert_y') === 'true';
@@ -252,7 +398,8 @@
                 plot_bgcolor: 'transparent',
                 paper_bgcolor: 'transparent',
                 dragmode: 'zoom',
-                showlegend: false
+                showlegend: (urlParams.get('cmap') || 'thermal') === 'discrete_09',
+                legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: 'rgba(0,0,0,0)', borderwidth: 0, x: 1.01, xanchor: 'left', y: 1, yanchor: 'top' },
             };
 
             if (_jellyOverrides.title) {
@@ -260,19 +407,7 @@
                 layout.margin = { l: 50, r: 20, t: 40, b: 50 };
             }
 
-            const jellyShapes = [], jellyAnnotations = [];
-            (_jellyOverrides.lines || []).forEach(ln => {
-                const numVal = typeof ln.value === 'number' ? ln.value : parseFloat(ln.value);
-                if (isNaN(numVal)) return;
-                const color = ln.color || '#ea4335';
-                if (ln.axis === 'y') {
-                    jellyShapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: numVal, y1: numVal, line: { color, width: 2, dash: 'dash' } });
-                    if (ln.label) jellyAnnotations.push({ xref: 'paper', x: 0.99, xanchor: 'right', yref: 'y', y: numVal, yanchor: 'bottom', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
-                } else {
-                    jellyShapes.push({ type: 'line', yref: 'paper', y0: 0, y1: 1, xref: 'x', x0: numVal, x1: numVal, line: { color, width: 2, dash: 'dash' } });
-                    if (ln.label) jellyAnnotations.push({ yref: 'paper', y: 0.99, yanchor: 'top', xref: 'x', x: numVal, xanchor: 'left', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
-                }
-            });
+            const { shapes: jellyShapes, annotations: jellyAnnotations } = buildJellyShapesAndAnnotations(TC);
             if (jellyShapes.length) layout.shapes = jellyShapes;
             if (jellyAnnotations.length) layout.annotations = jellyAnnotations;
 
@@ -301,6 +436,35 @@
 
         function createTraces(data) {
             let cmapName = urlParams.get('cmap') || 'thermal';
+            const isDiscrete09 = cmapName === 'discrete_09';
+
+            // --- Discrete 0-9 mode: one trace per integer value, legend instead of colorbar ---
+            if (isDiscrete09 && data.c && data.c.length) {
+                const isPhaseMode = (urlParams.get('c_var') || '') === 'SCI_PHASE';
+                const byVal = new Map();
+                for (let i = 0; i < data.x.length; i++) {
+                    const raw = data.c[i];
+                    if (raw === null || raw === undefined) continue;
+                    const v = Math.round(raw);
+                    if (v < 0 || v > 9) continue;
+                    if (!byVal.has(v)) byVal.set(v, { x: [], y: [] });
+                    byVal.get(v).x.push(data.x[i]);
+                    byVal.get(v).y.push(data.y[i]);
+                }
+                const traces = [];
+                for (const v of [...byVal.keys()].sort((a, b) => a - b)) {
+                    const pts = byVal.get(v);
+                    const label = isPhaseMode ? `${v}: ${SCI_PHASE_NAMES[v] || v}` : String(v);
+                    traces.push({
+                        x: pts.x, y: pts.y, mode: 'markers', type: 'scattergl',
+                        name: label,
+                        marker: { size: plotConfig.defaultMarkerSize, color: DISCRETE_09_COLORS[v], opacity: 0.85 },
+                        showlegend: true, hoverinfo: 'none',
+                    });
+                }
+                return traces;
+            }
+
             let effectiveColorscale = customColorscales[cmapName] || cmapName;
             let forceSolidColor = null;
 
@@ -365,14 +529,16 @@
                     traces.push({
                         x: smoothed.y, y: smoothed.x, mode: 'lines', type: 'scattergl',
                         line: { color: rm.color || '#ea4335', width: 2.5 },
-                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y'
+                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
+                        _isRunningMean: true
                     });
                 } else {
                     smoothed = computeRunningMean(data.x, data.y, win, !!data.is_x_dt);
                     traces.push({
                         x: smoothed.x, y: smoothed.y, mode: 'lines', type: 'scattergl',
                         line: { color: rm.color || '#ea4335', width: 2.5 },
-                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y'
+                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
+                        _isRunningMean: true
                     });
                 }
             }
@@ -436,6 +602,25 @@
             });
             
             const plotDiv = document.getElementById('plotDiv');
+
+            // Explicit double-click reset — Plotly's autorange relayout event isn't always
+            // reliably emitted after multiple Plotly.react calls (e.g. after Jelly overlays
+            // re-render the plot), so we handle the dbl-click directly to guarantee zoom-out.
+            plotDiv.on('plotly_doubleclick', function() {
+                console.log('[reset] plotly_doubleclick — resetting to original plotData');
+                _suppressRelayout = false;
+                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+                clearTimeout(_pendingBounds);
+                _currentZoom = null;
+                if (_originalPlotData) {
+                    plotData = _originalPlotData;
+                    Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max }, '*');
+                }
+                window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+                return false;
+            });
+
             plotDiv.on('plotly_relayout', function(eventData) {
                 if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
@@ -454,6 +639,7 @@
                 }
 
                 if (xAuto && yAuto) {
+                    console.log('[reset] plotly_relayout autorange — resetting to original plotData');
                     clearTimeout(_pendingBounds);
                     _currentZoom = null;
                     if (_originalPlotData) {
@@ -494,6 +680,7 @@
                 }
 
                 _currentZoom = { xMin, xMax, yMin, yMax };
+                console.log('[zoom] manual zoom set:', _currentZoom, '— scheduling bgFetch in 400ms');
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
@@ -543,12 +730,16 @@
                 }
 
                 plotData = newData;
+                plotData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
+                console.log('[bgFetch] high-res loaded, pts:', newData.x ? newData.x.length : 0, 'range:', { xMin, xMax, yMin, yMax });
 
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
                 const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
 
-                Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange));
+                _suppressRelayout = true;
+                Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange))
+                    .then(() => { _suppressRelayout = false; });
 
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max }, '*');
 
@@ -657,10 +848,7 @@
                 if ('runningMean' in ov) _jellyOverrides.runningMean = ov.runningMean;
                 if (ov.clear) _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
 
-                const zoom = _currentZoom;
-                const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
-                const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
-                Plotly.react('plotDiv', createTraces(plotData), buildLayout(xRange, yRange));
+                applyJellyOverrides();
             }
 
             if (msg.type === 'autoColour') {

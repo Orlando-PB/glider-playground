@@ -48,6 +48,7 @@ def main():
 
     if is_server:
         os.environ["IS_SERVER"] = "True"
+        os.environ["LOW_MEMORY_MODE"] = "true"
         host = "0.0.0.0"
         print(f"Running in Server Mode (0.0.0.0) on {current_hostname}")
     else:

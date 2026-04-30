@@ -1,3 +1,6 @@
+import hashlib
+import json
+import shutil
 import xarray as xr
 import numpy as np
 import pandas as pd
@@ -6,14 +9,37 @@ import datetime
 import os
 import functools
 import threading
+from pathlib import Path
 
 # Locked to 200k points max for optimal WebGL performance
 MAX_RENDER_POINTS = 200000
 
-# Filled by cache_logic during processing. When a file is preloaded its
-# variable arrays live entirely in RAM, so reads no longer touch the netCDF
-# at all. Every cached read path here checks _PRELOADED first.
-_PRELOADED: dict[str, dict] = {}
+# When LOW_MEMORY_MODE=true all preloaded arrays and CTD overlays are stored
+# on disk instead of kept permanently in RAM. Each request loads only what it
+# needs, uses it, then the memory is freed. Full prewarming still happens — it
+# just writes to the SSD rather than filling RAM.
+_LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
+_DISK_CACHE_ROOT = Path.home() / ".glider_playground"
+_PRELOAD_CACHE_DIR = _DISK_CACHE_ROOT / "preload"
+_CTD_CACHE_DIR = _DISK_CACHE_ROOT / "ctd_cache"
+if _LOW_MEMORY:
+    _PRELOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _CTD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _preload_dir(filepath: str) -> Path:
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    return _PRELOAD_CACHE_DIR / h
+
+
+def _ctd_cache_path(filepath: str, interpolate: bool, apply_ctd_qc: bool) -> Path:
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    return _CTD_CACHE_DIR / f"{h}_{int(interpolate)}_{int(apply_ctd_qc)}.npz"
+
+
+# In RAM mode: maps filepath -> {varname: array, ...}
+# In disk mode: maps filepath -> True (sentinel; arrays live on SSD)
+_PRELOADED: dict = {}
 _PRELOADED_LOCK = threading.RLock()
 
 
@@ -33,21 +59,86 @@ def _bust_caches():
             pass
 
 
-def set_preloaded(filepath: str, all_vars: dict):
+def stream_preload_to_disk(filepath: str, is_removed_fn=None):
+    """Stream each variable from the NetCDF directly to disk one at a time.
+
+    Avoids ever accumulating all arrays in RAM simultaneously. After this
+    returns, _PRELOADED[filepath] is set to True and arrays live on the SSD.
+    """
+    import gc
+    d = _preload_dir(filepath)
+    d.mkdir(parents=True, exist_ok=True)
+    names = []
+    with xr.open_dataset(filepath) as ds:
+        for name in ds.variables:
+            if is_removed_fn and is_removed_fn():
+                return
+            try:
+                arr = ds.variables[name].values
+                arr = arr.copy().ravel() if hasattr(arr, "ravel") else arr
+                np.save(str(d / f"{name}.npy"), np.asarray(arr))
+                names.append(name)
+                del arr
+            except Exception:
+                pass
+    (d / "_names.json").write_text(json.dumps(names))
     with _PRELOADED_LOCK:
-        _PRELOADED[filepath] = all_vars
+        _PRELOADED[filepath] = True
+    gc.collect()
+    _bust_caches()
+
+
+def set_preloaded(filepath: str, all_vars: dict):
+    if _LOW_MEMORY:
+        # Save to disk, then discard from RAM immediately.
+        d = _preload_dir(filepath)
+        d.mkdir(parents=True, exist_ok=True)
+        names = []
+        for name in list(all_vars.keys()):
+            arr = all_vars.pop(name)
+            try:
+                np.save(str(d / f"{name}.npy"), np.asarray(arr))
+                names.append(name)
+            except Exception:
+                pass
+            del arr
+        (d / "_names.json").write_text(json.dumps(names))
+        with _PRELOADED_LOCK:
+            _PRELOADED[filepath] = True
+    else:
+        with _PRELOADED_LOCK:
+            _PRELOADED[filepath] = all_vars
     _bust_caches()
 
 
 def clear_preloaded(filepath: str):
     with _PRELOADED_LOCK:
         _PRELOADED.pop(filepath, None)
+    if _LOW_MEMORY:
+        shutil.rmtree(_preload_dir(filepath), ignore_errors=True)
+        h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+        for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
+            f.unlink(missing_ok=True)
     _bust_caches()
 
 
 def _get_preloaded(filepath: str):
     with _PRELOADED_LOCK:
-        return _PRELOADED.get(filepath)
+        val = _PRELOADED.get(filepath)
+    if val is None:
+        return None
+    if _LOW_MEMORY:
+        d = _preload_dir(filepath)
+        names_f = d / "_names.json"
+        if not names_f.exists():
+            return None
+        try:
+            names = json.loads(names_f.read_text())
+            return {n: np.load(str(d / f"{n}.npy"), allow_pickle=False)
+                    for n in names if (d / f"{n}.npy").exists()}
+        except Exception:
+            return None
+    return val
 
 CTD_VARS = ("PRES", "TEMP", "CNDC")
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
@@ -72,9 +163,8 @@ def _report_ctd_stage(msg: str):
 
 
 @functools.lru_cache(maxsize=12)
-def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
-    """Pre-compute CTD-processed PRES/TEMP/CNDC (+ their _QC) once per
-    (file, interp, qc) combo and cache the result.
+def _ctd_processed_arrays_cached(filepath, interpolate: bool, apply_ctd_qc: bool):
+    """RAM-cached CTD overlay — used in normal (non-low-memory) mode.
 
     For the (interp=True, qc=True) combo the result is composed from the
     already-cached clean result + a single interpolation pass, rather than
@@ -99,10 +189,6 @@ def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
         needed.add(time_var)
 
     if interpolate and apply_ctd_qc:
-        # Compose: get the clean overlay (cheap, already cached from prewarm
-        # step 1), check if it actually changed anything, then apply only
-        # the interpolation step on top — avoids running the slow depth-
-        # proximity fill twice.
         clean = _ctd_processed_arrays(filepath, False, True)
         clean_changed = clean is not None and any(
             v in clean and v in pre
@@ -110,10 +196,8 @@ def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
             for v in CTD_VARS
         )
         if not clean_changed:
-            # Data was already clean — interp+clean == interp alone.
             return _ctd_processed_arrays(filepath, True, False)
 
-        # Merge clean results over raw arrays, then interpolate once.
         data_dict = {k: pre[k] for k in needed}
         for k, arr in clean.items():
             if k in data_dict:
@@ -134,6 +218,84 @@ def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
         if v in processed: overlay[v] = processed[v]
         if f"{v}_QC" in processed: overlay[f"{v}_QC"] = processed[f"{v}_QC"]
     return overlay
+
+
+def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
+    """Disk-backed CTD overlay — used in low-memory mode.
+
+    On first call (during prewarm): compute overlay and save as .npz.
+    On subsequent calls (plot requests): load .npz, return, GC'd after use.
+    No arrays are kept in RAM between requests.
+    """
+    if not (interpolate or apply_ctd_qc):
+        return None
+    cache_path = _ctd_cache_path(filepath, interpolate, apply_ctd_qc)
+    if cache_path.exists():
+        try:
+            with np.load(str(cache_path)) as f:
+                return dict(f)
+        except Exception:
+            pass
+
+    pre = _get_preloaded(filepath)
+    if pre is None or not any(v in pre for v in CTD_VARS):
+        return None
+
+    time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
+
+    needed = set()
+    for v in CTD_VARS:
+        if v in pre:
+            needed.add(v)
+            if f"{v}_QC" in pre:
+                needed.add(f"{v}_QC")
+    if time_var:
+        needed.add(time_var)
+
+    if interpolate and apply_ctd_qc:
+        clean = _ctd_from_disk(filepath, False, True)
+        clean_changed = clean is not None and any(
+            v in clean and v in pre
+            and np.any(np.isnan(clean[v]) != np.isnan(pre[v]))
+            for v in CTD_VARS
+        )
+        if not clean_changed:
+            return _ctd_from_disk(filepath, True, False)
+
+        data_dict = {k: pre[k] for k in needed}
+        for k, arr in clean.items():
+            if k in data_dict:
+                data_dict[k] = arr.copy()
+        processed = _apply_ctd_processing(
+            data_dict, time_var, _get_var_units(filepath),
+            interpolate=True, apply_ctd_qc=False,
+        )
+    else:
+        data_dict = {k: pre[k] for k in needed}
+        processed = _apply_ctd_processing(
+            data_dict, time_var, _get_var_units(filepath),
+            interpolate=interpolate, apply_ctd_qc=apply_ctd_qc,
+        )
+
+    overlay = {}
+    for v in CTD_VARS:
+        if v in processed: overlay[v] = processed[v]
+        if f"{v}_QC" in processed: overlay[f"{v}_QC"] = processed[f"{v}_QC"]
+
+    if overlay:
+        try:
+            np.savez(str(cache_path), **overlay)
+        except Exception:
+            pass
+
+    return overlay or None
+
+
+def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
+    """Public entry point — dispatches to disk or RAM cache depending on mode."""
+    if _LOW_MEMORY:
+        return _ctd_from_disk(filepath, interpolate, apply_ctd_qc)
+    return _ctd_processed_arrays_cached(filepath, interpolate, apply_ctd_qc)
 
 
 def ctd_interp_recommended(filepath) -> bool:
@@ -296,9 +458,20 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
 
 @functools.lru_cache(maxsize=32)
 def _get_var_names(filepath):
-    pre = _get_preloaded(filepath)
-    if pre is not None:
-        return list(pre.keys())
+    if _LOW_MEMORY:
+        with _PRELOADED_LOCK:
+            is_preloaded = filepath in _PRELOADED
+        if is_preloaded:
+            names_f = _preload_dir(filepath) / "_names.json"
+            if names_f.exists():
+                try:
+                    return json.loads(names_f.read_text())
+                except Exception:
+                    pass
+    else:
+        pre = _get_preloaded(filepath)
+        if pre is not None:
+            return list(pre.keys())
     if not os.path.exists(filepath): return []
     try:
         with xr.open_dataset(filepath) as ds:
@@ -306,11 +479,26 @@ def _get_var_names(filepath):
     except Exception:
         return []
 
-@functools.lru_cache(maxsize=16)
+@functools.lru_cache(maxsize=4 if _LOW_MEMORY else 16)
 def _read_vars_cached(filepath, var_names_tuple):
-    pre = _get_preloaded(filepath)
-    if pre is not None:
-        return {name: pre[name] for name in var_names_tuple if name in pre}
+    if _LOW_MEMORY:
+        with _PRELOADED_LOCK:
+            is_preloaded = filepath in _PRELOADED
+        if is_preloaded:
+            d = _preload_dir(filepath)
+            result = {}
+            for name in var_names_tuple:
+                f = d / f"{name}.npy"
+                if f.exists():
+                    try:
+                        result[name] = np.load(str(f), allow_pickle=False)
+                    except Exception:
+                        pass
+            return result or None
+    else:
+        pre = _get_preloaded(filepath)
+        if pre is not None:
+            return {name: pre[name] for name in var_names_tuple if name in pre}
     if not os.path.exists(filepath): return None
     try:
         with xr.open_dataset(filepath) as ds:
@@ -467,6 +655,32 @@ def _apply_profile_mask(data_dict, profile_num):
         return (prof_vals == float(profile_num)) & ~np.isnan(prof_vals)
 
 
+def _apply_cycle_mask(data_dict, cycle_num, cycle_var):
+    if cycle_num is None or not cycle_var or cycle_var not in data_dict:
+        return None
+    vals = data_dict[cycle_var].astype(float)
+    with np.errstate(invalid='ignore'):
+        return (vals == float(cycle_num)) & ~np.isnan(vals)
+
+
+def _apply_phase_mask(data_dict, sci_phases):
+    if not sci_phases or "SCI_PHASE" not in data_dict:
+        return None
+    allowed = [float(p) for p in sci_phases]
+    phase_vals = data_dict["SCI_PHASE"].astype(float)
+    with np.errstate(invalid='ignore'):
+        return np.isin(phase_vals, allowed) & ~np.isnan(phase_vals)
+
+
+def _apply_direction_mask(data_dict, directions):
+    if not directions or "PROFILE_DIRECTION" not in data_dict:
+        return None
+    allowed = [float(d) for d in directions]
+    dir_vals = data_dict["PROFILE_DIRECTION"].astype(float)
+    with np.errstate(invalid='ignore'):
+        return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
+
+
 def _calculate_mld(plot_x, plot_y, plot_c, is_x_dt):
     if not is_x_dt or len(plot_x) == 0 or plot_c is None:
         return [], []
@@ -521,7 +735,7 @@ def _calculate_mld(plot_x, plot_y, plot_c, is_x_dt):
     return x_out, y_out
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, calc_mld=False, ctd_interpolate=False, ctd_qc=False):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, calc_mld=False, ctd_interpolate=False, ctd_qc=False):
     if isinstance(c_var, str) and "|mld" in c_var:
         calc_mld = True
         c_var = c_var.replace("|mld", "")
@@ -550,6 +764,15 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
+
+    if cycle_num is not None and cycle_var and cycle_var in var_names:
+        vars_to_extract.add(cycle_var)
+
+    if sci_phases and "SCI_PHASE" in var_names:
+        vars_to_extract.add("SCI_PHASE")
+
+    if direction_filter and "PROFILE_DIRECTION" in var_names:
+        vars_to_extract.add("PROFILE_DIRECTION")
 
     if ctd_interpolate or ctd_qc:
         for v in CTD_VARS:
@@ -601,6 +824,19 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         old_sum = current_mask.sum()
         current_mask &= profile_mask
         stats["profile_removed"] = int(old_sum - current_mask.sum())
+
+    cycle_mask = _apply_cycle_mask(data_dict, cycle_num, cycle_var)
+    if cycle_mask is not None:
+        current_mask &= cycle_mask
+
+    phase_mask = _apply_phase_mask(data_dict, sci_phases)
+    if phase_mask is not None:
+        current_mask &= phase_mask
+
+    dir_mask = _apply_direction_mask(data_dict, direction_filter)
+    if dir_mask is not None:
+        current_mask &= dir_mask
+
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
             c_vals_numeric = np.zeros(len(c_vals), dtype=float)
@@ -707,7 +943,8 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
                           highlight_qc=False, filter_time=True,
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
-                          profile_num=None, calc_mld=False, ctd_interpolate=False, ctd_qc=False):
+                          profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
+                          calc_mld=False, ctd_interpolate=False, ctd_qc=False):
     if isinstance(c_var, str) and "|mld" in c_var:
         calc_mld = True
         c_var = c_var.replace("|mld", "")
@@ -735,6 +972,12 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         vars_to_extract.add(actual_time_var)
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
+    if cycle_num is not None and cycle_var and cycle_var in var_names:
+        vars_to_extract.add(cycle_var)
+    if sci_phases and "SCI_PHASE" in var_names:
+        vars_to_extract.add("SCI_PHASE")
+    if direction_filter and "PROFILE_DIRECTION" in var_names:
+        vars_to_extract.add("PROFILE_DIRECTION")
     if ctd_interpolate or ctd_qc:
         for v in CTD_VARS:
             if v in var_names:
@@ -773,6 +1016,18 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     profile_mask = _apply_profile_mask(data_dict, profile_num)
     if profile_mask is not None:
         valid_mask &= profile_mask
+
+    cycle_mask = _apply_cycle_mask(data_dict, cycle_num, cycle_var)
+    if cycle_mask is not None:
+        valid_mask &= cycle_mask
+
+    phase_mask = _apply_phase_mask(data_dict, sci_phases)
+    if phase_mask is not None:
+        valid_mask &= phase_mask
+
+    dir_mask = _apply_direction_mask(data_dict, direction_filter)
+    if dir_mask is not None:
+        valid_mask &= dir_mask
 
     if apply_qc:
         try:

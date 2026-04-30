@@ -6,6 +6,7 @@
     <link rel="icon" href="/static/icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/console_log.js"></script>
+    <script src="/static/cycle_profile.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
     <script>
         // Apply saved theme before any CSS variable is consumed to avoid FOUC.
@@ -513,15 +514,6 @@
         :root[data-theme="light"] .toggle-btn { background-color: #c8d0dc; color: #1f2937; }
         :root[data-theme="light"] .toggle-btn:hover:not(:disabled) { background-color: #b8c0cd; }
 
-        /* ---------- Badges ---------- */
-        #qcBadge {
-            background: rgba(52,211,153,0.15) !important;
-            color: var(--success) !important;
-            border: none !important;
-            border-radius: 999px !important;
-            padding: 4px 10px !important;
-            backdrop-filter: blur(6px);
-        }
 
         /* ---------- Inspector card ---------- */
         #inspectorContainer {
@@ -794,27 +786,9 @@
                 <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
                 <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Keep only samples whose _QC flag is in the allowed list">Apply QC</button>
                 <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;" title="Show bad-QC samples in red instead of hiding them">Highlight</button>
-                <div id="qcFlagsContainer" class="flex items-center gap-1 relative group" style="display: none;">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-0.5 cursor-help">
-                        Flags <span class="material-symbols-outlined text-[12px]">info</span>
-                    </span>
-                    <div class="absolute top-[120%] left-0 hidden group-hover:block text-[10px] p-3 rounded-md w-[340px] z-50" style="background: var(--tooltip-bg); color: #ffffff; border: 1px solid var(--border-strong); box-shadow: var(--shadow-md);">
-                        <table class="w-full text-left border-collapse leading-tight">
-                            <tbody>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">0</td><td class="py-0.5 text-gray-300">No QC performed.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">1</td><td class="py-0.5">Good data. Passed all tests.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-yellow-400">2</td><td class="py-0.5 text-yellow-300">Probably good. Valid but not all tests applied.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-400">3</td><td class="py-0.5 text-red-300">Bad data that are potentially correctable.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-red-500">4</td><td class="py-0.5 text-red-400">Bad data. Definitely erroneous.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-blue-300">5</td><td class="py-0.5 text-blue-200">Value changed. Interpolated or adjusted.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">6</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-gray-500">7</td><td class="py-0.5 text-gray-400">Not used.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top text-purple-300">8</td><td class="py-0.5 text-purple-200">Interpolated value.</td></tr>
-                                <tr><td class="font-bold pr-2 py-0.5 align-top">9</td><td class="py-0.5 text-gray-300">Missing value.</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <input type="text" id="qcFlags" value="0,1,2,5,8" class="w-[64px] p-1 text-[10px] text-center transition-colors" title="Comma-separated list of allowed QC flags">
+                <div id="qcFlagsContainer" class="flex items-center gap-0.5" style="display: none;">
+                    <!-- QC flag chips 0-9 built by buildQcChips() -->
+                    <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
                 </div>
             </div>
 
@@ -828,23 +802,62 @@
                 <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
             </div>
 
-            <div id="profileDivider" class="group-divider" style="display: none;"></div>
-            <div id="profileContainer" class="toolbar-group" style="display: none;">
+            <div id="navigateDivider" class="group-divider" style="display: none;"></div>
+            <div id="navigateContainer" class="toolbar-group" style="display: none;">
                 <span class="group-label">
-                    Profile
-                    <span class="info-dot" data-tip="Navigate individual dives/ascents. Arrow keys step, number input jumps, X clears the selection."><span class="material-symbols-outlined">info</span></span>
+                    Navigate
+                    <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
                 </span>
-                <button id="profilePrevBtn" class="toggle-btn px-1.5 py-1 rounded" title="Previous profile">
-                    <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                </button>
-                <input type="number" id="profileNumInput" class="w-14 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
-                <button id="profileNextBtn" class="toggle-btn px-1.5 py-1 rounded" title="Next profile">
-                    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                </button>
-                <span id="profileDirIcon" class="material-symbols-outlined text-[14px] text-gray-500 w-4 text-center" title="Direction"></span>
-                <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed text-[12px] px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
-                    <span class="material-symbols-outlined text-[14px]">close</span>
-                </button>
+                <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
+                    <span class="text-[9px] font-medium w-6 shrink-0" style="color: var(--text-muted);">Prof</span>
+                    <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
+                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                    </button>
+                    <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
+                    <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
+                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                    </button>
+                    <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
+                    <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                        <span class="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                </div>
+                <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
+                <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
+                    <span class="text-[9px] font-medium w-6 shrink-0" style="color: var(--text-muted);">Cyc</span>
+                    <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
+                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                    </button>
+                    <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
+                    <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
+                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                    </button>
+                    <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
+                        <span class="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="phaseDivider" class="group-divider" style="display: none;"></div>
+            <div id="phaseContainer" class="toolbar-group" style="display: none;">
+                <span class="group-label">
+                    Phases
+                    <span class="info-dot" data-tip="Filter by SCI_PHASE value. All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
+                <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
+                <div id="dirContainer" class="flex gap-0.5 items-center pl-1.5 border-l border-gray-300/40" style="display: none;">
+                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Direction</span>
+                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
+                        <span class="material-symbols-outlined text-[11px]">arrow_upward</span>Asc
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
+                        <span class="material-symbols-outlined text-[11px]">arrow_downward</span>Des
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="0" title="Transect — horizontal propulsion">
+                        <span class="material-symbols-outlined text-[11px]">swap_horiz</span>Tran
+                    </button>
+                </div>
             </div>
 
             <div class="group-divider"></div>
@@ -952,9 +965,6 @@
                         </div>
                     </div>
 
-                    <div id="qcBadge" class="hidden absolute top-6 right-6 text-[10px] font-bold px-3 py-1.5 flex items-center gap-1 cursor-help" title="Data has been automatically cleaned using the dataset's _QC variables">
-                        <span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied
-                    </div>
 
                     <div id="emptyState" class="flex flex-col items-center gap-2 absolute inset-0 m-auto h-fit pointer-events-none" style="color: var(--text-muted);">
                         <span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span>
@@ -1041,6 +1051,66 @@
         
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
+
+        const QC_CHIP_COLORS = [
+            '#9ca3af', '#22c55e', '#a3e635', '#f97316', '#ef4444',
+            '#3b82f6', '#d1d5db', '#d1d5db', '#a855f7', '#374151',
+        ];
+        const QC_CHIP_NAMES = [
+            'No QC', 'Good', 'Probably Good', 'Probably Bad', 'Bad',
+            'Changed', 'Not Used', 'Not Used', 'Interpolated', 'Missing',
+        ];
+
+        function buildQcChips() {
+            if (qcFlagsContainer.dataset.built) return;
+            qcFlagsContainer.dataset.built = '1';
+            for (let i = 0; i <= 9; i++) {
+                const btn = document.createElement('button');
+                btn.className = 'qc-chip toggle-btn px-1.5 py-0.5 rounded text-[9px] font-medium';
+                btn.dataset.flag = i;
+                btn.title = `${i}: ${QC_CHIP_NAMES[i]}`;
+                btn.textContent = i;
+                btn.style.borderBottom = `2px solid ${QC_CHIP_COLORS[i]}`;
+                btn.addEventListener('click', () => {
+                    const active = [...qcFlagsContainer.querySelectorAll('.qc-chip.active')]
+                        .map(b => parseInt(b.dataset.flag));
+                    const allActive = active.length === 10;
+                    if (allActive) {
+                        // First click: deselect everything except this chip
+                        qcFlagsContainer.querySelectorAll('.qc-chip').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                    } else {
+                        btn.classList.toggle('active');
+                        const nowActive = [...qcFlagsContainer.querySelectorAll('.qc-chip.active')].length;
+                        if (nowActive === 0) {
+                            // Re-activate all when last chip is deselected
+                            qcFlagsContainer.querySelectorAll('.qc-chip').forEach(b => b.classList.add('active'));
+                        }
+                    }
+                    updateQcFromChips();
+                });
+                qcFlagsContainer.appendChild(btn);
+            }
+            syncQcChips();
+        }
+
+        function syncQcChips() {
+            if (!qcFlagsContainer.dataset.built) return;
+            const vals = new Set(qcFlagsInput.value.split(',').map(v => v.trim()).filter(Boolean).map(Number));
+            const allTen = vals.size === 10;
+            qcFlagsContainer.querySelectorAll('.qc-chip').forEach(btn => {
+                const v = parseInt(btn.dataset.flag);
+                btn.classList.toggle('active', allTen || vals.has(v));
+            });
+        }
+
+        function updateQcFromChips() {
+            const active = [...qcFlagsContainer.querySelectorAll('.qc-chip.active')]
+                .map(b => parseInt(b.dataset.flag));
+            qcFlagsInput.value = active.join(',');
+            resetPlotState(false);
+            updatePlot();
+        }
         const ctdContainer = document.getElementById('ctdContainer');
         const ctdDivider = document.getElementById('ctdDivider');
         const ctdInterpBtn = document.getElementById('ctdInterpBtn');
@@ -1050,7 +1120,6 @@
         const datasetSelect = document.getElementById('dataset'), resetBtn = document.getElementById('resetBtn');
         const plotIframe = document.getElementById('plotIframe');
         const plotAreaWrapper = document.getElementById('plotAreaWrapper');
-        const qcBadge = document.getElementById('qcBadge');
         
         const xSelect = document.getElementById('xVar'), ySelect = document.getElementById('yVar');
         const cVarSelect = document.getElementById('cVar');
@@ -1109,20 +1178,35 @@
                 addBtn(name + '_r', `linear-gradient(to right, ${rev.join(', ')})`, name + ' (reversed)');
             }
             addBtn('black', '#000000', 'solid black');
+            addBtn('discrete_09',
+                'linear-gradient(to right, #9ca3af,#22c55e,#3b82f6,#f97316,#a855f7,#06b6d4,#ef4444,#eab308,#ec4899,#84cc16)',
+                'Discrete 0–9 (phases / QC flags) — shows legend, no colour bar');
         })();
 
         const cmapInput = document.getElementById('cmap'), cmapOptions = Array.from(document.querySelectorAll('.cmap-option'));
 
-        const profileContainer = document.getElementById('profileContainer');
-        const profileDivider = document.getElementById('profileDivider');
-        const profilePrevBtn = document.getElementById('profilePrevBtn');
-        const profileNextBtn = document.getElementById('profileNextBtn');
-        const profileNumInput = document.getElementById('profileNumInput');
-        const profileDirIcon = document.getElementById('profileDirIcon');
-        const profileClearBtn = document.getElementById('profileClearBtn');
-
-        let profileList = [];
-        let currentProfileNum = null;
+        // Profile / Cycle / Phase / Direction controls — managed by CycleProfile module
+        CycleProfile.init({
+            navigateContainer:  document.getElementById('navigateContainer'),
+            navigateDivider:    document.getElementById('navigateDivider'),
+            cycleNavSep:        document.getElementById('cycleNavSep'),
+            profileContainer:   document.getElementById('profileContainer'),
+            profilePrevBtn:     document.getElementById('profilePrevBtn'),
+            profileNextBtn:     document.getElementById('profileNextBtn'),
+            profileNumInput:    document.getElementById('profileNumInput'),
+            profileDirIcon:     document.getElementById('profileDirIcon'),
+            profileClearBtn:    document.getElementById('profileClearBtn'),
+            cycleContainer:     document.getElementById('cycleContainer'),
+            cyclePrevBtn:       document.getElementById('cyclePrevBtn'),
+            cycleNextBtn:       document.getElementById('cycleNextBtn'),
+            cycleNumInput:      document.getElementById('cycleNumInput'),
+            cycleClearBtn:      document.getElementById('cycleClearBtn'),
+            phaseContainer:     document.getElementById('phaseContainer'),
+            phaseDivider:       document.getElementById('phaseDivider'),
+            phaseChipsContainer:document.getElementById('phaseChipsContainer'),
+            phaseAllBtn:        document.getElementById('phaseAllBtn'),
+            dirContainer:       document.getElementById('dirContainer'),
+        }, () => { resetPlotState(true); updatePlot(); });
 
         const cTrimContainer = document.getElementById('cTrimContainer');
         const cTrimTrack = document.getElementById('cTrimTrack');
@@ -1144,6 +1228,7 @@
         let isDraggingCTop = false, isDraggingCBottom = false;
 
         const OceanPresets = {
+            preset_phases: { text: 'Phases', icon: 'lens_blur', bg: 'bg-gray-100', textCol: 'text-gray-700', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['SCI_PHASE'], cmap: 'discrete_09', invert: true },
             preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'thermal', invert: true },
             preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'deep', invert: false },
             preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'haline', invert: true },
@@ -1224,7 +1309,7 @@
                     currentColorLimits = { cMin: msg.globalLimits.cMin, cMax: msg.globalLimits.cMax };
                 }
 
-                if (msg.hasC) {
+                if (msg.hasC && cmapInput.value !== 'discrete_09') {
                     baseCMin = msg.globalLimits.cMin;
                     baseCMax = msg.globalLimits.cMax;
                     cTrimContainer.classList.replace('hidden', 'flex');
@@ -1232,16 +1317,6 @@
                     cTrimContainer.classList.replace('flex', 'hidden');
                 }
 
-                if (msg.qc_applied && highlightQcBtn.classList.contains('active')) {
-                    qcBadge.innerHTML = `<span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Highlighted`;
-                    qcBadge.classList.remove('hidden');
-                } else if (msg.qc_applied) {
-                    qcBadge.innerHTML = `<span class="material-symbols-outlined text-[14px]">auto_awesome</span> QC Applied`;
-                    qcBadge.classList.remove('hidden');
-                } else {
-                    qcBadge.classList.add('hidden');
-                }
-                
                 if (msg.stats) {
                     plotStatsContainer.classList.remove('hidden');
                     plotStatsContainer.classList.add('flex');
@@ -1269,7 +1344,6 @@
                     <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
                 `;
                 downloadBtn.classList.add('hidden');
-                qcBadge.classList.add('hidden');
                 cTrimContainer.classList.replace('flex', 'hidden');
                 plotStatsContainer.classList.add('hidden');
             }
@@ -1296,6 +1370,7 @@
                 } else {
                     currentZoomBounds = null;
                 }
+                CycleProfile.setZoomBounds(currentZoomBounds, isXDateTime);
             }
             else if (msg.type === 'autoColourResult') {
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
@@ -1396,7 +1471,6 @@
             plotIframe.classList.add('hidden');
             emptyState.classList.remove('hidden');
             emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables to Plot</p>`;
-            qcBadge.classList.add('hidden');
             downloadBtn.classList.add('hidden');
 
             if (fullReset) {
@@ -1555,10 +1629,10 @@
                 cmapInput.value = btn.dataset.val;
                 updateCmapGradient(btn.dataset.val);
                 cmapMenu.classList.add('hidden');
-                
+                if (btn.dataset.val === 'discrete_09') cTrimContainer.classList.replace('flex', 'hidden');
                 checkAndUpdatePreset();
-                resetPlotState(false); 
-                updatePlot(); 
+                resetPlotState(false);
+                updatePlot();
             });
         });
 
@@ -1762,6 +1836,7 @@
                 updateToggleBtn(filterTimeBtn, false);
                 updateToggleBtn(highlightQcBtn, false);
 
+                buildQcChips();
                 qcFlagsContainer.style.display = 'flex';
                 highlightQcBtn.style.display = 'flex';
             }
@@ -1817,9 +1892,11 @@
         
         applyQcBtn.addEventListener('click', () => {
             applyQcBtn.classList.toggle('active');
-            qcFlagsContainer.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
-            highlightQcBtn.style.display = applyQcBtn.classList.contains('active') ? 'flex' : 'none';
-            resetPlotState(false); 
+            const qcOn = applyQcBtn.classList.contains('active');
+            if (qcOn) buildQcChips();
+            qcFlagsContainer.style.display = qcOn ? 'flex' : 'none';
+            highlightQcBtn.style.display = qcOn ? 'flex' : 'none';
+            resetPlotState(false);
             updatePlot();
         });
         
@@ -1857,106 +1934,6 @@
             }
         });
 
-        const DIR_ICONS = { 1: 'arrow_upward', '-1': 'arrow_downward', 0: 'swap_horiz' };
-        const DIR_LABELS = { 1: 'Ascending', '-1': 'Descending', 0: 'Transect' };
-
-        async function loadProfiles(fileId) {
-            profileList = [];
-            try {
-                const res = await fetch(`/api/profiles?id=${encodeURIComponent(fileId)}`);
-                const data = await res.json();
-                if (data.has_profiles && data.profiles.length > 0) {
-                    profileList = data.profiles;
-                    profileContainer.style.display = 'flex';
-                    profileDivider.style.display = 'block';
-                } else {
-                    profileContainer.style.display = 'none';
-                    profileDivider.style.display = 'none';
-                    currentProfileNum = null;
-                }
-            } catch (e) {
-                console.error("Failed to load profiles:", e);
-                profileContainer.style.display = 'none';
-                profileDivider.style.display = 'none';
-                currentProfileNum = null;
-            }
-            syncProfileUI();
-        }
-
-        function syncProfileUI() {
-            if (currentProfileNum === null || currentProfileNum === undefined) {
-                profileNumInput.value = '';
-                profileDirIcon.textContent = '';
-                profileDirIcon.title = '';
-                profileClearBtn.style.display = 'none';
-            } else {
-                profileNumInput.value = currentProfileNum;
-                profileClearBtn.style.display = 'inline-flex';
-                const entry = profileList.find(p => p.number === currentProfileNum);
-                const dir = entry && entry.direction !== undefined ? entry.direction : null;
-                if (dir !== null && DIR_ICONS[dir] !== undefined) {
-                    profileDirIcon.textContent = DIR_ICONS[dir];
-                    profileDirIcon.title = DIR_LABELS[dir] || '';
-                } else {
-                    profileDirIcon.textContent = '';
-                    profileDirIcon.title = '';
-                }
-            }
-        }
-
-        function stepProfile(delta) {
-            if (!profileList.length) return;
-
-            let candidates = profileList;
-            const needZoomFilter = (currentProfileNum === null || currentProfileNum === undefined)
-                && currentZoomBounds && isXDateTime
-                && profileList.some(p => p.time_min && p.time_max);
-            if (needZoomFilter) {
-                const zMin = new Date(currentZoomBounds.xMin).getTime();
-                const zMax = new Date(currentZoomBounds.xMax).getTime();
-                const inZoom = profileList.filter(p => {
-                    if (!p.time_min || !p.time_max) return false;
-                    const pMin = new Date(p.time_min).getTime();
-                    const pMax = new Date(p.time_max).getTime();
-                    return pMax >= zMin && pMin <= zMax;
-                });
-                if (inZoom.length) candidates = inZoom;
-            }
-
-            const numbers = candidates.map(p => p.number);
-            let idx;
-            if (currentProfileNum === null || currentProfileNum === undefined || numbers.indexOf(currentProfileNum) === -1) {
-                idx = delta > 0 ? 0 : numbers.length - 1;
-            } else {
-                idx = Math.max(0, Math.min(numbers.length - 1, numbers.indexOf(currentProfileNum) + delta));
-            }
-            currentProfileNum = numbers[idx];
-            syncProfileUI();
-            resetPlotState(true);
-            updatePlot();
-        }
-
-        profilePrevBtn.addEventListener('click', () => stepProfile(-1));
-        profileNextBtn.addEventListener('click', () => stepProfile(1));
-        profileClearBtn.addEventListener('click', () => {
-            currentProfileNum = null;
-            syncProfileUI();
-            resetPlotState(true);
-            updatePlot();
-        });
-        profileNumInput.addEventListener('change', () => {
-            const v = profileNumInput.value.trim();
-            if (v === '') {
-                currentProfileNum = null;
-            } else {
-                const n = Number(v);
-                if (isNaN(n)) { syncProfileUI(); return; }
-                currentProfileNum = n;
-            }
-            syncProfileUI();
-            resetPlotState(true);
-            updatePlot();
-        });
 
         async function loadMapImage() {
             const fileId = datasetSelect.value;
@@ -2145,7 +2122,6 @@
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
             plotIframe.classList.add('hidden');
-            qcBadge.classList.add('hidden');
             downloadBtn.classList.add('hidden');
             processingTitle.textContent = rec.status === 'error'
                 ? 'Failed to process file'
@@ -2308,7 +2284,7 @@
             plotQueued = false;
 
             resetPlotState(true);
-            currentProfileNum = null;
+            CycleProfile.fullReset();
             parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
             const fileId = datasetSelect.value;
             if (!fileId) return;
@@ -2316,7 +2292,7 @@
             await loadDatasetInfo(fileId);
             await loadMapImage();
             await loadVariables();
-            await loadProfiles(fileId);
+            await CycleProfile.loadFile(fileId);
             loadLocation(fileId);
 
             switchTab('tab3D');
@@ -2521,9 +2497,7 @@
                     ctd_qc: ctdQcBtn.classList.contains('active')
                 });
 
-                if (currentProfileNum !== null && currentProfileNum !== undefined) {
-                    params.set('profile_num', currentProfileNum);
-                }
+                Object.entries(CycleProfile.getParams()).forEach(([k, v]) => params.set(k, v));
 
                 if (currentZoomBounds) {
                     params.set('zXmin', currentZoomBounds.xMin);
@@ -2572,8 +2546,7 @@
         resetBtn.addEventListener('click', () => {
             currentPreset = 'preset_temp';
             applyPreset(currentPreset);
-            currentProfileNum = null;
-            syncProfileUI();
+            CycleProfile.resetState();
             currentZoomBounds = null;
             // Clear all Jelly overlays
             parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
@@ -2723,12 +2696,7 @@
                 files,
                 current_file: activeRec ? activeRec.name : '',
                 variables: vars,
-                profile_info: {
-                    has_profiles: profileList.length > 0,
-                    count: profileList.length,
-                    has_direction: profileList.some(p => p.direction !== undefined),
-                    current_profile: currentProfileNum
-                },
+                profile_info: { ...CycleProfile.getParams(), ...CycleProfile.getCapabilities() },
                 plot_state: {
                     x: xSelect.value, y: ySelect.value, c: cVarSelect.value,
                     cmap: cmapInput.value,
@@ -2884,17 +2852,24 @@
                     break;
                 }
                 case 'set_profile': {
-                    currentProfileNum = (a.profile_num === null || a.profile_num === undefined) ? null : Number(a.profile_num);
-                    syncProfileUI();
-                    resetPlotState(true);
-                    updatePlot();
+                    // Delegate to CycleProfile by simulating an input change
+                    const pInp = document.getElementById('profileNumInput');
+                    if (pInp) {
+                        pInp.value = (a.profile_num === null || a.profile_num === undefined) ? '' : a.profile_num;
+                        pInp.dispatchEvent(new Event('change'));
+                    }
+                    break;
+                }
+                case 'set_navigate': {
+                    if (Array.isArray(a.sci_phases))      CycleProfile.setPhases(a.sci_phases);
+                    if (Array.isArray(a.direction_filter)) CycleProfile.setDirection(a.direction_filter);
                     break;
                 }
                 case 'set_qc': {
                     if (typeof a.apply === 'boolean' && !applyQcBtn.disabled && applyQcBtn.classList.contains('active') !== a.apply) applyQcBtn.click();
                     if (typeof a.highlight === 'boolean' && highlightQcBtn.style.display !== 'none' && highlightQcBtn.classList.contains('active') !== a.highlight) highlightQcBtn.click();
                     if (typeof a.filter_time === 'boolean' && filterTimeBtn.classList.contains('active') !== a.filter_time) filterTimeBtn.click();
-                    if (a.flags) { qcFlagsInput.value = a.flags; resetPlotState(false); updatePlot(); }
+                    if (a.flags) { qcFlagsInput.value = a.flags; syncQcChips(); resetPlotState(false); updatePlot(); }
                     break;
                 }
                 case 'set_ctd': {

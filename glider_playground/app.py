@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cache_logic
+from . import cycle_profile_logic
 from . import jelly_logic
 from . import plot_logic
 from . import spatial_logic
@@ -265,17 +266,26 @@ def api_profiles(id: str):
     return _cached_or_live(id, "profiles", plot_logic.get_profiles)
 
 
+@app.get("/api/cycles")
+def api_cycles(id: str):
+    return cycle_profile_logic.get_cycles(_resolve_path(id))
+
+
 @app.get("/api/plot_data")
 def api_plot_data(
     id: str, x_var: str, y_var: str, c_var: str = "",
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
     profile_num: float = None,
+    cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     ctd_interpolate: bool = False, ctd_qc: bool = False,
 ):
+    phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
+    dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
     return plot_logic.get_plot_data_json(
         _resolve_path(id), x_var, y_var, c_var,
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
         filter_time=filter_time, profile_num=profile_num,
+        cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
         ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
     )
 
@@ -286,14 +296,18 @@ def api_plot_data_bounds(
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
     x_min: float = None, x_max: float = None, y_min: float = None, y_max: float = None,
     profile_num: float = None,
+    cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     ctd_interpolate: bool = False, ctd_qc: bool = False,
 ):
+    phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
+    dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
     return plot_logic.get_plot_data_bounds(
         _resolve_path(id), x_var, y_var, c_var,
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
         filter_time=filter_time,
         x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
         profile_num=profile_num,
+        cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
         ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
     )
 

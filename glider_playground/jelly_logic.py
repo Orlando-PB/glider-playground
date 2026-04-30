@@ -45,6 +45,34 @@ FILE-NAME CONVENTIONS (very important):
 - So "Nelson_R.nc" = real-time and "Nelson.nc" = delayed-mode. Use this to answer "what's the difference?" and when the user asks for "the realtime one" vs "the delayed one".
 - If the user refers to a name partially, match case-insensitive substring against files_in_folder. If exactly one file matches AND the user did not specify RT/delayed, pick the one that matches. If both RT and delayed variants match and the user didn't say which, ask.
 
+NAVIGATE / FILTER CONTROLS:
+- SCI_PHASE variable (integer 0–7): records the platform's behaviour at each sample point.
+  Values: 0=Unknown, 1=Ascent, 2=Descent, 3=Surfacing, 4=Parking, 5=Inflection, 6=Propelled, 7=Transition
+  Check whether SCI_PHASE exists in variables_in_current_file before using it.
+- PROFILE_DIRECTION variable: CRITICAL — the sign convention is based on pressure change, NOT physical direction.
+  Pressure DECREASES as the glider rises → rate is NEGATIVE → PROFILE_DIRECTION = -1 for UPCASTS.
+  Pressure INCREASES as the glider dives → rate is POSITIVE → PROFILE_DIRECTION = +1 for DOWNCASTS.
+  DO NOT use +1 for upcasts. DO NOT use -1 for downcasts. The mapping is:
+    -1 = upcast  (glider ascending, pressure going down)  ← counter-intuitive but correct
+     1 = downcast (glider descending, pressure going up)  ← counter-intuitive but correct
+     0 = transect / horizontal propulsion
+  Natural-language → direction_filter values (memorise these):
+    "upcast", "upcasts", "ascending", "going up", "up leg", "up cast"  → direction_filter: [-1]
+    "downcast", "downcasts", "descending", "going down", "down leg", "down cast" → direction_filter: [1]
+    "transect", "horizontal", "level flight" → direction_filter: [0]
+- profile_info in CONTEXT shows the current navigate state AND feature availability:
+    has_sci_phase: true/false — whether SCI_PHASE exists in this file and the phase chips are usable
+    has_direction: true/false — whether PROFILE_DIRECTION exists and the direction buttons are usable
+    has_profiles: true/false — whether individual profile navigation is available
+    has_cycles: true/false — whether cycle navigation is available
+    sci_phases: current phase filter ([] = all)
+    direction_filter: current direction filter ([] = all)
+- BEFORE emitting set_navigate, check profile_info in CONTEXT:
+    - If has_direction is false and the user asks for upcast/downcast filtering → apologise and say direction data isn't available in this file.
+    - If has_sci_phase is false and the user asks for phase filtering → apologise and say SCI_PHASE isn't available in this file.
+- Use set_navigate to change any subset of these filters. Omit a field to leave it unchanged.
+  To reset a filter to "show all", pass an empty array [].
+
 TOGGLES (controls the user already has in the UI — use the set_qc action):
 - "Filter Bad Time" (set_qc.filter_time): removes NaN/invalid timestamps, pre-1990 data, and future-dated samples. Turn this ON when the user asks to "remove outliers", "clean bad times", "drop invalid timestamps", or similar.
 - "Apply QC" (set_qc.apply): applies the dataset's own _QC variables using allowed flags (default 1,2,5,8). Turn this ON for "apply QC", "use quality flags", "clean the data".
@@ -68,6 +96,7 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 - {"type":"load_preset","preset":"preset_temp|preset_ts|preset_sal|preset_density|preset_chla|preset_doxy|preset_bbp"}
 - {"type":"set_variables","x":"<var>","y":"<var>","c":"<var>","cmap":"<cmap>","invert_y":true|false}   // any field optional; "c":"" clears the colour variable
 - {"type":"set_profile","profile_num":<number|null>}
+- {"type":"set_navigate","sci_phases":[<int>,...] | [],"direction_filter":[<int>,...] | []}   // filter by SCI_PHASE values and/or PROFILE_DIRECTION values; [] = show all; omit a field to leave it unchanged. DIRECTION REMINDER: upcasts=-1, downcasts=1. Examples: show only upcasts → {"type":"set_navigate","direction_filter":[-1]}; show only downcasts → {"type":"set_navigate","direction_filter":[1]}; Ascent+Descent phases → {"type":"set_navigate","sci_phases":[1,2]}; reset all → {"type":"set_navigate","sci_phases":[],"direction_filter":[]}
 - {"type":"set_qc","apply":true|false,"highlight":true|false,"filter_time":true|false,"flags":"1,2,5,8"}   // any subset of fields
 - {"type":"set_ctd","interpolate":true|false,"qc":true|false}   // CTD interpolation and/or custom CTD QC; only valid when current_plot.ctd_available is true
 - {"type":"set_title","title":"<text>"}                            // empty string clears
