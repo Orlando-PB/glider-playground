@@ -119,8 +119,11 @@
 
                     const trueMinZ = Math.min(...data.bathy_z.flat());
                     const displayMinZ = Math.max(-desiredFocusDepth, trueMinZ);
-                    const clampZ = z => (z < displayMinZ ? displayMinZ : z);
-                    const bathyZ = data.bathy_z.map(row => row.map(clampZ));
+                    // Only render the seafloor if it actually falls within the focus range.
+                    // When the ocean is much deeper than the glider dives, clamping all bathy
+                    // values to displayMinZ would paint a flat floor at the wrong depth.
+                    const showSeafloor = trueMinZ >= displayMinZ;
+                    const bathyZ = showSeafloor ? data.bathy_z : null;
 
                     const minZ = displayMinZ;
                     const baseZ = minZ - (Math.abs(minZ) * 0.15);
@@ -135,33 +138,35 @@
                     const lat0 = data.bathy_lat[0];
                     const lat1 = data.bathy_lat[yLen - 1];
 
-                    const zSouth = bathyZ[0];
-                    const zNorth = bathyZ[yLen - 1];
-                    const zWest = bathyZ.map(row => row[0]);
-                    const zEast = bathyZ.map(row => row[xLen - 1]);
-
                     const noContours = { contours: { x: {show: false}, y: {show: false}, z: {show: false} } };
 
-                    traces.push({
-                        x: data.bathy_lon, y: data.bathy_lat, z: bathyZ,
-                        type: 'surface', colorscale: [[0, earthColour], [1, earthGradientEnd]], 
-                        showscale: false, hoverinfo: 'skip',
-                        lighting: { ambient: 0.6, diffuse: 0.8, specular: 0.1, roughness: 0.6 },
-                        ...noContours
-                    });
+                    if (showSeafloor) {
+                        const zSouth = bathyZ[0];
+                        const zNorth = bathyZ[yLen - 1];
+                        const zWest = bathyZ.map(row => row[0]);
+                        const zEast = bathyZ.map(row => row[xLen - 1]);
 
-                    const earthWallConfig = {
-                        type: 'surface', colorscale: [[0, earthColour], [1, earthColour]],
-                        showscale: false, hoverinfo: 'skip',
-                        lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
-                        ...noContours
-                    };
+                        traces.push({
+                            x: data.bathy_lon, y: data.bathy_lat, z: bathyZ,
+                            type: 'surface', colorscale: [[0, earthColour], [1, earthGradientEnd]],
+                            showscale: false, hoverinfo: 'skip',
+                            lighting: { ambient: 0.6, diffuse: 0.8, specular: 0.1, roughness: 0.6 },
+                            ...noContours
+                        });
 
-                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(baseZ), zSouth] });
-                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(baseZ)] });
-                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [baseZ, z]) });
-                    traces.push({ ...earthWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, baseZ]) });
-                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[baseZ, baseZ], [baseZ, baseZ]] });
+                        const earthWallConfig = {
+                            type: 'surface', colorscale: [[0, earthColour], [1, earthColour]],
+                            showscale: false, hoverinfo: 'skip',
+                            lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
+                            ...noContours
+                        };
+
+                        traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(baseZ), zSouth] });
+                        traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(baseZ)] });
+                        traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [baseZ, z]) });
+                        traces.push({ ...earthWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, baseZ]) });
+                        traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[baseZ, baseZ], [baseZ, baseZ]] });
+                    }
 
                     const waterWallConfig = {
                         type: 'surface', 
@@ -172,11 +177,16 @@
                         ...noContours
                     };
 
+                    const wZSouth = showSeafloor ? bathyZ[0]              : Array(xLen).fill(baseZ);
+                    const wZNorth = showSeafloor ? bathyZ[yLen - 1]        : Array(xLen).fill(baseZ);
+                    const wZWest  = showSeafloor ? bathyZ.map(r => r[0])   : Array(yLen).fill(baseZ);
+                    const wZEast  = showSeafloor ? bathyZ.map(r => r[xLen - 1]) : Array(yLen).fill(baseZ);
+
                     traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[0, 0], [0, 0]] });
-                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(0), zSouth] });
-                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(0)] });
-                    traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [0, z]) });
-                    traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, 0]) });
+                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(0), wZSouth] });
+                    traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [wZNorth, Array(xLen).fill(0)] });
+                    traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: wZWest.map(z => [0, z]) });
+                    traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: wZEast.map(z => [z, 0]) });
 
                     const hasTemp = data.temp && data.temp.length > 0;
 

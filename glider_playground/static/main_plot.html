@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <title>Glider Plot</title>
+    <script src="/static/console_log.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-    <script src="/static/console_log.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
@@ -261,16 +261,6 @@
         function applyJellyOverrides() {
             const plotDiv = document.getElementById('plotDiv');
             if (!plotDiv || !plotDiv.data) return;
-            console.log('[jelly] applyJellyOverrides', JSON.stringify({
-                overrides: _jellyOverrides,
-                currentZoom: _currentZoom,
-                plotDataPts: plotData && plotData.x ? plotData.x.length : 0,
-                zoomFetchedFor: plotData && plotData._zoomFetchedFor || null,
-                xaxisRange: plotDiv.layout && plotDiv.layout.xaxis ? plotDiv.layout.xaxis.range : null,
-                yaxisRange: plotDiv.layout && plotDiv.layout.yaxis ? plotDiv.layout.yaxis.range : null,
-                traceCount: plotDiv.data ? plotDiv.data.length : 0,
-                trace0pts: plotDiv.data && plotDiv.data[0] && plotDiv.data[0].x ? plotDiv.data[0].x.length : 0
-            }));
 
             const TC = readThemeColors();
             const layoutUpdate = {};
@@ -607,7 +597,6 @@
             // reliably emitted after multiple Plotly.react calls (e.g. after Jelly overlays
             // re-render the plot), so we handle the dbl-click directly to guarantee zoom-out.
             plotDiv.on('plotly_doubleclick', function() {
-                console.log('[reset] plotly_doubleclick — resetting to original plotData');
                 _suppressRelayout = false;
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
@@ -639,7 +628,6 @@
                 }
 
                 if (xAuto && yAuto) {
-                    console.log('[reset] plotly_relayout autorange — resetting to original plotData');
                     clearTimeout(_pendingBounds);
                     _currentZoom = null;
                     if (_originalPlotData) {
@@ -680,7 +668,6 @@
                 }
 
                 _currentZoom = { xMin, xMax, yMin, yMax };
-                console.log('[zoom] manual zoom set:', _currentZoom, '— scheduling bgFetch in 400ms');
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
@@ -731,7 +718,6 @@
 
                 plotData = newData;
                 plotData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
-                console.log('[bgFetch] high-res loaded, pts:', newData.x ? newData.x.length : 0, 'range:', { xMin, xMax, yMin, yMax });
 
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;

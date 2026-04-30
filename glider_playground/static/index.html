@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <title>Glider Playground</title>
     <link rel="icon" href="/static/icon.png">
-    <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/console_log.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/cycle_profile.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
     <script>
@@ -1669,7 +1669,7 @@
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
                 isServerMode = !!cfg.is_server;
-                console.log(`Glider Playground v${cfg.version ?? 'unknown'}`);
+                logVersion(cfg.version ?? 'unknown', isServerMode);
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }
