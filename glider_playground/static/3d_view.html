@@ -94,6 +94,7 @@
             fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`)
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) throw new Error(data.error);
                     const traces = [];
 
                     // Horizontal extent, needed up front so the focus depth
@@ -286,7 +287,7 @@
                 .catch(err => {
                     document.getElementById('loadingIcon').style.display = 'none';
                     document.getElementById('statusText').style.color = '#ef4444';
-                    document.getElementById('statusText').textContent = "Failed to load 3D data.";
+                    document.getElementById('statusText').textContent = err.message || "Failed to load 3D data.";
                     console.error(err);
                 });
         }

@@ -109,7 +109,7 @@ def _read_lat_lon_pres_temp(filepath):
     pre = plot_logic._get_preloaded(filepath)
     if pre is not None:
         if 'LATITUDE' not in pre or 'LONGITUDE' not in pre:
-            raise ValueError("Missing coordinates")
+            raise ValueError("No LATITUDE/LONGITUDE in this file")
         lat = pre['LATITUDE']
         lon = pre['LONGITUDE']
         pres = pre['PRES'] if 'PRES' in pre else np.zeros_like(lat)
@@ -119,7 +119,7 @@ def _read_lat_lon_pres_temp(filepath):
             raise FileNotFoundError("File not found")
         with Dataset(filepath, 'r') as nc:
             if 'LATITUDE' not in nc.variables or 'LONGITUDE' not in nc.variables:
-                raise ValueError("Missing coordinates")
+                raise ValueError("No LATITUDE/LONGITUDE in this file")
             lat = nc.variables['LATITUDE'][:]
             lon = nc.variables['LONGITUDE'][:]
             pres = nc.variables['PRES'][:] if 'PRES' in nc.variables else np.zeros_like(lat)

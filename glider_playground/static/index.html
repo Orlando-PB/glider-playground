@@ -681,18 +681,23 @@
 
         /* Material-symbol colour fix inside buttons */
         button:not(.toggle-btn):hover .material-symbols-outlined { color: var(--accent); }
+
+        /* Advanced-only controls: hidden unless nav has .adv-open */
+        #mainNav:not(.adv-open) .adv-only { display: none !important; }
     </style>
 </head>
 <body class="overflow-hidden">
     <div id="customTooltip"></div>
 
-    <nav class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
-        <div class="toolbar-row" style="justify-content: space-between;">
-            <div class="flex items-center flex-wrap flex-1 min-w-0" style="gap: 10px;">
+    <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
+        <div class="toolbar-row" style="justify-content: space-between; flex-wrap: wrap;">
+            <div class="flex items-center flex-wrap" style="gap: 8px; flex: 1; min-width: 0;">
+                <!-- Logo -->
                 <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 pr-3 shrink-0" style="border-right: 1px solid var(--border);">
                     <img src="/static/icon.png" alt="Logo" class="w-5 h-5"> Glider Playground
                 </div>
 
+                <!-- Files -->
                 <div class="toolbar-group" id="datasetGroup" style="position: relative;">
                     <span class="group-label">
                         Files
@@ -736,16 +741,148 @@
 
                 <div class="group-divider"></div>
 
-                <div class="toolbar-group" style="flex: 1; min-width: 0;">
+                <!-- Presets -->
+                <div class="toolbar-group" style="min-width: 0;">
                     <span class="group-label shrink-0">
                         Presets
                         <span class="info-dot" data-tip="One-click templates for common ocean plots. Greyed-out presets need variables your file doesn't have."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <div id="presetContainer" class="flex items-center gap-2 overflow-x-auto flex-nowrap py-1 px-2 flex-1 min-w-0 custom-scrollbar transition-opacity duration-200"></div>
+                    <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
+                </div>
+
+                <div class="group-divider"></div>
+
+                <!-- Axes group -->
+                <div class="toolbar-group">
+                    <span class="group-label">
+                        Axes
+                        <span class="info-dot" data-tip="Pick variables for the X and Y axes. Invert Y flips the axis so depth increases downward."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <div class="flex items-center gap-1">
+                        <span class="text-[9px] text-gray-500 font-medium">X</span>
+                        <select id="xVar" class="p-1.5 w-28 transition-all"></select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <span class="text-[9px] text-gray-500 font-medium">Y</span>
+                        <select id="yVar" class="p-1.5 w-28 transition-all"></select>
+                    </div>
+                    <button id="calcMldBtn" class="toggle-btn px-2.5 py-1.5 rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">MLD</button>
+                    <!-- Advanced only: Invert Y -->
+                    <button id="invertYBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded">Invert Y</button>
+                </div>
+
+                <!-- Advanced only: Filters & QC -->
+                <div class="group-divider adv-only"></div>
+                <div class="toolbar-group adv-only">
+                    <span class="group-label">
+                        Filters &amp; QC
+                        <span class="info-dot" data-tip="Filter Time drops NaN/out-of-range timestamps. Apply QC uses the file's _QC variables to keep only trusted samples."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
+                    <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Keep only samples whose _QC flag is in the allowed list">Apply QC</button>
+                    <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;" title="Show bad-QC samples in red instead of hiding them">Highlight</button>
+                    <div id="qcFlagsContainer" class="flex items-center gap-0.5" style="display: none;">
+                        <!-- QC flag chips 0-9 built by buildQcChips() -->
+                        <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
+                    </div>
+                </div>
+
+                <!-- Advanced only: CTD (also JS-conditional) -->
+                <div id="ctdDivider" class="group-divider adv-only" style="display: none;"></div>
+                <div class="toolbar-group adv-only" id="ctdContainer" style="display: none;">
+                    <span class="group-label">
+                        CTD
+                        <span class="info-dot" data-tip="Interpolate: time-aligns PRES/TEMP/CNDC with other sensors (filled points get QC=5). Clean: flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
+                    <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
+                </div>
+
+                <!-- Profiles navigation (JS-conditional) -->
+                <div id="navigateDivider" class="group-divider" style="display: none;"></div>
+                <div id="navigateContainer" class="toolbar-group" style="display: none;">
+                    <span class="group-label">
+                        Profiles
+                        <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
+                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
+                        <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
+                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                        </button>
+                        <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
+                        <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
+                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                        </button>
+                        <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
+                        <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                            <span class="material-symbols-outlined text-[13px]">close</span>
+                        </button>
+                    </div>
+                    <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
+                    <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
+                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
+                        <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
+                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                        </button>
+                        <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
+                        <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
+                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                        </button>
+                        <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
+                            <span class="material-symbols-outlined text-[13px]">close</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Advanced only: Phases (also JS-conditional) -->
+                <div id="phaseDivider" class="group-divider adv-only" style="display: none;"></div>
+                <div id="phaseContainer" class="toolbar-group adv-only" style="display: none;">
+                    <span class="group-label">
+                        Phases
+                        <span class="info-dot" data-tip="Filter by SCI_PHASE value. All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
+                    <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
+                </div>
+
+                <!-- Direction buttons: icon-only (JS-conditional) -->
+                <div id="dirContainer" class="flex gap-0.5 items-center" style="display: none;">
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
+                        <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
+                        <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
+                        <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
+                    </button>
+                </div>
+
+                <div class="group-divider"></div>
+
+                <!-- Colour -->
+                <div class="toolbar-group">
+                    <span class="group-label">
+                        Colour
+                        <span class="info-dot" data-tip="Pick a variable to colour-map points. Choose a palette from the swatch to the right."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <select id="cVar" class="p-1.5 w-28 transition-all">
+                        <option value="">None</option>
+                    </select>
+                    <div class="relative" id="cmapContainer">
+                        <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                        <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
+                    </div>
+                    <input type="hidden" id="cmap" value="thermal">
                 </div>
             </div>
 
+            <!-- Right-side buttons -->
             <div class="toolbar-group shrink-0">
+                <button id="advancedToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show advanced controls">
+                    Advanced <span class="material-symbols-outlined text-[13px]" id="advancedToggleIcon">expand_more</span>
+                </button>
                 <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
                     <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
                 </button>
@@ -756,128 +893,6 @@
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
             </div>
-        </div>
-
-        <div id="customControls" class="toolbar-row">
-            <div class="toolbar-group">
-                <span class="group-label">
-                    Axes
-                    <span class="info-dot" data-tip="Pick variables for the X and Y axes. Invert Y flips it so depth increases downward."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">X</span>
-                    <select id="xVar" class="p-1.5 w-28 transition-all"></select>
-                </div>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Y</span>
-                    <select id="yVar" class="p-1.5 w-28 transition-all"></select>
-                </div>
-                <button id="invertYBtn" class="toggle-btn px-2.5 py-1.5 rounded">Invert Y</button>
-                <button id="calcMldBtn" class="toggle-btn px-2.5 py-1.5 rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">MLD</button>
-            </div>
-
-            <div class="group-divider"></div>
-
-            <div class="toolbar-group">
-                <span class="group-label">
-                    Filters &amp; QC
-                    <span class="info-dot" data-tip="Filter Time drops NaN/out-of-range timestamps. Apply QC uses the file's _QC variables to keep only trusted samples."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
-                <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Keep only samples whose _QC flag is in the allowed list">Apply QC</button>
-                <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;" title="Show bad-QC samples in red instead of hiding them">Highlight</button>
-                <div id="qcFlagsContainer" class="flex items-center gap-0.5" style="display: none;">
-                    <!-- QC flag chips 0-9 built by buildQcChips() -->
-                    <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
-                </div>
-            </div>
-
-            <div id="ctdDivider" class="group-divider" style="display: none;"></div>
-            <div class="toolbar-group" id="ctdContainer" style="display: none;">
-                <span class="group-label">
-                    CTD
-                    <span class="info-dot" data-tip="Interpolate: time-aligns PRES/TEMP/CNDC with other sensors (filled points get QC=5). Clean: flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
-                <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
-            </div>
-
-            <div id="navigateDivider" class="group-divider" style="display: none;"></div>
-            <div id="navigateContainer" class="toolbar-group" style="display: none;">
-                <span class="group-label">
-                    Navigate
-                    <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
-                    <span class="text-[9px] font-medium w-6 shrink-0" style="color: var(--text-muted);">Prof</span>
-                    <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
-                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                    </button>
-                    <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
-                    <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
-                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                    </button>
-                    <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
-                    <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
-                        <span class="material-symbols-outlined text-[13px]">close</span>
-                    </button>
-                </div>
-                <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
-                <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
-                    <span class="text-[9px] font-medium w-6 shrink-0" style="color: var(--text-muted);">Cyc</span>
-                    <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
-                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                    </button>
-                    <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
-                    <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
-                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                    </button>
-                    <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
-                        <span class="material-symbols-outlined text-[13px]">close</span>
-                    </button>
-                </div>
-            </div>
-
-            <div id="phaseDivider" class="group-divider" style="display: none;"></div>
-            <div id="phaseContainer" class="toolbar-group" style="display: none;">
-                <span class="group-label">
-                    Phases
-                    <span class="info-dot" data-tip="Filter by SCI_PHASE value. All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
-                <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
-                <div id="dirContainer" class="flex gap-0.5 items-center pl-1.5 border-l border-gray-300/40" style="display: none;">
-                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Direction</span>
-                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
-                        <span class="material-symbols-outlined text-[11px]">arrow_upward</span>Asc
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
-                        <span class="material-symbols-outlined text-[11px]">arrow_downward</span>Des
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]" data-dir="0" title="Transect — horizontal propulsion">
-                        <span class="material-symbols-outlined text-[11px]">swap_horiz</span>Tran
-                    </button>
-                </div>
-            </div>
-
-            <div class="group-divider"></div>
-
-            <div class="toolbar-group relative">
-                <span class="group-label">
-                    Colour
-                    <span class="info-dot" data-tip="Pick a variable to colour-map points. Choose a palette from the swatch to the right."><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <select id="cVar" class="p-1.5 w-28 transition-all">
-                    <option value="">None</option>
-                </select>
-                
-                <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
-                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
-                </div>
-                <input type="hidden" id="cmap" value="thermal">
-            </div>
-
         </div>
     </nav>
 
@@ -1291,6 +1306,17 @@
             if (tb) tb.addEventListener('click', () => {
                 applyTheme(getCurrentTheme() === 'light' ? 'dark' : 'light');
             });
+
+            const advancedToggle = document.getElementById('advancedToggle');
+            const mainNav = document.getElementById('mainNav');
+            const advancedToggleIcon = document.getElementById('advancedToggleIcon');
+            if (advancedToggle) {
+                advancedToggle.addEventListener('click', () => {
+                    const isOpen = mainNav.classList.toggle('adv-open');
+                    advancedToggleIcon.textContent = isOpen ? 'expand_less' : 'expand_more';
+                    advancedToggle.classList.toggle('active', isOpen);
+                });
+            }
         });
 
         window.addEventListener('message', function(event) {
