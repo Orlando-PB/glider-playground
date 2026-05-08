@@ -44,7 +44,11 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-CACHE_VERSION = "4"
+CACHE_VERSION = "5"
+
+# A file counts as NRT (Near Real-Time) if its last sample is within this
+# window of "now" — anything fresher is presumed to still be deployed.
+NRT_WINDOW_DAYS = 7
 
 CACHE_ROOT.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
@@ -135,6 +139,9 @@ def _save_payload_sidecar(rec: dict):
         "done_steps": list(rec.get("_done_steps", [])),
         "ctd_interp_recommended": rec.get("ctd_interp_recommended", False),
         "ctd_clean_recommended": rec.get("ctd_clean_recommended", False),
+        "last_time": rec.get("last_time"),
+        "last_lat": rec.get("last_lat"),
+        "last_lon": rec.get("last_lon"),
         "payloads": {k: rec[k] for k in _PAYLOAD_KEYS if k in rec},
     }
     tmp = _payload_path(rid).with_suffix(".json.tmp")
@@ -171,6 +178,9 @@ def _load_payload_sidecar(rec: dict) -> set:
         rec[k] = v
     rec["ctd_interp_recommended"] = bool(body.get("ctd_interp_recommended", False))
     rec["ctd_clean_recommended"] = bool(body.get("ctd_clean_recommended", False))
+    if body.get("last_time"): rec["last_time"] = body["last_time"]
+    if body.get("last_lat") is not None: rec["last_lat"] = body["last_lat"]
+    if body.get("last_lon") is not None: rec["last_lon"] = body["last_lon"]
     return set(body.get("done_steps") or [])
 
 
@@ -255,7 +265,23 @@ def _load_once():
             _registry[rid] = rec
 
 
+def _is_nrt(last_time_iso: Optional[str]) -> bool:
+    """Computed dynamically so an old file ages out of NRT without reprocessing."""
+    if not last_time_iso:
+        return False
+    try:
+        import pandas as pd
+        ts = pd.Timestamp(last_time_iso)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        delta = pd.Timestamp.utcnow().tz_convert("UTC") - ts.tz_convert("UTC")
+        return delta.total_seconds() <= NRT_WINDOW_DAYS * 86400
+    except Exception:
+        return False
+
+
 def _public_view(rec: dict) -> dict:
+    last_time = rec.get("last_time")
     return {
         "id": rec["id"],
         "name": rec["name"],
@@ -270,6 +296,10 @@ def _public_view(rec: dict) -> dict:
         "uploaded": rec.get("path", "").startswith(str(UPLOADS_DIR)),
         "ctd_interp_recommended": rec.get("ctd_interp_recommended", False),
         "ctd_clean_recommended": rec.get("ctd_clean_recommended", False),
+        "last_time": last_time,
+        "last_lat": rec.get("last_lat"),
+        "last_lon": rec.get("last_lon"),
+        "is_nrt": _is_nrt(last_time),
     }
 
 
@@ -582,6 +612,13 @@ def _process(file_id: str):
             try:
                 rec["map"] = spatial_logic.generate_map_image(p)
                 rec["location"] = spatial_logic.get_location_summary(p)
+                endpt = spatial_logic.get_track_endpoint(p)
+                if endpt:
+                    rec["last_lat"] = endpt["last_lat"]
+                    rec["last_lon"] = endpt["last_lon"]
+                last_iso = spatial_logic.get_last_time_iso(p)
+                if last_iso:
+                    rec["last_time"] = last_iso
             finally:
                 spatial_logic._spatial_stage_cb = None
             _release_memory()

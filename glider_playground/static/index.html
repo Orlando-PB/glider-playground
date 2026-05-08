@@ -401,6 +401,23 @@
 
         .file-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
         .file-card-name { font-size: 11px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .nrt-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            padding: 1px 5px; margin-left: 6px;
+            font-size: 8.5px; font-weight: 700; letter-spacing: 0.04em;
+            color: #fff; background: #ef4444; border-radius: 4px;
+            vertical-align: middle;
+        }
+        .nrt-badge::before {
+            content: ''; width: 5px; height: 5px; border-radius: 50%;
+            background: #fff; box-shadow: 0 0 0 0 rgba(255,255,255,0.7);
+            animation: nrtPulse 1.6s ease-out infinite;
+        }
+        @keyframes nrtPulse {
+            0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.7); }
+            70%  { box-shadow: 0 0 0 5px rgba(255,255,255,0); }
+            100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+        }
         .file-card-meta { font-size: 9.5px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; }
         .file-card-stage { color: var(--text-secondary); }
         .file-card-error { color: var(--danger); }
@@ -2069,7 +2086,7 @@
                 card.innerHTML = `
                     <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
                     <div class="file-card-body">
-                        <div class="file-card-name" title="${escapeHtmlSafe(f.path)}">${escapeHtmlSafe(f.name)}</div>
+                        <div class="file-card-name" title="${escapeHtmlSafe(f.path)}">${escapeHtmlSafe(f.name)}${f.is_nrt ? '<span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span>' : ''}</div>
                         <div class="file-card-meta">${metaLine}</div>
                         ${(f.status === 'processing' || f.status === 'pending') ? `
                             <div class="file-card-progress"><div class="file-card-progress-bar" style="width: ${Math.max(2, f.progress)}%;"></div></div>
@@ -2091,7 +2108,8 @@
             const errorCount = fileRecords.filter(f => f.status === 'error').length;
 
             if (active) {
-                datasetTriggerLabel.textContent = active.name;
+                datasetTriggerLabel.innerHTML = escapeHtmlSafe(active.name) +
+                    (active.is_nrt ? '<span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span>' : '');
                 datasetTriggerLabel.title = active.path;
                 if (active.status === 'ready') {
                     datasetTriggerIcon.textContent = 'database';

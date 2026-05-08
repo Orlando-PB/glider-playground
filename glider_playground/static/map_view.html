@@ -142,6 +142,18 @@
 
                 const segments = buildSegments(formattedPath);
 
+                // Live-position blob for NRT (Near Real-Time) deployments —
+                // the glider is presumed still in the water at this last fix.
+                const nrtPoints = [];
+                if (data.is_nrt && data.last_lat != null && data.last_lon != null) {
+                    nrtPoints.push({
+                        lat: Number(data.last_lat),
+                        lng: Number(data.last_lon),
+                        size: 0.55,
+                        color: '#ef4444',
+                    });
+                }
+
                 const segColor = (seg) => {
                     const rgb = hexToRgb(readThemeColors().path);
                     const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
@@ -167,7 +179,23 @@
                         .pathPointLat('lat')
                         .pathPointLng('lng')
                         .pathColor(segColor)
-                        .pathStroke(segStroke);
+                        .pathStroke(segStroke)
+                        .ringsData(nrtPoints)
+                        .ringLat('lat')
+                        .ringLng('lng')
+                        .ringColor(() => (t => `rgba(239,68,68,${(1 - t) * 0.7})`))
+                        .ringMaxRadius(2.6)
+                        .ringPropagationSpeed(0.6)
+                        .ringRepeatPeriod(3500)
+                        .htmlElementsData(nrtPoints)
+                        .htmlLat('lat')
+                        .htmlLng('lng')
+                        .htmlAltitude(0)
+                        .htmlElement(() => {
+                            const el = document.createElement('div');
+                            el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 12px rgba(239,68,68,0.8);pointer-events:none;transform:translate(-50%,-50%);';
+                            return el;
+                        });
 
                     // Clamp camera distance: prevents zooming out so far the
                     // globe shrinks, and zooming in past the tile resolution.
@@ -186,7 +214,9 @@
                     });
 
                 } else {
-                    myGlobe.pathsData(segments);
+                    myGlobe.pathsData(segments)
+                           .ringsData(nrtPoints)
+                           .htmlElementsData(nrtPoints);
                     document.getElementById('overlay').style.display = 'none';
                 }
 

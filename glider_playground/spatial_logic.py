@@ -214,6 +214,52 @@ def get_location_summary(filepath):
     }
 
 
+def get_last_time_iso(filepath):
+    """Return ISO timestamp of the most recent fix, or None.
+
+    Used to flag Near-Real-Time (NRT) deployments — files whose final sample
+    is recent enough that the glider is presumably still in the water.
+    """
+    import pandas as pd
+    pre = plot_logic._get_preloaded(filepath)
+    time_arr = None
+    if pre is not None:
+        for k in ('TIME', 'TIME_GPS'):
+            if k in pre:
+                time_arr = pre[k]
+                break
+    if time_arr is None:
+        try:
+            with Dataset(filepath, 'r') as nc:
+                for k in ('TIME', 'TIME_GPS'):
+                    if k in nc.variables:
+                        time_arr = nc.variables[k][:]
+                        break
+        except Exception:
+            return None
+    if time_arr is None or len(time_arr) == 0:
+        return None
+    try:
+        ts = pd.to_datetime(time_arr, errors='coerce', utc=True)
+        ts = ts[~pd.isna(ts)]
+        if len(ts) == 0:
+            return None
+        return ts.max().isoformat()
+    except Exception:
+        return None
+
+
+def get_track_endpoint(filepath):
+    """Return the last QC'd lat/lon along the track (post-subsample)."""
+    try:
+        lat, lon, _pres, _temp = get_core_spatial_data(filepath)
+    except Exception:
+        return None
+    if len(lat) == 0:
+        return None
+    return {"last_lat": float(lat[-1]), "last_lon": float(lon[-1])}
+
+
 def generate_map_image(filepath):
     t0 = time.time()
     try:

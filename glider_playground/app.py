@@ -246,7 +246,18 @@ async def download_demo_files():
 
 @app.get("/api/map")
 def api_map(id: str):
-    return _cached_or_live(id, "map", spatial_logic.generate_map_image)
+    payload = _cached_or_live(id, "map", spatial_logic.generate_map_image)
+    # Decorate with NRT info so the map view can render a live-position marker.
+    rec = cache_logic.get_record(id)
+    if isinstance(payload, dict) and rec:
+        payload = {
+            **payload,
+            "last_lat": rec.get("last_lat"),
+            "last_lon": rec.get("last_lon"),
+            "last_time": rec.get("last_time"),
+            "is_nrt": cache_logic._is_nrt(rec.get("last_time")),
+        }
+    return payload
 
 
 @app.get("/api/3d_data")
