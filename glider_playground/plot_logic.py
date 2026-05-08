@@ -143,6 +143,58 @@ def _get_preloaded(filepath: str):
 CTD_VARS = ("PRES", "TEMP", "CNDC")
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
 
+
+def _resolve_ctd_var_map(filepath):
+    """Map canonical CTD names to the actual file variable, preferring the
+    `_ADJUSTED` variant when present so processing operates on the cleaned data."""
+    var_names = set(_get_var_names(filepath) or [])
+    out = {}
+    for v in CTD_VARS:
+        adj = f"{v}_ADJUSTED"
+        if adj in var_names:
+            out[v] = adj
+        elif v in var_names:
+            out[v] = v
+    return out
+
+
+def _build_ctd_canonical_dict(pre, var_map, time_var):
+    """Read preloaded arrays under their actual names and return a dict keyed
+    by canonical CTD names (so processing logic can stay name-agnostic)."""
+    d = {}
+    for canon, actual in var_map.items():
+        if actual in pre:
+            d[canon] = pre[actual]
+            qc = f"{actual}_QC"
+            if qc in pre:
+                d[f"{canon}_QC"] = pre[qc]
+    if time_var and time_var in pre:
+        d[time_var] = pre[time_var]
+    return d
+
+
+def _emit_overlay(processed, var_map):
+    """Re-key processed canonical results back to actual file variable names."""
+    overlay = {}
+    for canon, actual in var_map.items():
+        if canon in processed:
+            overlay[actual] = processed[canon]
+        if f"{canon}_QC" in processed:
+            overlay[f"{actual}_QC"] = processed[f"{canon}_QC"]
+    return overlay
+
+
+def _overlay_to_canonical(overlay, var_map):
+    """Inverse of `_emit_overlay`: convert an actual-keyed overlay back to canonical."""
+    canon_dict = {}
+    for canon, actual in var_map.items():
+        if actual in overlay:
+            canon_dict[canon] = overlay[actual]
+        qc_actual = f"{actual}_QC"
+        if qc_actual in overlay:
+            canon_dict[f"{canon}_QC"] = overlay[qc_actual]
+    return canon_dict
+
 # For TEMP/CNDC fill: look for real (non-interpolated) samples within this
 # time and depth window around the target. If nothing is found the gap is
 # left as NaN — glider dive/climb asymmetries can mean there is no honest
@@ -174,32 +226,29 @@ def _ctd_processed_arrays_cached(filepath, interpolate: bool, apply_ctd_qc: bool
     if not (interpolate or apply_ctd_qc):
         return None
     pre = _get_preloaded(filepath)
-    if pre is None or not any(v in pre for v in CTD_VARS):
+    if pre is None:
+        return None
+    var_map = _resolve_ctd_var_map(filepath)
+    if not var_map:
         return None
 
     time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
-
-    needed = set()
-    for v in CTD_VARS:
-        if v in pre:
-            needed.add(v)
-            if f"{v}_QC" in pre:
-                needed.add(f"{v}_QC")
-    if time_var:
-        needed.add(time_var)
+    data_dict = _build_ctd_canonical_dict(pre, var_map, time_var)
+    if not any(c in data_dict for c in CTD_VARS):
+        return None
 
     if interpolate and apply_ctd_qc:
-        clean = _ctd_processed_arrays(filepath, False, True)
-        clean_changed = clean is not None and any(
-            v in clean and v in pre
-            and np.any(np.isnan(clean[v]) != np.isnan(pre[v]))
-            for v in CTD_VARS
+        clean_actual = _ctd_processed_arrays(filepath, False, True)
+        clean_canon = _overlay_to_canonical(clean_actual, var_map) if clean_actual else {}
+        clean_changed = bool(clean_canon) and any(
+            c in clean_canon and c in data_dict
+            and np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c]))
+            for c in CTD_VARS
         )
         if not clean_changed:
             return _ctd_processed_arrays(filepath, True, False)
 
-        data_dict = {k: pre[k] for k in needed}
-        for k, arr in clean.items():
+        for k, arr in clean_canon.items():
             if k in data_dict:
                 data_dict[k] = arr.copy()
         processed = _apply_ctd_processing(
@@ -207,17 +256,12 @@ def _ctd_processed_arrays_cached(filepath, interpolate: bool, apply_ctd_qc: bool
             interpolate=True, apply_ctd_qc=False,
         )
     else:
-        data_dict = {k: pre[k] for k in needed}
         processed = _apply_ctd_processing(
             data_dict, time_var, _get_var_units(filepath),
             interpolate=interpolate, apply_ctd_qc=apply_ctd_qc,
         )
 
-    overlay = {}
-    for v in CTD_VARS:
-        if v in processed: overlay[v] = processed[v]
-        if f"{v}_QC" in processed: overlay[f"{v}_QC"] = processed[f"{v}_QC"]
-    return overlay
+    return _emit_overlay(processed, var_map)
 
 
 def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
@@ -238,32 +282,29 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
             pass
 
     pre = _get_preloaded(filepath)
-    if pre is None or not any(v in pre for v in CTD_VARS):
+    if pre is None:
+        return None
+    var_map = _resolve_ctd_var_map(filepath)
+    if not var_map:
         return None
 
     time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
-
-    needed = set()
-    for v in CTD_VARS:
-        if v in pre:
-            needed.add(v)
-            if f"{v}_QC" in pre:
-                needed.add(f"{v}_QC")
-    if time_var:
-        needed.add(time_var)
+    data_dict = _build_ctd_canonical_dict(pre, var_map, time_var)
+    if not any(c in data_dict for c in CTD_VARS):
+        return None
 
     if interpolate and apply_ctd_qc:
-        clean = _ctd_from_disk(filepath, False, True)
-        clean_changed = clean is not None and any(
-            v in clean and v in pre
-            and np.any(np.isnan(clean[v]) != np.isnan(pre[v]))
-            for v in CTD_VARS
+        clean_actual = _ctd_from_disk(filepath, False, True)
+        clean_canon = _overlay_to_canonical(clean_actual, var_map) if clean_actual else {}
+        clean_changed = bool(clean_canon) and any(
+            c in clean_canon and c in data_dict
+            and np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c]))
+            for c in CTD_VARS
         )
         if not clean_changed:
             return _ctd_from_disk(filepath, True, False)
 
-        data_dict = {k: pre[k] for k in needed}
-        for k, arr in clean.items():
+        for k, arr in clean_canon.items():
             if k in data_dict:
                 data_dict[k] = arr.copy()
         processed = _apply_ctd_processing(
@@ -271,16 +312,12 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
             interpolate=True, apply_ctd_qc=False,
         )
     else:
-        data_dict = {k: pre[k] for k in needed}
         processed = _apply_ctd_processing(
             data_dict, time_var, _get_var_units(filepath),
             interpolate=interpolate, apply_ctd_qc=apply_ctd_qc,
         )
 
-    overlay = {}
-    for v in CTD_VARS:
-        if v in processed: overlay[v] = processed[v]
-        if f"{v}_QC" in processed: overlay[f"{v}_QC"] = processed[f"{v}_QC"]
+    overlay = _emit_overlay(processed, var_map)
 
     if overlay:
         try:
@@ -306,16 +343,20 @@ def ctd_interp_recommended(filepath) -> bool:
     button is hidden as it would do nothing visible.
     """
     pre = _get_preloaded(filepath)
-    if pre is None or "PRES" not in pre:
+    if pre is None:
         return False
-    pres = pre["PRES"]
+    var_map = _resolve_ctd_var_map(filepath)
+    pres_actual = var_map.get("PRES")
+    if not pres_actual or pres_actual not in pre:
+        return False
+    pres = pre[pres_actual]
     if not np.any(np.isnan(pres)):
         return False  # already fully populated — nothing to fill
     overlay = _ctd_processed_arrays(filepath, True, False)
-    if overlay is None or "PRES" not in overlay:
+    if overlay is None or pres_actual not in overlay:
         return False
     orig_nan = int(np.isnan(pres).sum())
-    new_nan = int(np.isnan(overlay["PRES"]).sum())
+    new_nan = int(np.isnan(overlay[pres_actual]).sum())
     return (orig_nan - new_nan) > 0
 
 
@@ -327,15 +368,18 @@ def ctd_clean_recommended(filepath) -> bool:
     the button is hidden rather than shown as a no-op.
     """
     pre = _get_preloaded(filepath)
-    if pre is None or not any(v in pre for v in CTD_VARS):
+    if pre is None:
+        return False
+    var_map = _resolve_ctd_var_map(filepath)
+    if not var_map:
         return False
     overlay = _ctd_processed_arrays(filepath, False, True)
     if overlay is None:
         return False
-    for v in CTD_VARS:
-        if v in overlay and v in pre:
-            orig_nan = np.isnan(pre[v])
-            new_nan = np.isnan(overlay[v])
+    for canon, actual in var_map.items():
+        if actual in overlay and actual in pre:
+            orig_nan = np.isnan(pre[actual])
+            new_nan = np.isnan(overlay[actual])
             if np.any(new_nan & ~orig_nan):
                 return True
     return False
@@ -774,12 +818,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if direction_filter and "PROFILE_DIRECTION" in var_names:
         vars_to_extract.add("PROFILE_DIRECTION")
 
+    ctd_var_map = _resolve_ctd_var_map(filepath) if (ctd_interpolate or ctd_qc) else {}
     if ctd_interpolate or ctd_qc:
-        for v in CTD_VARS:
-            if v in var_names:
-                vars_to_extract.add(v)
-                if f"{v}_QC" in var_names:
-                    vars_to_extract.add(f"{v}_QC")
+        for actual in ctd_var_map.values():
+            vars_to_extract.add(actual)
+            if f"{actual}_QC" in var_names:
+                vars_to_extract.add(f"{actual}_QC")
         if actual_time_var in var_names:
             vars_to_extract.add(actual_time_var)
 
@@ -796,10 +840,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         if overlay is not None:
             data_dict = {**data_dict, **overlay}
         else:
-            data_dict = _apply_ctd_processing(
-                data_dict, actual_time_var, _get_var_units(filepath),
+            canon = _build_ctd_canonical_dict(data_dict, ctd_var_map, actual_time_var)
+            processed = _apply_ctd_processing(
+                canon, actual_time_var, _get_var_units(filepath),
                 interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
             )
+            data_dict = {**data_dict, **_emit_overlay(processed, ctd_var_map)}
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
@@ -893,7 +939,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
     
     mld_x, mld_y = [], []
-    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper() in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
+    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper().removesuffix('_ADJUSTED') in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
         mld_x, mld_y = _calculate_mld(plot_x, plot_y, plot_c, is_x_dt)
 
     if stats["valid"] > MAX_RENDER_POINTS:
@@ -978,12 +1024,12 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         vars_to_extract.add("SCI_PHASE")
     if direction_filter and "PROFILE_DIRECTION" in var_names:
         vars_to_extract.add("PROFILE_DIRECTION")
+    ctd_var_map = _resolve_ctd_var_map(filepath) if (ctd_interpolate or ctd_qc) else {}
     if ctd_interpolate or ctd_qc:
-        for v in CTD_VARS:
-            if v in var_names:
-                vars_to_extract.add(v)
-                if f"{v}_QC" in var_names:
-                    vars_to_extract.add(f"{v}_QC")
+        for actual in ctd_var_map.values():
+            vars_to_extract.add(actual)
+            if f"{actual}_QC" in var_names:
+                vars_to_extract.add(f"{actual}_QC")
         if actual_time_var in var_names:
             vars_to_extract.add(actual_time_var)
     if apply_qc:
@@ -998,10 +1044,12 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         if overlay is not None:
             data_dict = {**data_dict, **overlay}
         else:
-            data_dict = _apply_ctd_processing(
-                data_dict, actual_time_var, _get_var_units(filepath),
+            canon = _build_ctd_canonical_dict(data_dict, ctd_var_map, actual_time_var)
+            processed = _apply_ctd_processing(
+                canon, actual_time_var, _get_var_units(filepath),
                 interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
             )
+            data_dict = {**data_dict, **_emit_overlay(processed, ctd_var_map)}
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
@@ -1087,7 +1135,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
     mld_x, mld_y = [], []
-    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper() in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
+    if str(calc_mld).lower() == 'true' and is_x_dt and y_var.upper().removesuffix('_ADJUSTED') in ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG']:
         mld_x, mld_y = _calculate_mld(plot_x, plot_y, plot_c, is_x_dt)
 
     if total > MAX_RENDER_POINTS:

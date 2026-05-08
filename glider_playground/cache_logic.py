@@ -44,7 +44,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-CACHE_VERSION = "3"
+CACHE_VERSION = "4"
 
 CACHE_ROOT.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)

@@ -1453,8 +1453,9 @@
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
             
-            const isYDepth = ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'].includes(ySelect.value.toUpperCase());
-            const isCTemp = ['TEMP', 'CONS_TEMP'].includes(cVarSelect.value.toUpperCase());
+            const stripAdj = (n) => n.replace(/_ADJUSTED$/i, '');
+            const isYDepth = ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'].includes(stripAdj(ySelect.value.toUpperCase()));
+            const isCTemp = ['TEMP', 'CONS_TEMP'].includes(stripAdj(cVarSelect.value.toUpperCase()));
             if (isXDateTime && isYDepth && isCTemp) {
                 calcMldBtn.classList.remove('hidden');
             } else {
@@ -1783,6 +1784,8 @@
 
             const findBest = (arr) => {
                 for (let v of arr) {
+                    const adj = v + '_ADJUSTED';
+                    if (variableCache.some(vc => vc.name === adj)) return adj;
                     if (variableCache.some(vc => vc.name === v)) return v;
                 }
                 return variableCache.find(vc => !vc.name.endsWith('_QC'))?.name || '';
@@ -1810,7 +1813,7 @@
             const data = await response.json();
             
             const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
-            const hasAnyCtd = ['PRES', 'TEMP', 'CNDC'].some(n => data.variables.some(v => v.name === n));
+            const hasAnyCtd = ['PRES', 'TEMP', 'CNDC'].some(n => data.variables.some(v => v.name === n || v.name === n + '_ADJUSTED'));
 
             variableCache = data.variables.sort((a, b) => {
                 const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
@@ -1868,7 +1871,7 @@
                 highlightQcBtn.style.display = 'flex';
             }
 
-            const isValid = (val) => variableCache.some(v => v.name === val && !v.name.endsWith('_QC'));
+            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
 
             [xSelect, ySelect, cVarSelect].forEach(sel => {
                 sel.innerHTML = sel.id === 'cVar' ? '<option value="">None</option>' : '';
@@ -1949,7 +1952,7 @@
         ySelect.addEventListener('change', () => { 
             checkAndUpdatePreset();
             resetPlotState(true);
-            updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase()));
+            updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase().replace(/_ADJUSTED$/, '')));
             updatePlot();
         });
         
