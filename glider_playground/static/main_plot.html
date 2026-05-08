@@ -686,20 +686,54 @@
                 params.set('c_var', cVarStr.replace('|mld', ''));
             }
             
+            // Plotly emits datetime axis values as naive strings like
+            // '2026-04-25 10:08:25.6638'. The server's data is naive UTC, so
+            // we MUST parse these as UTC. `new Date(naiveString).getTime()`
+            // interprets them as *local* time, which silently shifts the
+            // bounds by the user's UTC offset and makes the bounds query
+            // match an offset window of data — visible as "missing points".
+            const parseAxisDateAsUTC = (s) => {
+                if (typeof s === 'number') return s;
+                // Convert "YYYY-MM-DD HH:MM:SS[.fff]" to ISO-8601 UTC.
+                const iso = String(s).replace(' ', 'T') + 'Z';
+                const t = Date.parse(iso);
+                return isNaN(t) ? Date.parse(s) : t;
+            };
             const isXDate = plotData.is_x_dt;
-            const xMinVal = isXDate ? new Date(xMin).getTime() : xMin;
-            const xMaxVal = isXDate ? new Date(xMax).getTime() : xMax;
+            let xMinVal = isXDate ? parseAxisDateAsUTC(xMin) : Number(xMin);
+            let xMaxVal = isXDate ? parseAxisDateAsUTC(xMax) : Number(xMax);
+            let yMinVal = Number(yMin);
+            let yMaxVal = Number(yMax);
 
-            params.set('x_min', xMinVal);
-            params.set('x_max', xMaxVal);
-            params.set('y_min', yMin);
-            params.set('y_max', yMax);
+            // Canonicalise: server expects min < max. Reversed bounds (e.g. inverted
+            // axis or right-to-left drag) would otherwise make the padding tighten
+            // the range and the >= / <= filter return zero points.
+            if (xMinVal > xMaxVal) { const t = xMinVal; xMinVal = xMaxVal; xMaxVal = t; }
+            if (yMinVal > yMaxVal) { const t = yMinVal; yMinVal = yMaxVal; yMaxVal = t; }
+
+            // Expand the requested range generously before fetching the high-res
+            // chunk. Reasons points at/near the visible edge can otherwise vanish:
+            //   - datetime millisecond truncation in `new Date(str).getTime()`
+            //   - float drift between Plotly's reported range and raw data values
+            //   - Plotly's axis tick padding shows slightly past the box bounds,
+            //     so points appearing "on the axis" can lie just outside it
+            //   - server's strict >= / <= filter has no tolerance
+            // Plotly still clips visually to the exact zoom range, so over-fetching
+            // costs nothing visually — extra points are simply outside the viewport.
+            const PAD = 0.15;
+            const xPad = Math.abs(xMaxVal - xMinVal) * PAD;
+            const yPad = Math.abs(yMaxVal - yMinVal) * PAD;
+
+            params.set('x_min', xMinVal - xPad);
+            params.set('x_max', xMaxVal + xPad);
+            params.set('y_min', yMinVal - yPad);
+            params.set('y_max', yMaxVal + yPad);
 
             _bgFetchController = new AbortController();
 
             try {
-                const res = await fetch(`/api/plot_data_bounds?${params.toString()}`, { 
-                    signal: _bgFetchController.signal 
+                const res = await fetch(`/api/plot_data_bounds?${params.toString()}`, {
+                    signal: _bgFetchController.signal
                 });
                 const newData = await res.json();
                 if (newData.error) return;

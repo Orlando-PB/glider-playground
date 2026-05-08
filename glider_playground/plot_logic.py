@@ -1118,10 +1118,10 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
             bounds_mask = (plot_x >= x_min_dt) & (plot_x <= x_max_dt)
         else:
             bounds_mask = (plot_x.astype(float) >= float(x_min)) & (plot_x.astype(float) <= float(x_max))
-        
+
         if y_min is not None and y_max is not None:
             bounds_mask &= (plot_y >= float(y_min)) & (plot_y <= float(y_max))
-        
+
         plot_x = plot_x[bounds_mask]
         plot_y = plot_y[bounds_mask]
         plot_qc = plot_qc[bounds_mask]
