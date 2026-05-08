@@ -282,6 +282,11 @@ def _is_nrt(last_time_iso: Optional[str]) -> bool:
 
 def _public_view(rec: dict) -> dict:
     last_time = rec.get("last_time")
+    try:
+        from . import live_logic
+        is_managed = live_logic.is_managed(rec.get("path", ""))
+    except Exception:
+        is_managed = False
     return {
         "id": rec["id"],
         "name": rec["name"],
@@ -300,6 +305,7 @@ def _public_view(rec: dict) -> dict:
         "last_lat": rec.get("last_lat"),
         "last_lon": rec.get("last_lon"),
         "is_nrt": _is_nrt(last_time),
+        "is_managed": is_managed,
     }
 
 
@@ -455,11 +461,35 @@ def remove_file(file_id: str, *, delete_upload: bool = True) -> bool:
         _persist_locked()
     # Delete the upload file *after* releasing the lock so the worker's
     # open file handle can close cleanly before the path disappears.
-    if delete_upload and path.startswith(str(UPLOADS_DIR)):
-        try:
-            Path(path).unlink(missing_ok=True)
-        except Exception:
-            pass
+    # Also delete from data/ when it's a file we ourselves downloaded —
+    # otherwise it would just get re-scanned and re-processed on the next
+    # `list_files()` call. Files a user manually placed in data/ are left
+    # alone (only their cache record is dropped).
+    if delete_upload:
+        should_delete = path.startswith(str(UPLOADS_DIR))
+        if not should_delete:
+            try:
+                from . import live_logic
+                if live_logic.is_managed(path):
+                    fname = Path(path).name
+                    should_delete = True
+                    # Also forget it in the live marker so the next scan
+                    # treats it as "available to download" rather than
+                    # "already managed".
+                    try:
+                        marker = live_logic._load_marker()
+                        if fname in marker:
+                            marker.pop(fname, None)
+                            live_logic._save_marker(marker)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if should_delete:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
     return True
 
 

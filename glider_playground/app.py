@@ -8,7 +8,6 @@ import sys
 import time
 from pathlib import Path
 
-import httpx
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -17,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from . import cache_logic
 from . import cycle_profile_logic
 from . import jelly_logic
+from . import live_logic
 from . import plot_logic
 from . import spatial_logic
 
@@ -216,30 +216,22 @@ def pick_folder():
     return {"status": "success", "path": folder, "results": _register_paths(paths)}
 
 
-@app.post("/api/files/demo")
-async def download_demo_files():
-    demo_urls = [
-        "https://linkedsystems.uk/erddap/files/Public_OG1_Data_001_Recovery/Nelson_20240528/Nelson_646.nc",
-        "https://linkedsystems.uk/erddap/files/Public_Glider_Data_0711/Nelson_20240528/Nelson_646_R.nc",
-    ]
-    out = []
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            for url in demo_urls:
-                target = cache_logic.UPLOADS_DIR / url.rsplit("/", 1)[-1]
-                if not target.exists():
-                    async with client.stream("GET", url) as response:
-                        response.raise_for_status()
-                        with open(target, "wb") as f:
-                            async for chunk in response.aiter_bytes():
-                                f.write(chunk)
-                try:
-                    out.append({"status": "success", "file": cache_logic.register_path(str(target))})
-                except Exception as e:
-                    out.append({"status": "error", "filename": target.name, "message": str(e)})
-        return {"status": "success", "results": out}
-    except Exception as e:
-        return {"status": "error", "message": str(e), "results": out}
+@app.get("/api/live")
+def api_live(force: bool = False):
+    """Active gliders + uploads. Server-side cache prevents Pi flooding."""
+    return live_logic.list_live(force_scan=force)
+
+
+@app.post("/api/live/download")
+def api_live_download(filename: str):
+    return live_logic.request_download(filename)
+
+
+@app.delete("/api/live/{filename}")
+def api_live_delete(filename: str):
+    if not live_logic.delete_managed(filename):
+        raise HTTPException(status_code=404, detail="Not a managed file")
+    return {"status": "ok"}
 
 
 # ---------- per-file data endpoints ----------

@@ -314,8 +314,9 @@
             position: absolute;
             top: calc(100% + 6px);
             left: 0;
-            width: 360px;
+            width: 460px;
             max-width: calc(100vw - 24px);
+            max-height: calc(100vh - 80px);
             background: var(--bg-panel-2);
             border: 1px solid var(--border);
             border-radius: var(--radius-md);
@@ -324,6 +325,31 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+        }
+        .files-section-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 12px;
+            background: var(--bg-panel);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .files-section-title {
+            font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+            text-transform: uppercase; color: var(--text-muted);
+        }
+        .files-section-sub { font-size: 9px; color: var(--text-muted); }
+        .files-section-action {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px;
+            background: transparent; color: var(--text-muted);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            cursor: pointer; transition: all 0.15s;
+        }
+        .files-section-action:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .file-card-action.accent { color: var(--accent); border-color: var(--accent); }
+        .file-card-empty {
+            padding: 14px 16px; text-align: center;
+            font-size: 10px; color: var(--text-muted);
         }
         .files-panel[hidden] { display: none; }
         .files-panel-header {
@@ -417,6 +443,48 @@
             0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.7); }
             70%  { box-shadow: 0 0 0 5px rgba(255,255,255,0); }
             100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+        }
+        .live-row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .live-row:last-child { border-bottom: none; }
+        .live-row-body { flex: 1; min-width: 0; }
+        .live-row-name {
+            font-size: 11px; font-weight: 500; color: var(--text-primary);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .live-row-meta {
+            font-size: 9.5px; color: var(--text-muted);
+            display: flex; gap: 4px; align-items: center;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .live-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+        .live-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 24px; height: 24px;
+            background: transparent; color: var(--text-muted);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            cursor: pointer; transition: all 0.15s;
+        }
+        .live-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .live-btn.accent { color: var(--accent); border-color: var(--accent); }
+        .live-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+        .live-btn:disabled { opacity: 0.5; cursor: progress; }
+        .live-spinner {
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 2px solid var(--border); border-top-color: var(--accent);
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+        }
+        .live-progress {
+            position: relative; width: 100%; height: 3px; margin-top: 4px;
+            background: var(--border); border-radius: 999px; overflow: hidden;
+        }
+        .live-progress > span {
+            position: absolute; left: 0; top: 0; bottom: 0;
+            background: var(--accent); transition: width 0.3s ease;
         }
         .file-card-meta { font-size: 9.5px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; }
         .file-card-stage { color: var(--text-secondary); }
@@ -736,11 +804,26 @@
                                 <span class="material-symbols-outlined text-[14px]">close</span>
                             </button>
                         </div>
+                        <div class="files-section-header">
+                            <div class="flex flex-col gap-0.5 min-w-0">
+                                <span class="files-section-title">Live BODC deployments</span>
+                                <span id="liveScannedAt" class="files-section-sub">Not scanned yet</span>
+                            </div>
+                            <button id="liveRefreshBtn" type="button" class="files-section-action" title="Re-scan server">
+                                <span id="liveRefreshIcon" class="material-symbols-outlined text-[14px]">refresh</span>
+                            </button>
+                        </div>
+                        <div id="liveList" class="files-list"></div>
+                        <div class="files-section-header">
+                            <div class="flex flex-col gap-0.5 min-w-0">
+                                <span class="files-section-title">Your files</span>
+                            </div>
+                        </div>
                         <div id="filesList" class="files-list"></div>
                         <div id="filesEmpty" class="files-empty">
                             <span class="material-symbols-outlined" style="font-size: 28px; color: var(--text-muted);">inbox</span>
                             <p>No files yet.</p>
-                            <p class="files-empty-hint">Add NetCDF files or load the demo to get started.</p>
+                            <p class="files-empty-hint">Add NetCDF files, or download a live deployment above.</p>
                         </div>
                         <div class="files-panel-actions">
                             <button id="addFilesBtn" class="files-action-btn" type="button">
@@ -748,9 +831,6 @@
                             </button>
                             <button id="addFolderBtn" class="files-action-btn" type="button">
                                 <span class="material-symbols-outlined text-[15px]">folder_open</span> Add folder
-                            </button>
-                            <button id="demoFilesBtn" class="files-action-btn" type="button" title="Download two example NetCDF files">
-                                <span class="material-symbols-outlined text-[15px]">cloud_download</span> Demo
                             </button>
                         </div>
                     </div>
@@ -951,7 +1031,7 @@
                     <button id="tabVariables" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Variables</button>
                     <button id="tabAttributes" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
                 </div>
-                
+
                 <div id="view3DContainer" class="flex flex-col w-full flex-grow min-h-0 overflow-hidden items-center justify-center p-1">
                     <div style="aspect-ratio: 1/1; width: 100%; max-height: 100%; max-width: 100%; position: relative; flex-shrink: 0;">
                         <iframe id="iframe3D" src="/static/3d_view.html" style="position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block;"></iframe>
@@ -972,16 +1052,12 @@
                         <div class="text-center">
                             <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">database_off</span>
                             <p class="text-sm mt-2" style="color: var(--text-secondary);">No NetCDF files added yet.</p>
-                            <p class="text-[10px]" style="color: var(--text-muted);">Add your own .nc files (or a folder of them), or try the demo data.</p>
+                            <p class="text-[10px]" style="color: var(--text-muted);">Add your own .nc files or download a live deployment from the Files menu.</p>
                         </div>
                         <div class="flex gap-2">
                             <button id="addFromPromptBtn" class="px-5 py-2.5 text-xs font-medium flex items-center gap-2 border-none cursor-pointer" style="background: var(--accent); color: #fff; border-radius: var(--radius-md); transition: filter 0.15s;" onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter=''">
                                 <span class="material-symbols-outlined text-sm">add</span>
                                 Add Files
-                            </button>
-                            <button id="downloadDemoBtn" class="px-5 py-2.5 text-xs font-medium flex items-center gap-2 border-none cursor-pointer" style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-md); transition: border-color 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-                                <span class="material-symbols-outlined text-sm">cloud_download</span>
-                                Demo Files
                             </button>
                         </div>
                     </div>
@@ -1704,9 +1780,197 @@
             });
         }
 
+        const liveList = document.getElementById('liveList');
+        const liveScannedAt = document.getElementById('liveScannedAt');
+        const liveRefreshBtn = document.getElementById('liveRefreshBtn');
+        const liveRefreshIcon = document.getElementById('liveRefreshIcon');
+
         tabVariables.addEventListener('click', () => switchTab('tabVariables'));
         tabAttributes.addEventListener('click', () => switchTab('tabAttributes'));
         tab3D.addEventListener('click', () => switchTab('tab3D'));
+        liveRefreshBtn.addEventListener('click', () => refreshLive({ force: true }));
+
+        // ---------- Live BODC section (inside files dropdown) ----------
+        let _liveInFlight = false;
+        let _liveData = null;
+        let _liveRefreshTimer = null;
+        const _liveOptimistic = new Set();
+
+        function relTimeAgo(secsOrIso) {
+            let t = null;
+            if (typeof secsOrIso === 'number') t = secsOrIso * 1000;
+            else if (typeof secsOrIso === 'string') t = Date.parse(secsOrIso);
+            if (!t || isNaN(t)) return '';
+            const diff = Math.max(0, Date.now() - t);
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+            const days = Math.floor(hrs / 24);
+            return `${days} day${days === 1 ? '' : 's'} ago`;
+        }
+
+        function liveIsBusy() {
+            if (!_liveData) return false;
+            if (_liveOptimistic.size > 0) return true;
+            return (_liveData.active || []).some(e =>
+                e.downloading || (e.downloaded && e.status && e.status !== 'ready')
+            );
+        }
+
+        function scheduleLivePoll() {
+            clearTimeout(_liveRefreshTimer);
+            if (filesPanel.hidden) return;
+            const delay = liveIsBusy() ? 2000 : 30000;
+            _liveRefreshTimer = setTimeout(() => {
+                if (!filesPanel.hidden) refreshLive({ force: false });
+            }, delay);
+        }
+
+        async function refreshLive({ force = false } = {}) {
+            if (_liveInFlight) { scheduleLivePoll(); return; }
+            _liveInFlight = true;
+            liveRefreshIcon.style.animation = 'spin 1s linear infinite';
+            try {
+                const res = await fetch(`/api/live${force ? '?force=true' : ''}`);
+                _liveData = await res.json();
+                renderLive(_liveData);
+            } catch (e) {
+                console.error('Live fetch failed:', e);
+                liveList.innerHTML = `<div class="file-card-empty">Failed to reach server.</div>`;
+            } finally {
+                _liveInFlight = false;
+                liveRefreshIcon.style.animation = '';
+                scheduleLivePoll();
+            }
+        }
+
+        function renderLive(data) {
+            const esc = escapeHtmlSafe;
+
+            liveScannedAt.textContent = data.scanned_at
+                ? `Last scan: ${relTimeAgo(data.scanned_at)}`
+                : 'Scanning…';
+
+            const active = data.active || [];
+            // Drop optimistic flags the server has confirmed.
+            for (const e of active) {
+                if (_liveOptimistic.has(e.filename) && (e.downloading || e.downloaded)) {
+                    _liveOptimistic.delete(e.filename);
+                }
+            }
+
+            if (active.length === 0) {
+                liveList.innerHTML = `<div class="file-card-empty">No live deployments found in the past 7 days.</div>`;
+                return;
+            }
+
+            const html = active.map(e => {
+                const ago = relTimeAgo(e.server_mtime);
+                const isPending = e.downloading || _liveOptimistic.has(e.filename);
+
+                let iconClass = '', iconName = 'satellite_alt';
+                if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'cloud_download'; }
+                else if (e.downloaded && e.status === 'ready') { iconClass = 'ready'; iconName = 'check'; }
+                else if (e.downloaded && e.status && e.status !== 'ready') { iconClass = 'processing'; iconName = 'progress_activity'; }
+
+                let metaLine, progressBar = '';
+                if (isPending && !e.downloaded) {
+                    metaLine = `<span class="file-card-stage">Downloading…</span>`;
+                } else if (e.downloaded && e.status && e.status !== 'ready') {
+                    metaLine = `<span class="file-card-stage">${esc(e.status)}</span><span>${e.progress ?? 0}%</span>`;
+                    progressBar = `<div class="file-card-progress"><div class="file-card-progress-bar" style="width:${Math.max(2, e.progress ?? 0)}%"></div></div>`;
+                } else if (e.downloaded) {
+                    metaLine = `<span>updated ${esc(ago)}</span>`;
+                } else {
+                    metaLine = `<span>updated ${esc(ago)}</span>`;
+                }
+
+                let actionHtml = '';
+                if (isPending && !e.downloaded) {
+                    actionHtml = `<span class="live-spinner" title="Downloading…"></span>`;
+                } else if (!e.downloaded) {
+                    actionHtml = `<button class="file-card-action" data-act="bodc-download" data-fn="${esc(e.filename)}" title="Download to data folder"><span class="material-symbols-outlined text-[14px]">cloud_download</span></button>`;
+                } else {
+                    const upd = e.needs_update
+                        ? `<button class="file-card-action accent" data-act="bodc-download" data-fn="${esc(e.filename)}" title="Newer version available — update"><span class="material-symbols-outlined text-[14px]">sync</span></button>`
+                        : '';
+                    actionHtml = `${upd}<button class="file-card-action danger" data-act="bodc-delete" data-fn="${esc(e.filename)}" title="Delete downloaded file"><span class="material-symbols-outlined text-[14px]">delete</span></button>`;
+                }
+
+                const isActive = e.file_id && e.file_id === datasetSelect.value;
+                return `
+                    <div class="file-card${isActive ? ' active' : ''}${isPending || (e.downloaded && e.status && e.status !== 'ready') ? ' disabled' : ''}" data-id="${esc(e.file_id || '')}" data-bodc="${esc(e.filename)}">
+                        <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
+                        <div class="file-card-body">
+                            <div class="file-card-name" title="${esc(e.filename)}">${esc(e.dataset)} <span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span></div>
+                            <div class="file-card-meta">${metaLine}</div>
+                            ${progressBar}
+                        </div>
+                        <div class="file-card-actions">${actionHtml}</div>
+                    </div>
+                `;
+            }).join('');
+
+            liveList.innerHTML = html;
+        }
+
+        async function bodcDownload(fn) {
+            _liveOptimistic.add(fn);
+            if (_liveData) renderLive(_liveData);
+            await fetch(`/api/live/download?filename=${encodeURIComponent(fn)}`, { method: 'POST' });
+            scheduleLivePoll();
+        }
+
+        async function bodcOpen(card) {
+            const fn = card.dataset.bodc;
+            // Pull the freshest record list — the file may have just become
+            // ready and not yet be in fileRecords.
+            await refreshFiles();
+            // Resolve the id from /api/live (authoritative for managed paths).
+            let id = card.dataset.id;
+            if (!id && _liveData) {
+                const e = (_liveData.active || []).find(x => x.filename === fn);
+                if (e) id = e.file_id;
+            }
+            if (id && typeof selectFile === 'function') {
+                await selectFile(id);
+                closeFilesPanel();
+            }
+        }
+
+        liveList.addEventListener('click', async (e) => {
+            const card = e.target.closest('.file-card');
+            if (!card) return;
+            const actBtn = e.target.closest('.file-card-action');
+            if (actBtn) {
+                e.stopPropagation();
+                const act = actBtn.dataset.act;
+                const fn = actBtn.dataset.fn;
+                actBtn.disabled = true;
+                try {
+                    if (act === 'bodc-download') {
+                        await bodcDownload(fn);
+                    } else if (act === 'bodc-delete') {
+                        await fetch(`/api/live/${encodeURIComponent(fn)}`, { method: 'DELETE' });
+                        await refreshLive({ force: true });
+                        await refreshFiles();
+                    }
+                } catch (err) { console.error(err); }
+                finally { actBtn.disabled = false; }
+                return;
+            }
+            // Bare card click: download if not local, otherwise open.
+            const fn = card.dataset.bodc;
+            if (!fn) return;
+            const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
+            if (entry && !entry.downloaded && !entry.downloading && !_liveOptimistic.has(fn)) {
+                await bodcDownload(fn);
+            } else if (entry && entry.downloaded) {
+                await bodcOpen(card);
+            }
+        });
 
         async function init() {
             try {
@@ -1722,9 +1986,7 @@
                 // Prevent local additions or deletions in server mode
                 addFolderBtn.style.display = 'none';
                 addFilesBtn.style.display = 'none';
-                demoFilesBtn.style.display = 'none';
                 addFromPromptBtn.style.display = 'none';
-                downloadDemoBtn.style.display = 'none';
             }
 
             renderPresetsDropdown();
@@ -2001,7 +2263,6 @@
 
         // ===== Files panel =====
         const demoPrompt = document.getElementById('demoPrompt');
-        const downloadDemoBtn = document.getElementById('downloadDemoBtn');
         const addFromPromptBtn = document.getElementById('addFromPromptBtn');
         const datasetTrigger = document.getElementById('datasetTrigger');
         const datasetTriggerLabel = document.getElementById('datasetTriggerLabel');
@@ -2013,7 +2274,6 @@
         const filesEmpty = document.getElementById('filesEmpty');
         const addFilesBtn = document.getElementById('addFilesBtn');
         const addFolderBtn = document.getElementById('addFolderBtn');
-        const demoFilesBtn = document.getElementById('demoFilesBtn');
         const filesUploadInput = document.getElementById('filesUploadInput');
         const processingOverlay = document.getElementById('processingOverlay');
         const processingTitle = document.getElementById('processingTitle');
@@ -2049,7 +2309,10 @@
 
         function renderFilesList() {
             filesList.innerHTML = '';
-            if (fileRecords.length === 0) {
+            // Files we ourselves downloaded for the BODC section live in
+            // the dedicated Live list above — skip them here.
+            const userFiles = fileRecords.filter(f => !f.is_managed);
+            if (userFiles.length === 0) {
                 filesList.style.display = 'none';
                 filesEmpty.style.display = 'flex';
                 return;
@@ -2058,7 +2321,7 @@
             filesEmpty.style.display = 'none';
 
             const activeId = datasetSelect.value;
-            for (const f of fileRecords) {
+            for (const f of userFiles) {
                 const card = document.createElement('div');
                 const isActive = f.id === activeId;
                 card.className = 'file-card' + (isActive ? ' active' : '') +
@@ -2359,11 +2622,15 @@
             filesPanel.hidden = false;
             datasetTrigger.classList.add('open');
             renderFilesList();
+            // Show stale data immediately if we have it; refresh in background.
+            if (_liveData) renderLive(_liveData);
+            refreshLive({ force: false });
         }
 
         function closeFilesPanel() {
             filesPanel.hidden = true;
             datasetTrigger.classList.remove('open');
+            clearTimeout(_liveRefreshTimer);
         }
 
         datasetTrigger.addEventListener('click', (e) => {
@@ -2500,28 +2767,6 @@
         });
 
         addFromPromptBtn.addEventListener('click', () => pickAndAddFiles());
-
-        demoFilesBtn.addEventListener('click', async () => {
-            demoFilesBtn.disabled = true;
-            try {
-                const res = await fetch('/api/files/demo', { method: 'POST' });
-                const data = await res.json();
-                if (data.status !== 'success' && data.status !== undefined && data.status !== 'success') {
-                    if (data.message) alert(`Demo download failed: ${data.message}`);
-                }
-                await refreshFiles();
-                const firstNew = (data.results || []).find(r => r.status === 'success');
-                if (firstNew && firstNew.file && !datasetSelect.value) {
-                    await selectFile(firstNew.file.id);
-                }
-            } catch (e) {
-                console.error('Demo download failed:', e);
-            } finally {
-                demoFilesBtn.disabled = false;
-            }
-        });
-
-        downloadDemoBtn.addEventListener('click', () => demoFilesBtn.click());
 
         async function updatePlot() {
             if (isPlotting) { plotQueued = true; return; }
