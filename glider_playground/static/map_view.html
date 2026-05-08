@@ -61,9 +61,48 @@
         }
 
         const CONFIG = {
-            pathThickness: 2.5,
-            zoomScaleFactor: 30
+            pathThicknessMin: 1.1,
+            pathThicknessMax: 3.6,
+            pathBrightnessMin: 0.22,
+            pathBrightnessMax: 1.0,
+            maxSegments: 400,
+            zoomScaleFactor: 30,
+            minAltitude: 0.01,
+            maxAltitude: 2.5
         };
+
+        function hexToRgb(hex) {
+            const h = (hex || '').trim().replace('#', '');
+            const v = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+            const n = parseInt(v, 16);
+            return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+        }
+
+        function rgbaString({ r, g, b }, a) {
+            return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
+        }
+
+        function buildSegments(points) {
+            if (points.length < 2) return [];
+            // Downsample if needed so we keep render cost bounded.
+            const stride = Math.max(1, Math.ceil((points.length - 1) / CONFIG.maxSegments));
+            const sampled = [];
+            for (let i = 0; i < points.length; i += stride) sampled.push(points[i]);
+            if (sampled[sampled.length - 1] !== points[points.length - 1]) {
+                sampled.push(points[points.length - 1]);
+            }
+            const segs = [];
+            const n = sampled.length - 1;
+            for (let i = 0; i < n; i++) {
+                // t=0 oldest (back of trail), t=1 newest (head).
+                const t = n === 0 ? 1 : i / (n - 1 || 1);
+                segs.push({
+                    coordinates: [sampled[i], sampled[i + 1]],
+                    t
+                });
+            }
+            return segs;
+        }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -101,11 +140,21 @@
                     return;
                 }
 
-                const pathFeature = { coordinates: formattedPath };
+                const segments = buildSegments(formattedPath);
+
+                const segColor = (seg) => {
+                    const rgb = hexToRgb(readThemeColors().path);
+                    const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
+                    // Darken the rgb itself for the older segments so they fade
+                    // even on light backgrounds where alpha alone isn't enough.
+                    const k = 0.4 + 0.6 * seg.t;
+                    return rgbaString({ r: rgb.r * k, g: rgb.g * k, b: rgb.b * k }, a);
+                };
+                const segStroke = (seg) => CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
 
                 if (!myGlobe) {
                     document.getElementById('statusText').textContent = 'Rendering 3D globe...';
-                    
+
                     const tc = readThemeColors();
                     myGlobe = Globe()
                         (document.getElementById('globe-container'))
@@ -113,22 +162,31 @@
                         .backgroundColor(tc.bg)
                         .showAtmosphere(true)
                         .atmosphereColor(tc.atmosphere)
-                        .pathsData([pathFeature])
+                        .pathsData(segments)
                         .pathPoints('coordinates')
                         .pathPointLat('lat')
                         .pathPointLng('lng')
-                        .pathColor(() => readThemeColors().path)
-                        .pathStroke(() => CONFIG.pathThickness);
+                        .pathColor(segColor)
+                        .pathStroke(segStroke);
+
+                    // Clamp camera distance: prevents zooming out so far the
+                    // globe shrinks, and zooming in past the tile resolution.
+                    try {
+                        const radius = myGlobe.getGlobeRadius();
+                        const controls = myGlobe.controls();
+                        controls.minDistance = radius * (1 + CONFIG.minAltitude);
+                        controls.maxDistance = radius * (1 + CONFIG.maxAltitude);
+                    } catch (_) {}
 
                     myGlobe.onGlobeReady(() => {
                         document.getElementById('globe-container').style.visibility = 'visible';
                         document.getElementById('overlay').style.display = 'none';
-                        
+
                         window.logRender('3D Globe Frontend', performance.now() - startTime);
                     });
 
                 } else {
-                    myGlobe.pathsData([pathFeature]);
+                    myGlobe.pathsData(segments);
                     document.getElementById('overlay').style.display = 'none';
                 }
 
@@ -169,8 +227,8 @@
             if (myGlobe) {
                 const tc = readThemeColors();
                 myGlobe.backgroundColor(tc.bg).atmosphereColor(tc.atmosphere);
-                // trigger a re-colour of the existing path
-                myGlobe.pathColor(() => readThemeColors().path);
+                // trigger a re-colour of the existing path (segColor reads theme on each call)
+                myGlobe.pathColor(myGlobe.pathColor());
             }
         });
     </script>
