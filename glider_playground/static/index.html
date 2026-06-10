@@ -1187,7 +1187,38 @@
         const attrList = document.getElementById('attrList');
         const view3DContainer = document.getElementById('view3DContainer');
         const plotStatsContainer = document.getElementById('plotStatsContainer');
-        
+
+        // Most recent full-dataset stats, kept so we can restore the card when the
+        // user zooms back out after the count was swapped to "Points in view".
+        let lastPlotStats = null;
+
+        function renderPlotStats(stats) {
+            if (!stats) return;
+            lastPlotStats = stats;
+            plotStatsContainer.classList.remove('hidden');
+            plotStatsContainer.classList.add('flex');
+            let html = `<div class="flex justify-between font-medium"><span id="plottedPointsLabel">Plotted Points:</span> <span id="plottedPointsValue" class="text-googleBlue font-bold">${stats.valid.toLocaleString()}</span></div>`;
+            if (stats.qc_removed > 0 || stats.time_removed > 0 || stats.profile_removed > 0) {
+                html += `<div id="statsBreakdown"><div class="border-t border-gray-100 my-0.5"></div>`;
+                if (stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Failed QC:</span> <span>${stats.qc_removed.toLocaleString()}</span></div>`;
+                if (stats.time_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad times removed:</span> <span>${stats.time_removed.toLocaleString()}</span></div>`;
+                if (stats.profile_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Other profiles:</span> <span>${stats.profile_removed.toLocaleString()}</span></div>`;
+                html += `</div>`;
+            }
+            plotStatsContainer.innerHTML = html;
+        }
+
+        // Swap the count to reflect the points within the current zoom window. The
+        // full-dataset removal breakdown no longer applies to the view, so hide it.
+        function setInViewCount(n) {
+            const valEl = document.getElementById('plottedPointsValue');
+            const labelEl = document.getElementById('plottedPointsLabel');
+            const breakdown = document.getElementById('statsBreakdown');
+            if (valEl) valEl.textContent = Number(n).toLocaleString();
+            if (labelEl) labelEl.textContent = 'Points in view:';
+            if (breakdown) breakdown.classList.add('hidden');
+        }
+
         const invertYBtn = document.getElementById('invertYBtn');
         const calcMldBtn = document.getElementById('calcMldBtn');
         const applyQcBtn = document.getElementById('applyQcBtn');
@@ -1482,19 +1513,7 @@
                     cTrimContainer.classList.replace('flex', 'hidden');
                 }
 
-                if (msg.stats) {
-                    plotStatsContainer.classList.remove('hidden');
-                    plotStatsContainer.classList.add('flex');
-                    let html = `<div class="flex justify-between font-medium"><span>Plotted Points:</span> <span class="text-googleBlue font-bold">${msg.stats.valid.toLocaleString()}</span></div>`;
-                    if (msg.stats.nan_removed > 0 || msg.stats.qc_removed > 0 || msg.stats.time_removed > 0 || msg.stats.profile_removed > 0) {
-                        html += `<div class="border-t border-gray-100 my-0.5"></div>`;
-                        if (msg.stats.nan_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>NaNs removed:</span> <span>${msg.stats.nan_removed.toLocaleString()}</span></div>`;
-                        if (msg.stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Failed QC:</span> <span>${msg.stats.qc_removed.toLocaleString()}</span></div>`;
-                        if (msg.stats.time_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Bad times removed:</span> <span>${msg.stats.time_removed.toLocaleString()}</span></div>`;
-                        if (msg.stats.profile_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Other profiles:</span> <span>${msg.stats.profile_removed.toLocaleString()}</span></div>`;
-                    }
-                    plotStatsContainer.innerHTML = html;
-                }
+                if (msg.stats) renderPlotStats(msg.stats);
 
                 if (msg.hasC) updateHandlesFromInputs('c');
             }
@@ -1545,6 +1564,13 @@
                 }
             }
             else if (msg.type === 'bgFetchComplete') {
+                // Zoom out / reset carries the full-dataset stats; a zoom carries the
+                // in-view count. Update the stats card accordingly.
+                if (msg.stats) {
+                    renderPlotStats(msg.stats);
+                } else if (typeof msg.plotted === 'number') {
+                    setInViewCount(msg.plotted);
+                }
                 if (msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     currentColorLimits = { cMin: msg.cMin, cMax: msg.cMax };
                 }

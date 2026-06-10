@@ -989,6 +989,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
                           highlight_qc=False, filter_time=True,
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
+                          view_x_min=None, view_x_max=None, view_y_min=None, view_y_max=None,
                           profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
                           calc_mld=False, ctd_interpolate=False, ctd_qc=False):
     if isinstance(c_var, str) and "|mld" in c_var:
@@ -1132,6 +1133,22 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     if total == 0:
         return {"error": "No points in view."}
 
+    # The fetch deliberately over-fetches a padded margin so edge points render,
+    # so `total` overcounts what's actually visible. When the exact (unpadded)
+    # view bounds are supplied, count only the points inside them for an honest
+    # "Points in view" stat; otherwise fall back to total.
+    plotted = total
+    if view_x_min is not None and view_x_max is not None:
+        if np.issubdtype(plot_x.dtype, np.datetime64):
+            vx_min = np.datetime64(pd.to_datetime(view_x_min, unit='ms'))
+            vx_max = np.datetime64(pd.to_datetime(view_x_max, unit='ms'))
+            view_mask = (plot_x >= vx_min) & (plot_x <= vx_max)
+        else:
+            view_mask = (plot_x.astype(float) >= float(view_x_min)) & (plot_x.astype(float) <= float(view_x_max))
+        if view_y_min is not None and view_y_max is not None:
+            view_mask &= (plot_y >= float(view_y_min)) & (plot_y <= float(view_y_max))
+        plotted = int(view_mask.sum())
+
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
     mld_x, mld_y = [], []
@@ -1166,5 +1183,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         "x_var": x_var, "y_var": y_var, "c_var": c_var,
         "x_units": units_map.get(x_var, ""),
         "y_units": units_map.get(y_var, ""),
-        "c_units": units_map.get(c_var, "") if c_var else ""
+        "c_units": units_map.get(c_var, "") if c_var else "",
+        # Count of valid points within the zoomed view (pre-downsample), so the
+        # stats card can show "Points in view" while the user is zoomed in.
+        "plotted": int(plotted)
     }
