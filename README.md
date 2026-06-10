@@ -1,5 +1,7 @@
 # Glider Playground
 
+<img src="glider_playground/static/NOC_logo.svg" alt="National Oceanography Centre" width="72" align="right">
+
 A fast, web-based NetCDF explorer for glider data. Load your `.nc` files and instantly explore, plot, and QC your data — no scripting required.
 
 **Live demo:** [glider-playground.co.uk](https://glider-playground.co.uk) *(running on a Raspberry Pi — may be slow)*
@@ -95,3 +97,13 @@ Edit the **QC flags** field to customise which flags count as good.
 ```bash
 pip uninstall glider-playground
 ```
+
+---
+
+## Acknowledgements
+
+<img src="glider_playground/static/NOC_logo.svg" alt="National Oceanography Centre" width="56" align="left">
+
+Developed by **Orlando Prugel-Bennett** at the **National Oceanography Centre (NOC)**.
+
+© 2026 National Oceanography Centre. Released under the [MIT License](LICENSE).

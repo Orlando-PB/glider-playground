@@ -19,6 +19,7 @@ from . import jelly_logic
 from . import live_logic
 from . import plot_logic
 from . import spatial_logic
+from . import update_logic
 
 app = FastAPI()
 
@@ -216,6 +217,12 @@ def pick_folder():
     return {"status": "success", "path": folder, "results": _register_paths(paths)}
 
 
+@app.get("/api/update_check")
+def api_update_check(force: bool = False):
+    """Is a newer release on PyPI, and how should this install upgrade?"""
+    return update_logic.check(force=force)
+
+
 @app.get("/api/live")
 def api_live(force: bool = False):
     """Active gliders + uploads. Server-side cache prevents Pi flooding."""
@@ -239,6 +246,13 @@ def api_live_delete(filename: str):
 @app.get("/api/map")
 def api_map(id: str):
     payload = _cached_or_live(id, "map", spatial_logic.generate_map_image)
+    # Backfill DAC for map payloads cached before DAC support was added — the
+    # extraction is itself cached, so this is cheap on the warm path.
+    if isinstance(payload, dict) and "error" not in payload and "dac" not in payload:
+        try:
+            payload = {**payload, "dac": spatial_logic.get_dac_vectors(_resolve_path(id))}
+        except Exception:
+            payload = {**payload, "dac": []}
     # Decorate with NRT info so the map view can render a live-position marker.
     rec = cache_logic.get_record(id)
     if isinstance(payload, dict) and rec:

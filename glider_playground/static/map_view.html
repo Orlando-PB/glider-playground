@@ -29,6 +29,8 @@
         #globe-container { width: 100vw; height: 100vh; z-index: 1; cursor: grab; visibility: hidden; }
         #globe-container:active { cursor: grabbing; }
         #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: var(--bg-panel); color: var(--text-muted); }
+        #dacToggle:hover { filter: brightness(1.12); }
+        #dacToggle.off { opacity: 0.45; }
     </style>
     <script>
         (function() {
@@ -50,6 +52,20 @@
     
     <div id="globe-container"></div>
 
+    <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
+    <button id="dacToggle" title="Toggle depth-averaged currents"
+        style="display:none; position:absolute; top:10px; right:10px; z-index:60;
+               align-items:center; gap:6px; padding:6px 10px; border:none; cursor:pointer;
+               border-radius:8px; font-size:11px; font-weight:600; color:var(--text-primary);
+               background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
+               box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
+        <span style="display:inline-block; width:18px; height:0; border-top:2px solid currentColor; position:relative;">
+            <span style="position:absolute; right:-1px; top:-4px; width:0; height:0;
+                   border-left:6px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent;"></span>
+        </span>
+        Currents
+    </button>
+
     <script>
         function readThemeColors() {
             const s = getComputedStyle(document.documentElement);
@@ -68,8 +84,94 @@
             maxSegments: 400,
             zoomScaleFactor: 30,
             minAltitude: 0.01,
-            maxAltitude: 2.5
+            maxAltitude: 2.5,
+            // Tiny altitude offsets fix the draw order so it's always, bottom
+            // to top: ocean tiles (surface) -> track line -> arrows -> point
+            // (the point is a DOM overlay, already on top). Kept small enough
+            // that the lift causes no visible parallax when rotating.
+            lineAltitude: 0.00015
         };
+
+        // Depth-averaged current (DAC) arrows. Each glider dive yields one
+        // current vector; we draw it as a short arrow at the surfacing point so
+        // pilots can see where the flow is strong (NRT piloting).
+        const DAC_CONFIG = {
+            // Arrows fade with age like the track: oldest are faint/thin grey,
+            // newest are solid black and a touch thicker. greyOld is the grey
+            // level (0-255) of the oldest arrow; the newest is pure black.
+            greyOld: 150,
+            alphaOld: 0.45,
+            strokeMin: 0.6,       // oldest arrow
+            strokeMax: 1.4,       // newest arrow
+            scaleKmPerMs: 18,     // arrow length: 1 m/s -> 18 km
+            minLenKm: 0.5,
+            maxLenKm: 18,
+            maxLenSpanFrac: 0.08, // also cap length to a fraction of the track span
+            headFrac: 0.3,        // arrowhead length as a fraction of the shaft
+            headAngleDeg: 25,
+            altitude: 0.0004,     // just above the track line so arrows always
+                                  // draw on top of it; small enough to avoid
+                                  // visible parallax (see CONFIG.lineAltitude)
+        };
+
+        // Build arrow polylines from DAC vectors. Each arrow is a single path
+        // (shaft + two barbs) so it renders as one stroked line on the globe.
+        // spanKm is the track's extent, used to keep arrows proportionate to
+        // the view so they don't dominate a small deployment.
+        function buildDacArrows(vectors, spanKm) {
+            const out = [];
+            if (!Array.isArray(vectors)) return out;
+            const kmToLat = (km) => km / 110.574;
+            const maxLen = spanKm > 0
+                ? Math.min(DAC_CONFIG.maxLenKm, spanKm * DAC_CONFIG.maxLenSpanFrac)
+                : DAC_CONFIG.maxLenKm;
+            for (const d of vectors) {
+                const lat = Number(d.lat), lon = Number(d.lon);
+                const u = Number(d.u), v = Number(d.v);
+                const speed = Math.hypot(u, v);
+                if (!isFinite(lat) || !isFinite(lon) || !(speed > 0)) continue;
+
+                const lenKm = Math.min(maxLen,
+                    Math.max(DAC_CONFIG.minLenKm, speed * DAC_CONFIG.scaleKmPerMs));
+                const cosLat = Math.cos(lat * Math.PI / 180) || 1e-6;
+                const kmToLon = (km) => km / (111.320 * cosLat);
+
+                const ue = u / speed, vn = v / speed;          // unit east/north
+                const tipLat = lat + kmToLat(vn * lenKm);
+                const tipLon = lon + kmToLon(ue * lenKm);
+
+                // Arrowhead barbs: rotate the reversed direction by ±headAngle.
+                const headKm = lenKm * DAC_CONFIG.headFrac;
+                const a = DAC_CONFIG.headAngleDeg * Math.PI / 180;
+                const rxE = -ue, ryN = -vn;
+                const rot = (ex, ny, ang) => [
+                    ex * Math.cos(ang) - ny * Math.sin(ang),
+                    ex * Math.sin(ang) + ny * Math.cos(ang),
+                ];
+                const [b1e, b1n] = rot(rxE, ryN, a);
+                const [b2e, b2n] = rot(rxE, ryN, -a);
+                const barb1 = { lat: tipLat + kmToLat(b1n * headKm), lng: tipLon + kmToLon(b1e * headKm) };
+                const barb2 = { lat: tipLat + kmToLat(b2n * headKm), lng: tipLon + kmToLon(b2e * headKm) };
+
+                const alt = DAC_CONFIG.altitude;
+                out.push({
+                    kind: 'dac',
+                    speed,
+                    t: 1, // filled in below once the count is known
+                    coordinates: [
+                        { lat, lng: lon, alt },
+                        { lat: tipLat, lng: tipLon, alt },
+                        { ...barb1, alt },
+                        { lat: tipLat, lng: tipLon, alt },
+                        { ...barb2, alt },
+                    ],
+                });
+            }
+            // t = 0 oldest, 1 newest — matches the track's time fade.
+            const last = out.length - 1;
+            for (let i = 0; i <= last; i++) out[i].t = last > 0 ? i / last : 1;
+            return out;
+        }
 
         function hexToRgb(hex) {
             const h = (hex || '').trim().replace('#', '');
@@ -110,6 +212,40 @@
         });
 
         let myGlobe = null;
+        let trackSegments = [];
+        let dacArrows = [];
+        let showDac = true;
+
+        // What goes into pathsData: always the track, plus DAC arrows when shown.
+        function visiblePaths() {
+            return showDac ? trackSegments.concat(dacArrows) : trackSegments;
+        }
+
+        // Tell the parent app whether DAC arrows exist for this file and whether
+        // they're currently shown, so Jelly can answer/act on "show currents".
+        function reportDacStatus() {
+            try {
+                window.parent && window.parent.postMessage({
+                    type: 'dacStatus',
+                    available: dacArrows.length > 0,
+                    shown: showDac && dacArrows.length > 0,
+                }, '*');
+            } catch (_) {}
+        }
+
+        function updateDacToggle() {
+            reportDacStatus();
+            const btn = document.getElementById('dacToggle');
+            if (!btn) return;
+            if (dacArrows.length === 0) {
+                btn.style.display = 'none';
+                return;
+            }
+            btn.style.display = 'flex';
+            btn.classList.toggle('off', !showDac);
+            btn.title = (showDac ? 'Hide' : 'Show') +
+                ` depth-averaged currents (${dacArrows.length} dives)`;
+        }
 
         async function initMap() {
             const startTime = performance.now();
@@ -131,7 +267,7 @@
 
                 const formattedPath = data.path
                     .filter(coords => Array.isArray(coords) && coords.length >= 2 && !isNaN(coords[0]) && !isNaN(coords[1]))
-                    .map(coords => ({ lat: Number(coords[0]), lng: Number(coords[1]) }));
+                    .map(coords => ({ lat: Number(coords[0]), lng: Number(coords[1]), alt: CONFIG.lineAltitude }));
 
                 if (formattedPath.length === 0) {
                     document.getElementById('loadingIcon').textContent = 'error';
@@ -141,6 +277,23 @@
                 }
 
                 const segments = buildSegments(formattedPath);
+                trackSegments = segments;
+
+                // Track extent in km — keeps current arrows scaled to the view.
+                let trackSpanKm = 0;
+                if (formattedPath.length > 1) {
+                    let aLat = Infinity, bLat = -Infinity, aLng = Infinity, bLng = -Infinity;
+                    for (const p of formattedPath) {
+                        if (p.lat < aLat) aLat = p.lat;
+                        if (p.lat > bLat) bLat = p.lat;
+                        if (p.lng < aLng) aLng = p.lng;
+                        if (p.lng > bLng) bLng = p.lng;
+                    }
+                    const cLat = Math.cos((aLat + bLat) / 2 * Math.PI / 180) || 1e-6;
+                    trackSpanKm = Math.hypot((bLat - aLat) * 110.574, (bLng - aLng) * 111.320 * cLat);
+                }
+                dacArrows = buildDacArrows(data.dac, trackSpanKm);
+                updateDacToggle();
 
                 // Live-position blob for NRT (Near Real-Time) deployments —
                 // the glider is presumed still in the water at this last fix.
@@ -155,6 +308,12 @@
                 }
 
                 const segColor = (seg) => {
+                    if (seg.kind === 'dac') {
+                        const t = seg.t == null ? 1 : seg.t;
+                        const g = Math.round(DAC_CONFIG.greyOld * (1 - t)); // grey -> black
+                        const a = DAC_CONFIG.alphaOld + (1 - DAC_CONFIG.alphaOld) * t;
+                        return rgbaString({ r: g, g, b: g }, a);
+                    }
                     const rgb = hexToRgb(readThemeColors().path);
                     const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
                     // Darken the rgb itself for the older segments so they fade
@@ -162,7 +321,9 @@
                     const k = 0.4 + 0.6 * seg.t;
                     return rgbaString({ r: rgb.r * k, g: rgb.g * k, b: rgb.b * k }, a);
                 };
-                const segStroke = (seg) => CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
+                const segStroke = (seg) => seg.kind === 'dac'
+                    ? DAC_CONFIG.strokeMin + (DAC_CONFIG.strokeMax - DAC_CONFIG.strokeMin) * (seg.t == null ? 1 : seg.t)
+                    : CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
 
                 if (!myGlobe) {
                     document.getElementById('statusText').textContent = 'Rendering 3D globe...';
@@ -174,10 +335,11 @@
                         .backgroundColor(tc.bg)
                         .showAtmosphere(true)
                         .atmosphereColor(tc.atmosphere)
-                        .pathsData(segments)
+                        .pathsData(visiblePaths())
                         .pathPoints('coordinates')
                         .pathPointLat('lat')
                         .pathPointLng('lng')
+                        .pathPointAlt(pt => pt.alt || 0)
                         .pathColor(segColor)
                         .pathStroke(segStroke)
                         .ringsData(nrtPoints)
@@ -214,7 +376,7 @@
                     });
 
                 } else {
-                    myGlobe.pathsData(segments)
+                    myGlobe.pathsData(visiblePaths())
                            .ringsData(nrtPoints)
                            .htmlElementsData(nrtPoints);
                     document.getElementById('overlay').style.display = 'none';
@@ -242,6 +404,12 @@
             }
         }
 
+        document.getElementById('dacToggle').addEventListener('click', () => {
+            showDac = !showDac;
+            updateDacToggle();
+            if (myGlobe) myGlobe.pathsData(visiblePaths());
+        });
+
         initMap();
 
         window.addEventListener('resize', () => {
@@ -251,14 +419,24 @@
         });
 
         window.addEventListener('message', (event) => {
-            if (!event.data || event.data.type !== 'setTheme') return;
-            const t = event.data.theme === 'light' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', t);
-            if (myGlobe) {
-                const tc = readThemeColors();
-                myGlobe.backgroundColor(tc.bg).atmosphereColor(tc.atmosphere);
-                // trigger a re-colour of the existing path (segColor reads theme on each call)
-                myGlobe.pathColor(myGlobe.pathColor());
+            if (!event.data) return;
+            if (event.data.type === 'setTheme') {
+                const t = event.data.theme === 'light' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+                if (myGlobe) {
+                    const tc = readThemeColors();
+                    myGlobe.backgroundColor(tc.bg).atmosphereColor(tc.atmosphere);
+                    // trigger a re-colour of the existing path (segColor reads theme on each call)
+                    myGlobe.pathColor(myGlobe.pathColor());
+                }
+            } else if (event.data.type === 'setDac') {
+                // Parent (e.g. Jelly) toggling the current arrows.
+                const want = event.data.show;
+                showDac = (typeof want === 'boolean') ? want : !showDac;
+                updateDacToggle();
+                if (myGlobe) myGlobe.pathsData(visiblePaths());
+            } else if (event.data.type === 'queryDac') {
+                reportDacStatus();
             }
         });
     </script>

@@ -22,6 +22,19 @@ BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 20.0
 GEO_GROUP_MIN_POINTS = 100
 
+# Depth-averaged current (DAC). Gliders log one current estimate per dive
+# (the dead-reckoning correction), so these arrays are sparse along the full
+# record. Source variable pairs are tried in priority order; the third value
+# scales the file's units to m/s.
+DAC_VARIABLE_SETS = (
+    ("WATER_VELOC_FINAL_U", "WATER_VELOC_FINAL_V", 1.0),    # m/s, surface-drift corrected
+    ("WATERCURRENTS_U", "WATERCURRENTS_V", 0.01),           # cm/s -> m/s
+)
+DAC_MAX_VECTORS = 300
+DAC_MAX_SPEED_MS = 5.0  # anything faster than this is a bad fix, not a real current
+DAC_MATCH_MAX_SEC = 3600.0      # skip a current if no GPS fix within 1 h of it
+DAC_MIN_INTERVAL_SEC = 6 * 3600.0  # thin to at most one arrow per ~6 h
+
 # Set by cache_logic during prewarm to report sub-steps in real time.
 _spatial_stage_cb = None
 
@@ -37,11 +50,14 @@ def _report_spatial_stage(msg: str):
 # ---------- Geographic outlier ----------
 
 def _trim_position_outliers(lat, lon):
-    """Drop fixes far from the bulk of the track.
+    """Drop isolated stray fixes while keeping the whole real track.
 
-    Splits the track into groups whenever there is a spatial gap
-    larger than GEO_GAP_THRESHOLD_KM. Keeps the largest group
-    that meets the GEO_GROUP_MIN_POINTS requirement.
+    Splits the track into groups wherever there is a spatial gap larger than
+    GEO_GAP_THRESHOLD_KM, then keeps *every* group with at least
+    GEO_GROUP_MIN_POINTS fixes. A glider legitimately leaves big gaps behind
+    (a long transit dive, a comms outage), so keeping only the single largest
+    group used to discard whole later legs of the deployment. Only genuinely
+    tiny clusters — a lone bad GPS fix flung far from the track — are dropped.
     """
     n = len(lat)
     valid = np.zeros(n, dtype=bool)
@@ -60,12 +76,14 @@ def _trim_position_outliers(lat, lon):
     if not groups:
         return valid
 
-    largest_group = max(groups, key=len)
+    kept = [g for g in groups if len(g) >= GEO_GROUP_MIN_POINTS]
+    if not kept:
+        # Very short track — nothing clears the bar, so keep the largest
+        # group rather than returning an empty path.
+        kept = [max(groups, key=len)]
 
-    if len(largest_group) >= GEO_GROUP_MIN_POINTS:
-        valid[largest_group] = True
-    else:
-        valid[largest_group] = True
+    for g in kept:
+        valid[g] = True
 
     return valid
 
@@ -100,7 +118,9 @@ def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat:
 
 def _to_float_array(arr):
     if np.ma.isMaskedArray(arr):
-        return arr.filled(np.nan).astype(float, copy=False)
+        # Cast to float *before* filling so integer-typed masked arrays (e.g.
+        # QC flags) can take NaN in their masked slots.
+        return np.ma.filled(arr.astype(float), np.nan)
     return np.asarray(arr, dtype=float)
 
 
@@ -130,6 +150,185 @@ def _read_lat_lon_pres_temp(filepath):
     pres = _to_float_array(pres)
     temp = _to_float_array(temp) if temp is not None else None
     return lat, lon, pres, temp
+
+
+def _read_named_arrays(filepath, names):
+    """Read the given variables as float arrays, preferring preloaded RAM/disk.
+
+    Missing variables are simply omitted from the result rather than raising,
+    so callers can probe for optional fields (e.g. DAC, QC flags).
+    """
+    pre = plot_logic._get_preloaded(filepath)
+    out = {}
+    if pre is not None:
+        for n in names:
+            if n in pre:
+                out[n] = _to_float_array(pre[n])
+        return out
+    if not os.path.exists(filepath):
+        raise FileNotFoundError("File not found")
+    with Dataset(filepath, 'r') as nc:
+        for n in names:
+            if n in nc.variables:
+                out[n] = _to_float_array(nc.variables[n][:])
+    return out
+
+
+def _read_track_times(filepath):
+    """Return the TIME coordinate as float epoch seconds (NaN where invalid).
+
+    Two storage forms must be handled: the RAM/disk preload goes through
+    xarray which decodes CF time to ``datetime64[ns]``, while the netCDF4
+    fallback yields the raw numeric ``seconds since 1970``. Both collapse to
+    epoch seconds here so callers can do plain second-based arithmetic.
+    """
+    pre = plot_logic._get_preloaded(filepath)
+    raw = None
+    if pre is not None:
+        for k in ('TIME', 'TIME_GPS'):
+            if k in pre:
+                raw = pre[k]
+                break
+    else:
+        try:
+            with Dataset(filepath, 'r') as nc:
+                for k in ('TIME', 'TIME_GPS'):
+                    if k in nc.variables:
+                        raw = nc.variables[k][:]
+                        break
+        except Exception:
+            return None
+    if raw is None:
+        return None
+
+    if np.ma.isMaskedArray(raw):
+        raw = np.ma.filled(raw.astype('float64') if not np.issubdtype(raw.dtype, np.datetime64) else raw, np.nan)
+    raw = np.asarray(raw)
+    if np.issubdtype(raw.dtype, np.datetime64):
+        dt = raw.astype('datetime64[ns]')
+        sec = dt.astype('int64').astype(float) / 1e9
+        sec[np.isnat(dt)] = np.nan
+        return sec
+    # netCDF4 path: CF "seconds since 1970-01-01" — already epoch seconds.
+    return raw.astype(float)
+
+
+@functools.lru_cache(maxsize=32)
+def get_dac_vectors(filepath):
+    """Extract depth-averaged current (DAC) vectors along the glider track.
+
+    Returns a list of ``{lat, lon, u, v, speed}`` dicts (velocities in m/s,
+    eastward ``u`` / northward ``v``) ordered oldest-to-newest. One arrow per
+    current estimate, placed at the GPS fix closest *in time* to it. These let
+    the map draw a current arrow at each surfacing, which matters for NRT
+    piloting in strong flow.
+
+    The current estimate and the GPS fixes live on the same TIME axis but on
+    different rows (current is logged mid-profile, fixes at the surface), so we
+    match by nearest time rather than interpolating or snapping in space —
+    spatial snapping mis-places vectors wherever the track loops back on
+    itself. Vectors with no fix within ``DAC_MATCH_MAX_SEC`` are dropped, and
+    the result is thinned to at most one per ``DAC_MIN_INTERVAL_SEC`` (always
+    keeping the most recent) so dense records don't pile arrows on top of
+    each other.
+    """
+    needed = ['LATITUDE', 'LONGITUDE']
+    for u_name, v_name, _ in DAC_VARIABLE_SETS:
+        needed += [u_name, v_name, f"{u_name}_QC", f"{v_name}_QC"]
+
+    try:
+        arrs = _read_named_arrays(filepath, needed)
+    except Exception:
+        return []
+    if 'LATITUDE' not in arrs or 'LONGITUDE' not in arrs:
+        return []
+
+    lat, lon = arrs['LATITUDE'], arrs['LONGITUDE']
+    times = _read_track_times(filepath)
+
+    u = v = u_qc = v_qc = None
+    for u_name, v_name, scale in DAC_VARIABLE_SETS:
+        cu, cv = arrs.get(u_name), arrs.get(v_name)
+        if cu is not None and cv is not None and np.isfinite(cu).any() and np.isfinite(cv).any():
+            u, v = cu * scale, cv * scale
+            u_qc, v_qc = arrs.get(f"{u_name}_QC"), arrs.get(f"{v_name}_QC")
+            break
+    if u is None or times is None:
+        return []
+
+    n = min(len(lat), len(lon), len(u), len(v), len(times))
+    lat, lon, u, v, times = lat[:n], lon[:n], u[:n], v[:n], times[:n]
+
+    # Current estimates: finite, physically plausible, not QC-flagged bad.
+    cur_ok = (
+        np.isfinite(u) & np.isfinite(v) & np.isfinite(times)
+        & (np.abs(u) < DAC_MAX_SPEED_MS) & (np.abs(v) < DAC_MAX_SPEED_MS)
+    )
+    # Drop only samples explicitly flagged bad (QC 3/4/9); keep 0 ("not
+    # evaluated", which is how these files mark every DAC) and good flags.
+    BAD_QC = np.array([3.0, 4.0, 9.0])
+    for q in (u_qc, v_qc):
+        if q is not None and len(q) >= n:
+            cur_ok &= ~np.isin(q[:n], BAD_QC)
+
+    # GPS fixes: finite, in range, timestamped.
+    fix_ok = (
+        np.isfinite(lat) & np.isfinite(lon) & np.isfinite(times)
+        & (np.abs(lat) <= 90.0) & (np.abs(lon) <= 180.0)
+    )
+
+    cur_idx = np.where(cur_ok)[0]
+    fix_idx = np.where(fix_ok)[0]
+    if cur_idx.size == 0 or fix_idx.size == 0:
+        return []
+
+    # For each current, find the GPS fix nearest in time.
+    ct = times[cur_idx]
+    ft = times[fix_idx]
+    order = np.argsort(ft)
+    ft_sorted = ft[order]
+    fix_sorted = fix_idx[order]
+    pos = np.searchsorted(ft_sorted, ct)
+    left = np.clip(pos - 1, 0, len(ft_sorted) - 1)
+    right = np.clip(pos, 0, len(ft_sorted) - 1)
+    take_left = np.abs(ft_sorted[left] - ct) <= np.abs(ft_sorted[right] - ct)
+    best = np.where(take_left, left, right)
+    dt = np.abs(ft_sorted[best] - ct)
+    within = dt <= DAC_MATCH_MAX_SEC
+    if not within.any():
+        return []
+
+    cur_idx = cur_idx[within]
+    match_fix = fix_sorted[best[within]]
+    ct = ct[within]
+    out_lat, out_lon = lat[match_fix], lon[match_fix]
+    out_u, out_v = u[cur_idx], v[cur_idx]
+
+    # Thin to one per interval, walking newest -> oldest so the latest current
+    # is always kept and older ones are only spaced out behind it.
+    order_t = np.argsort(ct)
+    ct_s = ct[order_t]
+    keep = np.zeros(len(ct_s), dtype=bool)
+    last_t = None
+    for j in range(len(ct_s) - 1, -1, -1):
+        if last_t is None or (last_t - ct_s[j]) >= DAC_MIN_INTERVAL_SEC:
+            keep[j] = True
+            last_t = ct_s[j]
+    sel = order_t[keep]  # ascending time, oldest first
+
+    if sel.size > DAC_MAX_VECTORS:        # safety cap, keep the most recent
+        sel = sel[-DAC_MAX_VECTORS:]
+
+    return [
+        {
+            "lat": round(float(out_lat[k]), 5),
+            "lon": round(float(out_lon[k]), 5),
+            "u": round(float(out_u[k]), 4),
+            "v": round(float(out_v[k]), 4),
+            "speed": round(float(np.hypot(out_u[k], out_v[k])), 4),
+        }
+        for k in sel
+    ]
 
 
 @functools.lru_cache(maxsize=32)
@@ -268,10 +467,12 @@ def generate_map_image(filepath):
         return {"error": str(e)}
     t1 = time.time()
     path = [[round(float(y), 5), round(float(x), 5)] for y, x in zip(lat, lon)]
+    dac = get_dac_vectors(filepath)
     t2 = time.time()
     return {
         "type": "native_data",
         "path": path,
+        "dac": dac,
         "timings_seconds": {
             "data_load_qc": round(t1 - t0, 4),
             "json_formatting": round(t2 - t1, 4),

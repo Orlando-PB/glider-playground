@@ -528,6 +528,17 @@
             border-top: 1px solid var(--border);
             background: var(--bg-panel);
         }
+        .files-panel-credit {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 10px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-panel-2);
+            font-size: 9.5px;
+            line-height: 1.3;
+            color: var(--text-muted);
+        }
         .files-action-btn {
             flex: 1;
             display: inline-flex;
@@ -727,6 +738,19 @@
         #jellyToggle.thinking .jelly-img { animation: jellyPulse 0.9s ease-in-out infinite; }
         #jellyPanel.thinking .jelly-img-small { animation: jellyTyping 0.6s ease-in-out infinite; }
 
+        /* Notification dot on the Jelly bubble when an update is available. */
+        #jellyToggle { position: relative; }
+        #jellyToggle.has-update::after {
+            content: '';
+            position: absolute;
+            top: 1px; right: 1px;
+            width: 11px; height: 11px;
+            border-radius: 50%;
+            background: var(--danger);
+            border: 2px solid var(--bg-panel-2);
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
+        }
+
         .jelly-bubble {
             max-width: 85%;
             padding: 8px 12px;
@@ -778,8 +802,10 @@
         <div class="toolbar-row" style="justify-content: space-between; flex-wrap: wrap;">
             <div class="flex items-center flex-wrap" style="gap: 8px; flex: 1; min-width: 0;">
                 <!-- Logo -->
-                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 pr-3 shrink-0" style="border-right: 1px solid var(--border);">
-                    <img src="/static/icon.png" alt="Logo" class="w-5 h-5"> Glider Playground
+                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 pr-3 shrink-0" style="border-right: 1px solid var(--border);"
+                     title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
+                    <img src="/static/NOC_logo.svg" alt="National Oceanography Centre" class="shrink-0"
+                         style="width:32px;height:32px;margin:-6px -2px -6px -8px;"> Glider Playground
                 </div>
 
                 <!-- Files -->
@@ -807,7 +833,7 @@
                         <div class="files-section-header">
                             <div class="flex flex-col gap-0.5 min-w-0">
                                 <span class="files-section-title">Live BODC deployments</span>
-                                <span id="liveScannedAt" class="files-section-sub">Not scanned yet</span>
+                                <span id="liveScannedAt" class="files-section-sub">Scanning…</span>
                             </div>
                             <button id="liveRefreshBtn" type="button" class="files-section-action" title="Re-scan server">
                                 <span id="liveRefreshIcon" class="material-symbols-outlined text-[14px]">refresh</span>
@@ -832,6 +858,10 @@
                             <button id="addFolderBtn" class="files-action-btn" type="button">
                                 <span class="material-symbols-outlined text-[15px]">folder_open</span> Add folder
                             </button>
+                        </div>
+                        <div class="files-panel-credit">
+                            <img src="/static/NOC_logo.svg" alt="National Oceanography Centre" class="w-4 h-4 shrink-0">
+                            <span>© National Oceanography Centre · Developed by Orlando Prugel-Bennett</span>
                         </div>
                     </div>
                 </div>
@@ -1325,6 +1355,9 @@
         let trimTimeout;
         let currentMapDataset = "";
         let currentZoomBounds = null;
+        // DAC (depth-averaged current) arrow state, mirrored from the map iframe
+        // so Jelly knows whether currents exist for this file and if they're shown.
+        let currentDacStatus = { available: false, shown: false };
 
         let baseCMin = null, baseCMax = null;
         let isXDateTime = false;
@@ -1414,7 +1447,13 @@
 
         window.addEventListener('message', function(event) {
             const msg = event.data;
-            
+            if (!msg) return;
+
+            if (msg.type === 'dacStatus') {
+                currentDacStatus = { available: !!msg.available, shown: !!msg.shown };
+                return;
+            }
+
             if (msg.type === 'plotLoaded') {
                 setLoading(false);
 
@@ -1794,7 +1833,9 @@
         let _liveInFlight = false;
         let _liveData = null;
         let _liveRefreshTimer = null;
-        const _liveOptimistic = new Set();
+        const _liveOptimistic = new Set();   // filenames we've asked to download
+        const _liveDeleting = new Set();     // filenames whose delete is in flight
+        let _livePendingOpen = null;         // a live file we want to open once ready
 
         function relTimeAgo(secsOrIso) {
             let t = null;
@@ -1812,8 +1853,8 @@
         }
 
         function liveIsBusy() {
+            if (_liveOptimistic.size > 0 || _liveDeleting.size > 0 || _livePendingOpen) return true;
             if (!_liveData) return false;
-            if (_liveOptimistic.size > 0) return true;
             return (_liveData.active || []).some(e =>
                 e.downloading || (e.downloaded && e.status && e.status !== 'ready')
             );
@@ -1821,21 +1862,26 @@
 
         function scheduleLivePoll() {
             clearTimeout(_liveRefreshTimer);
-            if (filesPanel.hidden) return;
-            const delay = liveIsBusy() ? 2000 : 30000;
-            _liveRefreshTimer = setTimeout(() => {
-                if (!filesPanel.hidden) refreshLive({ force: false });
-            }, delay);
+            const busy = liveIsBusy();
+            // Keep polling while a download / processing / delete / pending-open
+            // is in flight even if the panel is closed, so the list stays fresh
+            // and any queued activation can complete in the background. When
+            // idle, only keep polling while the panel is open.
+            if (!busy && filesPanel.hidden) return;
+            const delay = busy ? 2000 : 30000;
+            _liveRefreshTimer = setTimeout(() => refreshLive({ force: false }), delay);
         }
 
         async function refreshLive({ force = false } = {}) {
             if (_liveInFlight) { scheduleLivePoll(); return; }
             _liveInFlight = true;
             liveRefreshIcon.style.animation = 'spin 1s linear infinite';
+            if (!_liveData) liveScannedAt.textContent = 'Scanning…';
             try {
                 const res = await fetch(`/api/live${force ? '?force=true' : ''}`);
                 _liveData = await res.json();
                 renderLive(_liveData);
+                await resolvePendingOpen();
             } catch (e) {
                 console.error('Live fetch failed:', e);
                 liveList.innerHTML = `<div class="file-card-empty">Failed to reach server.</div>`;
@@ -1868,21 +1914,21 @@
 
             const html = active.map(e => {
                 const ago = relTimeAgo(e.server_mtime);
+                const isDeleting = _liveDeleting.has(e.filename);
                 const isPending = e.downloading || _liveOptimistic.has(e.filename);
+                const isProcessing = e.downloaded && e.status && e.status !== 'ready';
 
                 let iconClass = '', iconName = 'satellite_alt';
-                if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'cloud_download'; }
+                if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'progress_activity'; }
                 else if (e.downloaded && e.status === 'ready') { iconClass = 'ready'; iconName = 'check'; }
-                else if (e.downloaded && e.status && e.status !== 'ready') { iconClass = 'processing'; iconName = 'progress_activity'; }
+                else if (isProcessing) { iconClass = 'processing'; iconName = 'progress_activity'; }
 
                 let metaLine, progressBar = '';
                 if (isPending && !e.downloaded) {
                     metaLine = `<span class="file-card-stage">Downloading…</span>`;
-                } else if (e.downloaded && e.status && e.status !== 'ready') {
+                } else if (isProcessing) {
                     metaLine = `<span class="file-card-stage">${esc(e.status)}</span><span>${e.progress ?? 0}%</span>`;
                     progressBar = `<div class="file-card-progress"><div class="file-card-progress-bar" style="width:${Math.max(2, e.progress ?? 0)}%"></div></div>`;
-                } else if (e.downloaded) {
-                    metaLine = `<span>updated ${esc(ago)}</span>`;
                 } else {
                     metaLine = `<span>updated ${esc(ago)}</span>`;
                 }
@@ -1899,9 +1945,19 @@
                     actionHtml = `${upd}<button class="file-card-action danger" data-act="bodc-delete" data-fn="${esc(e.filename)}" title="Delete downloaded file"><span class="material-symbols-outlined text-[14px]">delete</span></button>`;
                 }
 
+                // Optimistic delete: show it leaving right away, overriding the
+                // (possibly still "downloaded") server snapshot until confirmed.
+                if (isDeleting) {
+                    iconClass = 'processing'; iconName = 'progress_activity';
+                    metaLine = `<span class="file-card-stage">Deleting…</span>`;
+                    progressBar = '';
+                    actionHtml = `<span class="live-spinner" title="Deleting…"></span>`;
+                }
+
                 const isActive = e.file_id && e.file_id === datasetSelect.value;
+                const disabled = isDeleting || isPending || isProcessing;
                 return `
-                    <div class="file-card${isActive ? ' active' : ''}${isPending || (e.downloaded && e.status && e.status !== 'ready') ? ' disabled' : ''}" data-id="${esc(e.file_id || '')}" data-bodc="${esc(e.filename)}">
+                    <div class="file-card${isActive ? ' active' : ''}${disabled ? ' disabled' : ''}" data-id="${esc(e.file_id || '')}" data-bodc="${esc(e.filename)}">
                         <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
                         <div class="file-card-body">
                             <div class="file-card-name" title="${esc(e.filename)}">${esc(e.dataset)} <span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span></div>
@@ -1923,20 +1979,39 @@
             scheduleLivePoll();
         }
 
-        async function bodcOpen(card) {
-            const fn = card.dataset.bodc;
-            // Pull the freshest record list — the file may have just become
-            // ready and not yet be in fileRecords.
-            await refreshFiles();
-            // Resolve the id from /api/live (authoritative for managed paths).
-            let id = card.dataset.id;
-            if (!id && _liveData) {
-                const e = (_liveData.active || []).find(x => x.filename === fn);
-                if (e) id = e.file_id;
-            }
-            if (id && typeof selectFile === 'function') {
-                await selectFile(id);
-                closeFilesPanel();
+        // Show the main plot area's processing overlay for a live file that has
+        // been clicked but isn't ready yet (still downloading / processing).
+        function showLivePlaceholder(entry) {
+            pendingActivateId = null;          // not a real record id yet
+            plotIframe.src = '';
+            plotIframe.classList.add('hidden');
+            isPlotting = false; plotQueued = false;
+            const iframe3D = document.getElementById('iframe3D');
+            if (iframe3D) iframe3D.src = '';
+            currentMapDataset = null;
+            gliderMap.src = ''; gliderMap.classList.add('hidden');
+            mapEmptyText.classList.remove('hidden');
+            showProcessingOverlay({
+                name: entry.dataset || entry.filename,
+                status: 'processing',
+                stage: entry.downloaded ? 'Processing…' : 'Downloading…',
+                progress: entry.progress ?? 5,
+            });
+        }
+
+        // Once a queued-open live file has a real record id, hand off to
+        // selectFile — it shows the overlay while processing and swaps in the
+        // plot the moment it's ready.
+        async function resolvePendingOpen() {
+            if (!_livePendingOpen || !_liveData) return;
+            const e = (_liveData.active || []).find(x => x.filename === _livePendingOpen);
+            if (!e) { _livePendingOpen = null; return; }   // vanished from listing
+            if (e.file_id) {
+                _livePendingOpen = null;
+                await refreshFiles();
+                await selectFile(e.file_id);
+            } else {
+                showLivePlaceholder(e);   // keep the placeholder fresh meanwhile
             }
         }
 
@@ -1953,24 +2028,110 @@
                     if (act === 'bodc-download') {
                         await bodcDownload(fn);
                     } else if (act === 'bodc-delete') {
-                        await fetch(`/api/live/${encodeURIComponent(fn)}`, { method: 'DELETE' });
-                        await refreshLive({ force: true });
-                        await refreshFiles();
+                        await bodcDelete(fn);
                     }
                 } catch (err) { console.error(err); }
                 finally { actBtn.disabled = false; }
                 return;
             }
-            // Bare card click: download if not local, otherwise open.
+            // Bare card click: start it downloading/opening AND swap the main
+            // view to it (placeholder while it's not ready, plot once it is).
             const fn = card.dataset.bodc;
             if (!fn) return;
             const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
-            if (entry && !entry.downloaded && !entry.downloading && !_liveOptimistic.has(fn)) {
-                await bodcDownload(fn);
-            } else if (entry && entry.downloaded) {
-                await bodcOpen(card);
+            if (!entry || _liveDeleting.has(fn)) return;
+
+            if (entry.file_id) {
+                // Already a real record — selectFile loads it if ready, or shows
+                // the processing overlay and polls until it is.
+                await refreshFiles();
+                await selectFile(entry.file_id);
+                closeFilesPanel();
+                return;
             }
+            // No record yet: must download first. Queue the open, show a
+            // placeholder immediately, start the download, and close the panel
+            // so the swap is visible. resolvePendingOpen() finishes the hand-off
+            // to selectFile once the record appears.
+            _livePendingOpen = fn;
+            if (!entry.downloading && !_liveOptimistic.has(fn)) {
+                await bodcDownload(fn);
+            }
+            showLivePlaceholder(entry);
+            closeFilesPanel();
+            scheduleLivePoll();
         });
+
+        async function bodcDelete(fn) {
+            const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
+            const wasActive = entry && entry.file_id &&
+                (entry.file_id === datasetSelect.value || entry.file_id === pendingActivateId);
+
+            _liveDeleting.add(fn);
+            if (_livePendingOpen === fn) _livePendingOpen = null;
+            if (_liveData) renderLive(_liveData);          // instant "Deleting…"
+            if (wasActive) clearActiveSelection();          // swap away immediately
+
+            try {
+                await fetch(`/api/live/${encodeURIComponent(fn)}`, { method: 'DELETE' });
+            } finally {
+                _liveDeleting.delete(fn);
+            }
+            await refreshFiles();
+            if (wasActive && !datasetSelect.value) {
+                const nextReady = fileRecords.find(f => f.status === 'ready');
+                if (nextReady) await selectFile(nextReady.id);
+            }
+            // Non-forced: the marker is already gone, so the cached listing now
+            // reports this file as not-downloaded. Avoids the slow ERDDAP re-scan
+            // that used to leave the green tick lingering.
+            await refreshLive({ force: false });
+        }
+
+        // Ask the backend whether a newer release is on PyPI; if so, have Jelly
+        // deliver the reminder — a notification dot on the bubble, plus a chat
+        // message with upgrade instructions tailored to how this copy was
+        // installed (git pull vs pip upgrade, plus env activation if known).
+        async function checkForUpdate() {
+            let info;
+            try {
+                const res = await fetch('/api/update_check');
+                info = await res.json();
+            } catch (_) { return; }
+            if (!info || !info.outdated || !info.latest) return;
+
+            const steps = Array.isArray(info.steps) ? info.steps : [];
+            let text = `Heads up — a new version of glider-playground is available: `
+                + `${info.current || '?'} → ${info.latest}.`;
+            if (steps.length) {
+                let how = info.method === 'git' ? 'To update your checkout'
+                    : info.method === 'pip' ? 'To upgrade with pip'
+                    : 'To update';
+                if (info.env && info.env.name) {
+                    const envLabel = info.env.kind === 'conda' ? 'conda env' : 'environment';
+                    how += ` (in the "${info.env.name}" ${envLabel})`;
+                }
+                text += `\n\n${how}, run:\n${steps.join('\n')}`;
+            } else {
+                text += `\n\nPlease update to the latest version.`;
+            }
+
+            // Badge the bubble so it's noticeable even if the panel stays closed.
+            jellyToggle.classList.add('has-update');
+
+            // Pop Jelly open the first time we see this particular version, so the
+            // reminder is hard to miss — but don't force it open on every reload.
+            let notified = null;
+            try { notified = localStorage.getItem('gp_update_notified'); } catch (_) {}
+            if (notified !== info.latest) {
+                try { localStorage.setItem('gp_update_notified', info.latest); } catch (_) {}
+                jellyOpen(true);   // greeting (if a key is set) lands first
+            }
+
+            // Put the reminder in the panel and preserve its line breaks.
+            const div = addJellyMessage('jelly', text);
+            if (div) div.style.whiteSpace = 'pre-wrap';
+        }
 
         async function init() {
             try {
@@ -1991,6 +2152,14 @@
 
             renderPresetsDropdown();
             await refreshFiles({ activate: true });
+
+            // Start scanning for live deployments right away so the list is
+            // already populated when the user first opens the Files dropdown,
+            // instead of showing "Not scanned yet" until they open it.
+            refreshLive({ force: false });
+
+            // Nudge the user if a newer release is on PyPI.
+            checkForUpdate();
         }
 
         let isServerMode = false;
@@ -2251,6 +2420,8 @@
             gliderMap.classList.remove('hidden');
             mapEmptyText.classList.add('hidden');
 
+            // Reset until the freshly-loaded map reports its DAC status back.
+            currentDacStatus = { available: false, shown: false };
             gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             currentMapDataset = fileId;
         }
@@ -2526,6 +2697,30 @@
             }
         }
 
+        // Tear down whatever file is currently shown and reset the plot area to
+        // its empty state. Used when the active file is deleted out from under
+        // the user (locally or as a live deployment).
+        function clearActiveSelection() {
+            pendingActivateId = null;
+            datasetSelect.value = '';
+            clearCookie(COOKIE_FILE);
+            currentMapDataset = null;
+            gliderMap.src = '';
+            gliderMap.classList.add('hidden');
+            mapEmptyText.classList.remove('hidden');
+            plotIframe.classList.add('hidden');
+            plotIframe.src = '';
+            isPlotting = false;
+            plotQueued = false;
+            const iframe3D = document.getElementById('iframe3D');
+            if (iframe3D) iframe3D.src = '';
+            hideProcessingOverlay();
+            emptyState.classList.remove('hidden');
+            datasetInfoContainer.classList.add('hidden');
+            statsEmptyState.classList.remove('hidden');
+            updateTrigger();
+        }
+
         async function selectFile(fileId) {
             const rec = fileById(fileId);
             if (!rec) return;
@@ -2658,21 +2853,7 @@
                     await fetch(`/api/files/${id}`, { method: 'DELETE' });
                     // Clear state if the deleted file was active OR pending-activate.
                     const wasActive = datasetSelect.value === id || pendingActivateId === id;
-                    if (wasActive) {
-                        pendingActivateId = null;
-                        datasetSelect.value = '';
-                        clearCookie(COOKIE_FILE);
-                        currentMapDataset = null;
-                        gliderMap.classList.add('hidden');
-                        mapEmptyText.classList.remove('hidden');
-                        plotIframe.classList.add('hidden');
-                        plotIframe.src = '';
-                        isPlotting = false;
-                        plotQueued = false;
-                        emptyState.classList.remove('hidden');
-                        datasetInfoContainer.classList.add('hidden');
-                        statsEmptyState.classList.remove('hidden');
-                    }
+                    if (wasActive) clearActiveSelection();
                     await refreshFiles();
                     // After refresh, if we just cleared the active file try to
                     // fall back to the first ready file rather than leaving the
@@ -3002,12 +3183,24 @@
                     ctd_available: ctdContainer.style.display !== 'none',
                     current_preset: currentPreset,
                     is_x_datetime: !!isXDateTime,
-                    data_extent: currentGlobalLimits
+                    data_extent: currentGlobalLimits,
+                    // Depth-averaged current arrows on the map view.
+                    currents_available: currentDacStatus.available,
+                    currents_shown: currentDacStatus.shown
                 },
                 overrides: parentJellyOverrides,
                 zoom: currentZoomBounds,
                 color_limits: colorLimits,
-                location: currentLocation
+                location: currentLocation,
+                live_gliders: (_liveData && _liveData.active ? _liveData.active : []).slice(0, 60).map(e => ({
+                    dataset: e.dataset,
+                    filename: e.filename,
+                    downloaded: !!e.downloaded,
+                    status: e.status || (e.downloaded ? 'ready' : null),
+                    updated: relTimeAgo(e.server_mtime),
+                    needs_update: !!e.needs_update,
+                    downloading: !!e.downloading
+                }))
             };
         }
 
@@ -3091,6 +3284,19 @@
                 runningMean: p.runningMean || null,
                 replaceLines: true
             };
+        }
+
+        // Map a (possibly partial) name from Jelly to an exact live filename.
+        function resolveLiveFilename(name) {
+            if (!name || !_liveData || !_liveData.active) return null;
+            const active = _liveData.active;
+            const low = String(name).toLowerCase();
+            const hit = active.find(e => e.filename === name)
+                || active.find(e => e.filename.toLowerCase() === low)
+                || active.find(e => (e.dataset || '').toLowerCase() === low)
+                || active.find(e => e.filename.toLowerCase().includes(low))
+                || active.find(e => (e.dataset || '').toLowerCase().includes(low));
+            return hit ? hit.filename : null;
         }
 
         async function runJellyAction(a) {
@@ -3218,6 +3424,25 @@
                     cTrimMaxInput.value = cmax.toFixed(4);
                     updateHandlesFromInputs('c');
                     sendColourLimitsToIframe();
+                    break;
+                }
+                case 'set_currents': {
+                    // Toggle the depth-averaged current arrows on the map view.
+                    if (gliderMap.contentWindow && currentMapDataset) {
+                        const show = (typeof a.show === 'boolean') ? a.show : true;
+                        gliderMap.contentWindow.postMessage({ type: 'setDac', show }, '*');
+                        currentDacStatus.shown = show && currentDacStatus.available;
+                    }
+                    break;
+                }
+                case 'download_live': {
+                    const fn = resolveLiveFilename(a.filename);
+                    if (fn) await bodcDownload(fn);
+                    break;
+                }
+                case 'delete_live': {
+                    const fn = resolveLiveFilename(a.filename);
+                    if (fn) await bodcDelete(fn);
                     break;
                 }
                 case 'set_title':
