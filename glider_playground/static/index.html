@@ -686,6 +686,13 @@
             background: var(--plot-bg); border: 1px dashed var(--accent); border-radius: 3px;
         }
         body.gp-resizing .gp-resize-veil { display: flex; }
+        /* A panel with no data/plot yet shows the same chip placeholder
+           persistently (per-panel, so it never floats over a sibling's plot).
+           Muted rather than the accent dashed look of an active resize. */
+        .gp-panel.gp-empty .gp-resize-veil { display: flex; border-style: solid; border-color: var(--border); }
+        .gp-panel.gp-empty .gp-resize-chip { background: var(--bg-panel-3, rgba(0,0,0,0.18)); color: var(--text-muted); }
+        body.gp-resizing .gp-panel.gp-empty .gp-resize-veil { border-style: dashed; border-color: var(--accent); }
+        body.gp-resizing .gp-panel.gp-empty .gp-resize-chip { background: rgba(91,156,255,0.18); color: var(--accent); }
         .gp-resize-chip {
             display: flex; align-items: center; gap: 6px;
             padding: 5px 12px; border-radius: 999px;
@@ -837,6 +844,10 @@
         /* ---------- Plot area ---------- */
         #plotAreaWrapper { background: var(--bg-panel) !important; }
         #emptyState, #demoPrompt { color: var(--text-muted); }
+        /* The "Select variables to Plot" overlay is superseded by per-panel
+           placeholders (.gp-empty veils), which are correctly scoped to a
+           single panel instead of floating over the whole dashboard. */
+        #emptyState { display: none !important; }
         iframe#plotIframe { background: var(--bg-panel) !important; }
 
         /* ---------- Colour trim rail ---------- */
@@ -1714,6 +1725,32 @@
         // Back-compat alias used by older call sites.
         const renderPlotPanel = renderPanel;
 
+        // Does this panel currently have nothing to show? (no plot rendered, no
+        // map/3D loaded, or a data list with no file selected). Used to drive a
+        // per-panel placeholder so we never float a single overlay over siblings.
+        function isPanelEmpty(panel) {
+            switch (panel.type) {
+                case 'plot':
+                case 'map':
+                case '3d': {
+                    const f = panel.iframe;   // for map/3d this is the hosted iframe
+                    return !f || f.classList.contains('hidden') || !f.getAttribute('src');
+                }
+                case 'vars':
+                case 'attrs':
+                    return !datasetSelect.value;
+                default:
+                    return false;
+            }
+        }
+
+        // Toggle each panel's placeholder veil to match whether it has content.
+        function refreshPanelPlaceholders() {
+            Object.values(panels).forEach(p => {
+                p.el.classList.toggle('gp-empty', isPanelEmpty(p));
+            });
+        }
+
         // Move a singleton's stashed element into a panel body.
         function mountHosted(panel) {
             const def = PANEL_DEFS[panel.type];
@@ -1826,6 +1863,7 @@
             }
             // Non-plot panels leave the toolbar pointed at the last active plot.
             updateAddButtons();
+            refreshPanelPlaceholders();
             pokeHighlight();
             scheduleSaveLayout();
         }
@@ -1929,6 +1967,7 @@
                 panelHost.appendChild(div);
             });
             updateAddButtons();
+            refreshPanelPlaceholders();
             scheduleSaveLayout();
         }
 
@@ -2803,6 +2842,7 @@
                 plotStatsContainer.classList.add('hidden');
             }
             resetInspectorState();
+            refreshPanelPlaceholders();
         }
 
         const updateHandlesFromInputs = (axis) => {
@@ -3891,17 +3931,26 @@
             gliderMap.src = '';
             gliderMap.classList.add('hidden');
             mapEmptyText.classList.remove('hidden');
-            plotIframe.classList.add('hidden');
-            plotIframe.src = '';
             isPlotting = false;
             plotQueued = false;
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) iframe3D.src = '';
+            // Clear EVERY plot panel, not just the active one — they all showed
+            // the now-deleted file, so blank them all and drop their dataset ref
+            // so they don't try to reload it. Per-panel veils then show through.
+            Object.values(panels).forEach(p => {
+                if (p.type === 'plot' && p.iframe) {
+                    p.iframe.src = '';
+                    p.iframe.classList.add('hidden');
+                    if (p.state) { p.state.datasetId = ''; p.state.zoomBounds = null; }
+                }
+            });
             hideProcessingOverlay();
             emptyState.classList.remove('hidden');
             datasetInfoContainer.classList.add('hidden');
             statsEmptyState.classList.remove('hidden');
             updateTrigger();
+            refreshPanelPlaceholders();
         }
 
         async function selectFile(fileId) {
@@ -4180,6 +4229,7 @@
                 p.iframe.classList.remove('hidden');
                 emptyState.classList.add('hidden');
                 downloadBtn.classList.remove('hidden');
+                refreshPanelPlaceholders();
 
             } catch (err) {
                 console.error("Plotting error:", err);
@@ -4206,8 +4256,16 @@
             
             if (e.key === 'Enter' && !e.target.closest('#qcDropdown')) updatePlot();
                 
-            if (e.key === 'Escape') { 
-                resetPlotState(false); setLoading(false);
+            if (e.key === 'Escape') {
+                // Esc dismisses transient UI only — it must NOT blank the active
+                // plot (that was a single-plot-era leftover that wiped a panel).
+                let handled = false;
+                if (!cmapMenu.classList.contains('hidden')) { cmapMenu.classList.add('hidden'); handled = true; }
+                if (_addMenuEl) { closeAddMenu(); handled = true; }
+                if (!filesPanel.hidden) { closeFilesPanel(); handled = true; }
+                if (!handled && document.activeElement && typeof document.activeElement.blur === 'function') {
+                    document.activeElement.blur();
+                }
             }
         });
 
