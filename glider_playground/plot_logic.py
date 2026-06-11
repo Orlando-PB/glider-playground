@@ -42,6 +42,14 @@ def _ctd_cache_path(filepath: str, interpolate: bool, apply_ctd_qc: bool) -> Pat
 _PRELOADED: dict = {}
 _PRELOADED_LOCK = threading.RLock()
 
+# The NetCDF/HDF5 C library is NOT thread-safe: concurrent opens/reads (even of
+# different files) can segfault the interpreter or return garbled data. FastAPI
+# runs sync endpoints on a threadpool and the dashboard fires many read requests
+# at once (globe + 3D + every plot panel + variables/profiles), so all NetCDF
+# access across the app is serialized through this single process-global lock.
+# Preloaded-into-RAM reads don't touch the file and so don't take this lock.
+NETCDF_LOCK = threading.RLock()
+
 
 def _bust_caches():
     """Drop every lru_cache that's keyed by filepath. Cheap and safe.
@@ -69,7 +77,7 @@ def stream_preload_to_disk(filepath: str, is_removed_fn=None):
     d = _preload_dir(filepath)
     d.mkdir(parents=True, exist_ok=True)
     names = []
-    with xr.open_dataset(filepath) as ds:
+    with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
         for name in ds.variables:
             if is_removed_fn and is_removed_fn():
                 return
@@ -518,7 +526,7 @@ def _get_var_names(filepath):
             return list(pre.keys())
     if not os.path.exists(filepath): return []
     try:
-        with xr.open_dataset(filepath) as ds:
+        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
             return list(ds.variables.keys())
     except Exception:
         return []
@@ -545,7 +553,7 @@ def _read_vars_cached(filepath, var_names_tuple):
             return {name: pre[name] for name in var_names_tuple if name in pre}
     if not os.path.exists(filepath): return None
     try:
-        with xr.open_dataset(filepath) as ds:
+        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
             return {name: ds.variables[name].values.copy().ravel() for name in var_names_tuple if name in ds.variables}
     except Exception:
         return None
@@ -554,7 +562,7 @@ def _read_vars_cached(filepath, var_names_tuple):
 def _get_var_units(filepath):
     if not os.path.exists(filepath): return {}
     try:
-        with xr.open_dataset(filepath) as ds:
+        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
             return {name: str(var.attrs.get('units', '')) for name, var in ds.variables.items()}
     except Exception:
         return {}
@@ -564,26 +572,24 @@ def get_variables(filepath):
     if not os.path.exists(filepath):
         return []
     
+    variables = []
     try:
-        glider_data = xr.open_dataset(filepath)
+        with NETCDF_LOCK, xr.open_dataset(filepath) as glider_data:
+            for name, var in glider_data.variables.items():
+                if len(var.dims) > 0:
+                    units = var.attrs.get('units', 'No units')
+                    description = var.attrs.get('long_name', 'No description available')
+                    dtype_str = str(var.dtype)
+                    var_type = "datetime" if "datetime" in dtype_str or "M8" in dtype_str else "numeric"
+                    variables.append({
+                        "name": name,
+                        "units": units,
+                        "type": var_type,
+                        "description": description
+                    })
     except Exception as e:
         print(f"Error opening {filepath}: {e}")
         return []
-        
-    variables = []
-    for name, var in glider_data.variables.items():
-        if len(var.dims) > 0:
-            units = var.attrs.get('units', 'No units')
-            description = var.attrs.get('long_name', 'No description available')
-            dtype_str = str(var.dtype)
-            var_type = "datetime" if "datetime" in dtype_str or "M8" in dtype_str else "numeric"
-            variables.append({
-                "name": name, 
-                "units": units, 
-                "type": var_type,
-                "description": description
-            })
-    glider_data.close()
     return variables
 
 @functools.lru_cache(maxsize=32)
@@ -592,29 +598,27 @@ def get_dataset_info(filepath):
         return {"error": "File not found"}
     
     try:
-        nc = Dataset(filepath, 'r')
+        with NETCDF_LOCK, Dataset(filepath, 'r') as nc:
+            dims = nc.dimensions
+            main_dim_name = next(iter(dims)) if dims else "None"
+
+            variables = []
+            for name, var in nc.variables.items():
+                if len(var.dimensions) > 0:
+                    description = getattr(var, 'long_name', 'No description available')
+                    units = getattr(var, 'units', '')
+                    variables.append({
+                        "name": name,
+                        "description": str(description),
+                        "units": str(units),
+                    })
+
+            global_attrs = {attr: str(getattr(nc, attr)) for attr in nc.ncattrs()}
     except Exception as e:
         return {"error": f"Unable to read file: {e}"}
-    
-    dims = nc.dimensions
-    main_dim_name = next(iter(dims)) if dims else "None"
-    
-    variables = []
-    for name, var in nc.variables.items():
-        if len(var.dimensions) > 0:
-            description = getattr(var, 'long_name', 'No description available')
-            units = getattr(var, 'units', '')
-            variables.append({
-                "name": name,
-                "description": str(description),
-                "units": str(units),
-            })
-            
-    global_attrs = {attr: str(getattr(nc, attr)) for attr in nc.ncattrs()}
-    nc.close()
-    
+
     variables.sort(key=lambda x: x["name"].lower())
-    
+
     return {
         "dimension_name": main_dim_name,
         "variables": variables,

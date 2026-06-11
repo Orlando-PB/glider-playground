@@ -616,6 +616,132 @@
         :root[data-theme="light"] .toggle-btn { background-color: #c8d0dc; color: #1f2937; }
         :root[data-theme="light"] .toggle-btn:hover:not(:disabled) { background-color: #b8c0cd; }
 
+        /* Instant theme switch: disable all transitions/animations momentarily */
+        html.theme-switching * { transition: none !important; animation: none !important; }
+
+        /* ---------- Dashboard panels ---------- */
+        #panelHost { position: absolute; inset: 6px; }
+        .gp-panel {
+            position: absolute;
+            box-sizing: border-box;
+            overflow: visible;            /* let edge "+" buttons straddle the border */
+            /* No layout border — panels sit flush so plots pack tightly. The
+               active highlight is an inset shadow (no layout impact). */
+            border: none;
+            border-radius: 3px;
+            background: var(--plot-bg);
+        }
+        .gp-panel.active { box-shadow: inset 0 0 0 2px var(--accent); }
+        /* Idle: active highlight + edge buttons fade out after a few seconds */
+        .gp-panel.active.idle { box-shadow: none; }
+        .gp-panel.active.idle .gp-add.show { display: none; }
+        .gp-panel.active.idle .gp-panel-header { opacity: 0; }
+        .gp-panel-body { position: absolute; inset: 0; overflow: hidden; border-radius: 3px; }
+        .gp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block; background: var(--plot-bg); }
+        .gp-frame.hidden { display: none; }
+        .gp-panel-label {
+            display: flex; align-items: center; gap: 3px; margin-right: auto;
+            padding: 1px 6px; font-size: 9px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.04em; color: var(--text-muted);
+            background: var(--bg-panel-3, rgba(0,0,0,0.25)); border-radius: 4px;
+        }
+        .gp-panel-label { cursor: grab; }
+        .gp-panel-label:active { cursor: grabbing; }
+        .gp-panel-label .material-symbols-outlined { font-size: 12px; }
+        .gp-drag-grip { opacity: 0.7; }
+        /* Reorder drag feedback */
+        body.gp-reordering, body.gp-reordering * { cursor: grabbing !important; }
+        .gp-drop-overlay {
+            position: absolute; z-index: 16; pointer-events: none; display: none;
+            align-items: center; justify-content: center;
+            background: rgba(91,156,255,0.30); border: 2px solid var(--accent);
+            border-radius: 4px; box-shadow: 0 0 0 2px rgba(91,156,255,0.25);
+            transition: left 0.07s ease, top 0.07s ease, width 0.07s ease, height 0.07s ease;
+        }
+        /* Dock = solid insert; Swap = dashed, lighter, to read as "exchange" */
+        .gp-drop-overlay.swap { background: rgba(91,156,255,0.16); border-style: dashed; }
+        .gp-drop-badge {
+            display: flex; align-items: center; gap: 5px;
+            padding: 4px 10px; border-radius: 999px;
+            background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.35); white-space: nowrap;
+        }
+        .gp-drop-badge .material-symbols-outlined { font-size: 15px; }
+        /* The panel being dragged dims; the hovered target gets a soft ring */
+        .gp-panel.gp-drag-source { opacity: 0.5; }
+        .gp-panel.gp-drag-target { box-shadow: inset 0 0 0 2px rgba(91,156,255,0.5); }
+        /* Add-panel popover menu */
+        .gp-add-menu {
+            position: absolute; z-index: 20; min-width: 142px;
+            background: var(--bg-panel); border: 1px solid var(--border);
+            border-radius: var(--radius-md, 8px); box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            padding: 4px; display: flex; flex-direction: column; gap: 2px;
+        }
+        .gp-add-item {
+            display: flex; align-items: center; gap: 8px; width: 100%;
+            padding: 6px 8px; border: none; border-radius: 6px; cursor: pointer;
+            background: transparent; color: var(--text-primary); font-size: 11px; text-align: left;
+        }
+        .gp-add-item:hover:not(:disabled) { background: var(--bg-panel-3, rgba(0,0,0,0.12)); }
+        .gp-add-item:disabled { opacity: 0.4; cursor: not-allowed; }
+        .gp-add-item .material-symbols-outlined { font-size: 15px; }
+        .gp-add-open { margin-left: auto; font-size: 9px; opacity: 0.7; }
+        /* Panel header — only meaningful chrome (close); kept slim & mostly transparent */
+        .gp-panel-header {
+            position: absolute; top: 0; left: 0; right: 0; height: 22px; z-index: 6;
+            display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+            padding: 0 4px; opacity: 0; transition: opacity 0.12s;
+            pointer-events: none;
+        }
+        .gp-panel:hover .gp-panel-header, .gp-panel.active .gp-panel-header { opacity: 1; }
+        .gp-panel-header > * { pointer-events: auto; }
+        .gp-panel-close {
+            width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+            border: none; border-radius: 4px; cursor: pointer; color: var(--text-muted);
+            background: var(--bg-panel-3, rgba(0,0,0,0.25));
+        }
+        .gp-panel-close:hover { color: #fff; background: var(--googleRed, #ea4335); }
+        .gp-panel-close .material-symbols-outlined { font-size: 14px; }
+        /* Edge "+" buttons — sit centred ON the panel border (out of the plot
+           interior so they don't cover axis labels). Shown on the active panel. */
+        .gp-add {
+            position: absolute; z-index: 9; display: none;
+            align-items: center; justify-content: center;
+            width: 22px; height: 22px; border: none; border-radius: 999px; cursor: pointer;
+            background: var(--accent); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+            opacity: 0.9; transition: opacity 0.12s, transform 0.12s;
+        }
+        .gp-add:hover { opacity: 1; }
+        .gp-panel.active .gp-add.show { display: flex; }
+        .gp-add[data-side="top"]    { top: -11px;    left: 50%; transform: translateX(-50%); }
+        .gp-add[data-side="bottom"] { bottom: -11px; left: 50%; transform: translateX(-50%); }
+        .gp-add[data-side="left"]   { left: -11px;   top: 50%;  transform: translateY(-50%); }
+        .gp-add[data-side="right"]  { right: -11px;  top: 50%;  transform: translateY(-50%); }
+        .gp-add[data-side="top"]:hover    { transform: translateX(-50%) scale(1.15); }
+        .gp-add[data-side="bottom"]:hover { transform: translateX(-50%) scale(1.15); }
+        .gp-add[data-side="left"]:hover   { transform: translateY(-50%) scale(1.15); }
+        .gp-add[data-side="right"]:hover  { transform: translateY(-50%) scale(1.15); }
+        .gp-add .material-symbols-outlined { font-size: 16px; }
+        /* Draggable dividers between panels */
+        .gp-divider { position: absolute; z-index: 8; background: transparent; }
+        .gp-divider::after {
+            content: ''; position: absolute; background: var(--border, rgba(128,128,128,0.4));
+            transition: background 0.12s;
+        }
+        .gp-divider:hover::after, .gp-divider.dragging::after { background: var(--accent); }
+        .gp-divider.row { cursor: col-resize; width: 8px; transform: translateX(-50%); }
+        .gp-divider.row::after { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); }
+        .gp-divider.col { cursor: row-resize; height: 8px; transform: translateY(-50%); }
+        .gp-divider.col::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
+
+        /* Colour-trim rail — styled as distinct UI chrome (a floating card),
+           not visually glued to the plot to its left. */
+        #cTrimContainer {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md, 8px);
+            box-shadow: 0 1px 5px rgba(0,0,0,0.15);
+        }
 
         /* ---------- Inspector card ---------- */
         #inspectorContainer {
@@ -684,7 +810,6 @@
         iframe#plotIframe { background: var(--bg-panel) !important; }
 
         /* ---------- Colour trim rail ---------- */
-        #cTrimContainer { background: var(--bg-panel) !important; border-left: 1px solid var(--border) !important; }
         #cTrimTrack { border-radius: var(--radius-sm); }
         #cTrimTopHandle, #cTrimBottomHandle {
             background: var(--text-secondary) !important;
@@ -1031,59 +1156,43 @@
     </nav>
 
     <div class="flex flex-grow w-full overflow-hidden bg-white">
-        <div id="statsPanel" class="w-72 bg-panelBg flat-border flex-shrink-0 flex flex-col relative z-20">
-            
-            <div class="flex justify-center items-center shrink-0" style="border-bottom: 1px solid var(--border);">
-                <div id="mapContainer" class="relative w-full aspect-square flex justify-center items-center overflow-hidden shrink-0" style="background: var(--bg-panel);">
-                    <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
-                    <iframe id="gliderMap" src="" class="w-full h-full border-none hidden"></iframe>
+
+        <!-- Floating inspector: hover values for the active plot, shown on hover -->
+        <div id="inspectorContainer" class="hidden flex flex-col gap-2 p-3 rounded-lg" style="position: fixed; bottom: 14px; left: 14px; z-index: 45; width: 184px; background: var(--bg-panel); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,0.25);">
+            <div class="flex justify-between items-center pb-1">
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] font-bold text-googleBlue uppercase tracking-wider">Inspector</span>
                 </div>
+                <button id="resetInspectorBtn" class="text-[9px] bg-white hover:bg-gray-50 px-1.5 py-0.5 text-gray-600 hidden rounded border-none">Reset</button>
             </div>
-
-            <div id="inspectorContainer" class="p-3 flex flex-col gap-2 hidden bg-blue-50/50 border-b border-blue-100 transition-all shrink-0">
-                <div class="flex justify-between items-center pb-1">
-                    <div class="flex items-center gap-1">
-                        <span class="text-[9px] font-bold text-googleBlue uppercase tracking-wider">Inspector</span>
-                    </div>
-                    <button id="resetInspectorBtn" class="text-[9px] bg-white hover:bg-gray-50 px-1.5 py-0.5 text-gray-600 hidden rounded border-none">Reset</button>
-                </div>
-                <div class="grid grid-cols-2 gap-x-2 gap-y-1">
-                    <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hxLabel">X Value</span><span id="hxVal" class="font-medium text-gray-800 truncate transition-opacity">--</span></div>
-                    <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hyLabel">Y Value</span><span id="hyVal" class="font-bold text-googleBlue truncate transition-opacity">--</span></div>
-                    <div class="flex flex-col text-[10px] hidden" id="hcContainer"><span class="text-gray-500 font-medium truncate" id="hcLabel">C Value</span><span id="hcVal" class="font-medium transition-opacity">--</span></div>
-                </div>
-            </div>
-
-            <div id="statsEmptyState" class="p-6 text-center text-xs text-gray-400 mt-2 flex flex-col items-center gap-1 shrink-0">
-                <span class="material-symbols-outlined text-2xl">analytics</span>
-                Load data to see stats
-            </div>
-
-            <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
-                
-                <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700 bg-white border-b border-gray-200 shrink-0"></div>
-
-                <div class="flex border-b border-gray-200 bg-gray-50 text-[9px] font-bold uppercase tracking-wider shrink-0">
-                    <button id="tab3D" class="flex-1 py-2 px-2 text-center border-b-2 border-googleBlue text-googleBlue transition-colors outline-none">3D View</button>
-                    <button id="tabVariables" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Variables</button>
-                    <button id="tabAttributes" class="flex-1 py-2 px-2 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors outline-none">Attributes</button>
-                </div>
-
-                <div id="view3DContainer" class="flex flex-col w-full flex-grow min-h-0 overflow-hidden items-center justify-center p-1">
-                    <div style="aspect-ratio: 1/1; width: 100%; max-height: 100%; max-width: 100%; position: relative; flex-shrink: 0;">
-                        <iframe id="iframe3D" src="/static/3d_view.html" style="position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block;"></iframe>
-                    </div>
-                </div>
-                <div id="varList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
-                <div id="attrList" class="hidden flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hxLabel">X Value</span><span id="hxVal" class="font-medium text-gray-800 truncate transition-opacity">--</span></div>
+                <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hyLabel">Y Value</span><span id="hyVal" class="font-bold text-googleBlue truncate transition-opacity">--</span></div>
+                <div class="flex flex-col text-[10px] hidden" id="hcContainer"><span class="text-gray-500 font-medium truncate" id="hcLabel">C Value</span><span id="hcVal" class="font-medium transition-opacity">--</span></div>
             </div>
         </div>
-        
+
+        <!-- Hidden home for panelisable singletons + retained-but-unshown stats.
+             IDs are preserved so all existing population/stats code keeps working;
+             elements are moved into a panel body when added and returned here. -->
+        <div id="panelStash" style="display:none;">
+            <div id="statsEmptyState"></div>
+            <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
+                <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700"></div>
+            </div>
+            <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
+            <iframe id="gliderMap" src="" class="w-full h-full border-none"></iframe>
+            <iframe id="iframe3D" src="/static/3d_view.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
+            <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+            <div id="attrList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+        </div>
+
         <div class="flex-grow flex flex-col overflow-hidden relative">
             <div class="flex-grow flex overflow-hidden w-full relative">
                 
-                <div id="plotAreaWrapper" class="flex-grow flex items-center justify-center p-4 overflow-hidden relative">
-                    <iframe id="plotIframe" src="" class="w-full h-full border-none hidden" style="background: var(--plot-bg);"></iframe>
+                <div id="plotAreaWrapper" class="flex-grow flex items-center justify-center overflow-hidden relative">
+                    <!-- Dashboard panel host: holds one or more plot panels in a flexible split layout -->
+                    <div id="panelHost"></div>
 
                     <div id="demoPrompt" class="hidden flex flex-col items-center gap-4 z-40">
                         <div class="text-center">
@@ -1117,8 +1226,8 @@
                     </div>
                 </div>
 
-                <div id="cTrimContainer" class="hidden flex-col items-center pt-4 pb-20 px-2 bg-gray-50 border-l border-gray-200 shrink-0 gap-2 z-10 w-[70px] h-full">
-                    <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider text-center">Colour</span>
+                <div id="cTrimContainer" class="hidden flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px] mt-2 mb-16 mr-2">
+                    <span id="cTrimLabel" class="font-bold uppercase tracking-wide text-center w-full pb-1.5 whitespace-nowrap overflow-hidden" style="color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 9px;">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
                         <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
@@ -1138,9 +1247,9 @@
         </div>
     </div>
 
-    <div id="jellyBubble" class="fixed bottom-4 right-4 z-[100]">
+    <div id="jellyBubble" class="fixed bottom-1 right-2 z-[100]">
         <button id="jellyToggle" class="rounded-full w-12 h-12 flex items-center justify-center border border-gray-200 cursor-pointer bg-white transition-transform hover:scale-105 overflow-hidden" style="box-shadow: 0 2px 8px rgba(0,0,0,0.12);" title="Ask Jelly">
-            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-10 h-10" />
+            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-full h-full" />
         </button>
     </div>
 
@@ -1294,8 +1403,13 @@
         const downloadBtn = document.getElementById('downloadBtn');
         
         const datasetSelect = document.getElementById('dataset'), resetBtn = document.getElementById('resetBtn');
-        const plotIframe = document.getElementById('plotIframe');
+        // `plotIframe` always points at the ACTIVE panel's plot iframe. It is
+        // reassigned by setActive() so the large body of existing single-plot
+        // logic (colour trim, jelly, download, zoom relay) transparently acts
+        // on whichever panel is highlighted.
+        let plotIframe = null;
         const plotAreaWrapper = document.getElementById('plotAreaWrapper');
+        const panelHost = document.getElementById('panelHost');
         
         const xSelect = document.getElementById('xVar'), ySelect = document.getElementById('yVar');
         const cVarSelect = document.getElementById('cVar');
@@ -1389,6 +1503,22 @@
         const cTrimTopMask = document.getElementById('cTrimTopMask'), cTrimBottomMask = document.getElementById('cTrimBottomMask');
         const cTrimTopHandle = document.getElementById('cTrimTopHandle'), cTrimBottomHandle = document.getElementById('cTrimBottomHandle');
         const cTrimMinInput = document.getElementById('cTrimMinInput'), cTrimMaxInput = document.getElementById('cTrimMaxInput');
+        const cTrimLabel = document.getElementById('cTrimLabel');
+
+        // Show the active plot's colour (Z) variable above the bar, shrinking the
+        // font so even long names fit the bar's fixed width without widening it.
+        function setColourLabel(name) {
+            if (!cTrimLabel) return;
+            cTrimLabel.textContent = name || 'Colour';
+            // Reset to the nominal size, then shrink until it fits the bar width.
+            let size = 9.5;
+            cTrimLabel.style.fontSize = size + 'px';
+            // Only measurable while visible; if hidden this is a no-op (re-run on show).
+            let guard = 0;
+            while (cTrimLabel.scrollWidth > cTrimLabel.clientWidth && size > 5 && guard < 40) {
+                size -= 0.5; cTrimLabel.style.fontSize = size + 'px'; guard++;
+            }
+        }
 
         let trimTimeout;
         let currentMapDataset = "";
@@ -1403,8 +1533,824 @@
         let isPlotting = false;
         let plotQueued = false;
         let currentPreset = 'preset_temp';
-        
+
         let isDraggingCTop = false, isDraggingCBottom = false;
+
+        // ============================================================
+        //  Dashboard panel / split-layout engine
+        // ============================================================
+        const MAX_PANELS = 9;
+        const panels = {};          // id -> { id, type, state, el, iframe }
+        let layoutTree = null;      // BSP tree: leaf {leaf:true,panelId} | split {dir,ratio,a,b}
+        let activePanelId = null;   // currently highlighted panel (any type)
+        let activePlotPanelId = null; // the plot panel the toolbar drives
+        let _nextPanelId = 1;
+        let _suspendToolbar = false; // guard: writing widgets from state must not fire updatePlot
+        let _highlightTimer = null;
+
+        // Panel type catalogue. Singletons host an existing DOM element (kept in
+        // #panelStash) so all their population code keeps working by id.
+        const PANEL_DEFS = {
+            plot:  { label: 'Plot',       icon: 'show_chart',    singleton: false },
+            map:   { label: 'Globe',      icon: 'public',        singleton: true, stashId: 'gliderMap', isFrame: true },
+            '3d':  { label: '3D View',    icon: 'deployed_code', singleton: true, stashId: 'iframe3D',  isFrame: true },
+            vars:  { label: 'Variables',  icon: 'table_rows',    singleton: true, stashId: 'varList',   isFrame: false },
+            attrs: { label: 'Attributes', icon: 'description',   singleton: true, stashId: 'attrList',  isFrame: false },
+        };
+
+        const activePanel = () => activePanelId ? panels[activePanelId] : null;
+        const activePlotPanel = () => activePlotPanelId ? panels[activePlotPanelId] : null;
+        const leafCount = () => Object.values(panels).length;
+        const genPanelId = () => 'panel' + (_nextPanelId++);
+        const hasPanelType = (type) => Object.values(panels).some(p => p.type === type);
+
+        function panelByWindow(win) {
+            return Object.values(panels).find(p => p.iframe && p.iframe.contentWindow === win) || null;
+        }
+
+        // Snapshot of every per-panel plot control. Read from the live toolbar
+        // (which always reflects the active panel) or built directly for new panels.
+        function captureToolbarState() {
+            return {
+                datasetId: datasetSelect.value || '',
+                x: xSelect.value || '', y: ySelect.value || '', c: cVarSelect.value || '',
+                cmap: cmapInput.value || 'thermal',
+                invertY: invertYBtn.classList.contains('active'),
+                applyQc: applyQcBtn.classList.contains('active'),
+                highlightQc: highlightQcBtn.classList.contains('active'),
+                qcFlags: qcFlagsInput.value,
+                filterTime: filterTimeBtn.classList.contains('active'),
+                calcMld: calcMldBtn.classList.contains('active'),
+                ctdInterp: ctdInterpBtn.classList.contains('active'),
+                ctdQc: ctdQcBtn.classList.contains('active'),
+                cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
+                zoomBounds: currentZoomBounds,
+                preset: currentPreset,
+                cMin: baseCMin, cMax: baseCMax,
+                // The user's trimmed colour range, so the slider restores per panel.
+                cTrimMin: cTrimMinInput.value, cTrimMax: cTrimMaxInput.value,
+            };
+        }
+
+        // Push a panel's stored state back into the toolbar widgets, without
+        // firing the change handlers (guarded by _suspendToolbar).
+        function applyToolbarState(s) {
+            if (!s) return;
+            _suspendToolbar = true;
+            try {
+                if (s.x !== undefined) xSelect.value = s.x;
+                if (s.y !== undefined) ySelect.value = s.y;
+                if (s.c !== undefined) cVarSelect.value = s.c;
+                if (s.cmap) { cmapInput.value = s.cmap; if (typeof updateCmapGradient === 'function') updateCmapGradient(s.cmap); }
+                updateToggleBtn(invertYBtn, !!s.invertY);
+                updateToggleBtn(applyQcBtn, !!s.applyQc);
+                updateToggleBtn(highlightQcBtn, !!s.highlightQc);
+                if (s.qcFlags !== undefined) { qcFlagsInput.value = s.qcFlags; syncQcChips(); }
+                qcFlagsContainer.style.display = s.applyQc ? 'flex' : 'none';
+                highlightQcBtn.style.display = s.applyQc ? 'flex' : 'none';
+                updateToggleBtn(filterTimeBtn, !!s.filterTime);
+                updateToggleBtn(calcMldBtn, !!s.calcMld);
+                updateToggleBtn(ctdInterpBtn, !!s.ctdInterp);
+                updateToggleBtn(ctdQcBtn, !!s.ctdQc);
+                currentZoomBounds = s.zoomBounds || null;
+                currentPreset = s.preset || '';
+                updatePresetUI();
+                baseCMin = (s.cMin === undefined ? null : s.cMin);
+                baseCMax = (s.cMax === undefined ? null : s.cMax);
+                // Restore this panel's colour-trim slider — but only if the saved
+                // trim is sane for THIS panel's colour range. A new panel can
+                // inherit the previously-active plot's trim values (a different
+                // variable entirely), which would otherwise show nonsense numbers
+                // until the user nudges the slider. When invalid, fall back to the
+                // full range.
+                const tmin = parseFloat(s.cTrimMin), tmax = parseFloat(s.cTrimMax);
+                const rng = (baseCMin !== null && baseCMax !== null) ? (baseCMax - baseCMin) : 0;
+                const eps = Math.abs(rng) * 1e-6;
+                const trimOk = baseCMin !== null && baseCMax !== null &&
+                    !isNaN(tmin) && !isNaN(tmax) && tmin < tmax &&
+                    tmin >= baseCMin - eps && tmax <= baseCMax + eps;
+                if (trimOk) {
+                    cTrimMinInput.value = tmin; cTrimMaxInput.value = tmax;
+                } else if (baseCMin !== null) {
+                    cTrimMinInput.value = baseCMin.toFixed(4); cTrimMaxInput.value = baseCMax.toFixed(4);
+                } else {
+                    cTrimMinInput.value = ''; cTrimMaxInput.value = '';
+                }
+                if (baseCMin !== null) updateHandlesFromInputs('c');
+                const xInfo = variableCache.find(v => v.name === xSelect.value);
+                isXDateTime = !!(xInfo && xInfo.type === 'datetime');
+            } finally { _suspendToolbar = false; }
+        }
+
+        // Build the main_plot.html query string from a panel state object.
+        function buildPlotParams(s) {
+            const params = new URLSearchParams({
+                id: s.datasetId, x_var: s.x, y_var: s.y,
+                c_var: (s.c || '') + (s.calcMld ? '|mld' : ''),
+                cmap: s.cmap, invert_y: !!s.invertY,
+                apply_qc: !!s.applyQc, qc_flags: s.qcFlags || '',
+                highlight_qc: !!s.highlightQc, filter_time: !!s.filterTime,
+                calc_mld: !!s.calcMld,
+                ctd_interpolate: !!s.ctdInterp, ctd_qc: !!s.ctdQc,
+            });
+            if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
+            if (s.zoomBounds) {
+                params.set('zXmin', s.zoomBounds.xMin); params.set('zXmax', s.zoomBounds.xMax);
+                params.set('zYmin', s.zoomBounds.yMin); params.set('zYmax', s.zoomBounds.yMax);
+            }
+            return params;
+        }
+
+        // (Re)load / refresh a panel from its state, dispatched by type.
+        function renderPanel(panel) {
+            if (!panel) return;
+            if (panel.type === 'plot') {
+                const s = panel.state;
+                if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; return; }
+                panel.iframe.classList.remove('hidden');
+                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}`;
+            } else if (panel.type === 'map') {
+                if (datasetSelect.value) loadMapImage();
+            } else if (panel.type === '3d') {
+                const fid = datasetSelect.value;
+                const f = document.getElementById('iframe3D');
+                if (fid && f) f.src = `/static/3d_view.html?id=${encodeURIComponent(fid)}&theme=${getCurrentTheme()}`;
+            }
+            // vars / attrs are populated by loadVariables / loadDatasetInfo by id.
+        }
+        // Back-compat alias used by older call sites.
+        const renderPlotPanel = renderPanel;
+
+        // Move a singleton's stashed element into a panel body.
+        function mountHosted(panel) {
+            const def = PANEL_DEFS[panel.type];
+            if (!def || !def.stashId) return;
+            const el = document.getElementById(def.stashId);
+            if (!el) return;
+            el.classList.remove('hidden');
+            el.style.position = 'absolute'; el.style.inset = '0';
+            el.style.width = '100%'; el.style.height = '100%';
+            if (!def.isFrame) { el.classList.add('flex'); el.style.display = 'flex'; }
+            else { el.style.display = 'block'; }
+            panel.body.appendChild(el);
+            panel.hostedEl = el;
+            if (def.isFrame) panel.iframe = el;   // so theme/activate/panelByWindow work
+        }
+
+        // Return a singleton's element to the hidden stash.
+        function unmountHosted(panel) {
+            if (!panel.hostedEl) return;
+            const def = PANEL_DEFS[panel.type] || {};
+            const el = panel.hostedEl;
+            el.style.position = ''; el.style.inset = ''; el.style.width = ''; el.style.height = ''; el.style.display = '';
+            if (!def.isFrame) el.classList.remove('flex');
+            el.classList.add('hidden');
+            document.getElementById('panelStash').appendChild(el);
+            panel.hostedEl = null;
+            panel.iframe = null;
+        }
+
+        function createPanel(type, state, forcedId) {
+            const def = PANEL_DEFS[type] || PANEL_DEFS.plot;
+            const id = forcedId || genPanelId();
+            const el = document.createElement('div');
+            el.className = 'gp-panel';
+            el.dataset.panelId = id;
+
+            // Content body (positioning context for hosted singletons / the frame)
+            const body = document.createElement('div');
+            body.className = 'gp-panel-body';
+            el.appendChild(body);
+
+            let iframe = null;
+            if (type === 'plot') {
+                iframe = document.createElement('iframe');
+                iframe.className = 'gp-frame hidden';
+                iframe.src = '';
+                body.appendChild(iframe);
+            }
+
+            // Header: drag handle + type label (left) + close (right)
+            const header = document.createElement('div');
+            header.className = 'gp-panel-header';
+            const label = document.createElement('span');
+            label.className = 'gp-panel-label';
+            label.innerHTML = `<span class="material-symbols-outlined gp-drag-grip">drag_indicator</span><span class="material-symbols-outlined">${def.icon}</span>${def.label}`;
+            label.title = 'Drag to reorder';
+            label.addEventListener('mousedown', (e) => { e.stopPropagation(); setActive(id); startReorder(id, e); });
+            header.appendChild(label);
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'gp-panel-close';
+            closeBtn.title = 'Close panel';
+            closeBtn.innerHTML = '<span class="material-symbols-outlined">close</span>';
+            closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closePanel(id); });
+            header.appendChild(closeBtn);
+            el.appendChild(header);
+
+            // Four edge "+" buttons → open the add-panel menu
+            ['top', 'right', 'bottom', 'left'].forEach(side => {
+                const add = document.createElement('button');
+                add.className = 'gp-add';
+                add.dataset.side = side;
+                add.title = `Add a panel to the ${side}`;
+                add.innerHTML = '<span class="material-symbols-outlined">add</span>';
+                add.addEventListener('click', (e) => { e.stopPropagation(); showAddMenu(add, id, side); });
+                el.appendChild(add);
+            });
+
+            el.addEventListener('mousedown', () => { setActive(id); });
+
+            panelHost.appendChild(el);
+            const panel = { id, type, state, el, body, iframe, hostedEl: null };
+            panels[id] = panel;
+            if (def.stashId) mountHosted(panel);
+            return panel;
+        }
+
+        function setActive(id) {
+            const panel = panels[id];
+            if (!panel) return;
+            activePanelId = id;
+            Object.values(panels).forEach(p => p.el.classList.toggle('active', p.id === id));
+            if (panel.type === 'plot') {
+                activePlotPanelId = id;
+                plotIframe = panel.iframe;
+                applyToolbarState(panel.state);
+                if (baseCMin !== null && cmapInput.value !== 'discrete_09') {
+                    cTrimContainer.classList.replace('hidden', 'flex');
+                    setColourLabel(cVarSelect.value);
+                } else {
+                    cTrimContainer.classList.replace('flex', 'hidden');
+                }
+            }
+            // Non-plot panels leave the toolbar pointed at the last active plot.
+            updateAddButtons();
+            pokeHighlight();
+            scheduleSaveLayout();
+        }
+
+        // The active panel's highlight (border + edge buttons) fades after a few
+        // seconds of no interaction, then returns the moment the user interacts.
+        function pokeHighlight() {
+            clearTimeout(_highlightTimer);
+            const a = activePanel();
+            if (a) a.el.classList.remove('idle');
+            _highlightTimer = setTimeout(() => {
+                const a2 = activePanel();
+                if (a2) a2.el.classList.add('idle');
+            }, 5000);
+        }
+
+        // Show the "+" buttons on the active panel only, disabled once at the
+        // cap; hide the close button when a single panel is left.
+        function updateAddButtons() {
+            const atCap = leafCount() >= MAX_PANELS;
+            const single = leafCount() <= 1;
+            Object.values(panels).forEach(p => {
+                p.el.querySelectorAll('.gp-add').forEach(b => b.classList.toggle('show', !atCap));
+                const close = p.el.querySelector('.gp-panel-close');
+                if (close) close.style.display = single ? 'none' : '';
+            });
+        }
+
+        // Recursively walk the tree, assigning each leaf a rect (percent of host)
+        // and collecting divider descriptors for internal nodes.
+        function computeRects(node, rect, rects, dividers) {
+            if (!node) return;
+            if (node.leaf) { rects[node.panelId] = rect; return; }
+            const r = node.ratio;
+            if (node.dir === 'row') {
+                const aw = rect.w * r;
+                computeRects(node.a, { x: rect.x, y: rect.y, w: aw, h: rect.h }, rects, dividers);
+                computeRects(node.b, { x: rect.x + aw, y: rect.y, w: rect.w - aw, h: rect.h }, rects, dividers);
+                dividers.push({ node, dir: 'row', x: rect.x + aw, y: rect.y, len: rect.h, parentRect: rect });
+            } else {
+                const ah = rect.h * r;
+                computeRects(node.a, { x: rect.x, y: rect.y, w: rect.w, h: ah }, rects, dividers);
+                computeRects(node.b, { x: rect.x, y: rect.y + ah, w: rect.w, h: rect.h - ah }, rects, dividers);
+                dividers.push({ node, dir: 'col', x: rect.x, y: rect.y + ah, len: rect.w, parentRect: rect });
+            }
+        }
+
+        let _dividers = [];   // current divider descriptors (parallel to .gp-divider els)
+
+        // Cheap geometry pass: reposition panels + existing dividers from the tree.
+        // No DOM creation, so it's fast enough to run every animation frame.
+        function applyGeometry() {
+            const rects = {}, dividers = [];
+            computeRects(layoutTree, { x: 0, y: 0, w: 100, h: 100 }, rects, dividers);
+            Object.values(panels).forEach(p => {
+                const r = rects[p.id];
+                if (!r) { p.el.style.display = 'none'; return; }
+                p.el.style.display = '';
+                p.el.style.left = r.x + '%';
+                p.el.style.top = r.y + '%';
+                p.el.style.width = r.w + '%';
+                p.el.style.height = r.h + '%';
+            });
+            const els = panelHost.querySelectorAll('.gp-divider');
+            dividers.forEach((d, i) => {
+                const el = els[i]; if (!el) return;
+                _dividers[i] = d;   // keep parentRect/node fresh for in-progress drags
+                el.style.left = d.x + '%'; el.style.top = d.y + '%';
+                if (d.dir === 'row') { el.style.height = d.len + '%'; el.style.width = ''; }
+                else { el.style.width = d.len + '%'; el.style.height = ''; }
+            });
+        }
+
+        function renderLayout() {
+            const rects = {}, dividers = [];
+            computeRects(layoutTree, { x: 0, y: 0, w: 100, h: 100 }, rects, dividers);
+            _dividers = dividers;
+
+            Object.values(panels).forEach(p => {
+                const r = rects[p.id];
+                if (!r) { p.el.style.display = 'none'; return; }
+                p.el.style.display = '';
+                p.el.style.left = r.x + '%';
+                p.el.style.top = r.y + '%';
+                p.el.style.width = r.w + '%';
+                p.el.style.height = r.h + '%';
+            });
+
+            // Rebuild divider elements (one per internal node, in compute order).
+            panelHost.querySelectorAll('.gp-divider').forEach(d => d.remove());
+            dividers.forEach((d, i) => {
+                const div = document.createElement('div');
+                div.className = 'gp-divider ' + d.dir;
+                div.dataset.idx = i;
+                if (d.dir === 'row') {
+                    div.style.left = d.x + '%'; div.style.top = d.y + '%'; div.style.height = d.len + '%';
+                } else {
+                    div.style.top = d.y + '%'; div.style.left = d.x + '%'; div.style.width = d.len + '%';
+                }
+                attachDividerDrag(div, i);
+                panelHost.appendChild(div);
+            });
+            updateAddButtons();
+            scheduleSaveLayout();
+        }
+
+        function attachDividerDrag(div, idx) {
+            div.addEventListener('mousedown', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                div.classList.add('dragging');
+                const hostRect = panelHost.getBoundingClientRect();
+                // Prevent iframes from swallowing mousemove while dragging.
+                Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = 'none'; });
+
+                let pending = null, raf = 0;
+                const flush = () => {
+                    raf = 0;
+                    const d = _dividers[idx]; if (!d || pending == null) return;
+                    let ratio;
+                    if (d.dir === 'row') ratio = ((pending.x - hostRect.left) / hostRect.width * 100 - d.parentRect.x) / d.parentRect.w;
+                    else                 ratio = ((pending.y - hostRect.top) / hostRect.height * 100 - d.parentRect.y) / d.parentRect.h;
+                    d.node.ratio = Math.max(0.08, Math.min(0.92, ratio));
+                    applyGeometry();   // cheap reposition; no DOM rebuild → smooth
+                };
+                const onMove = (ev) => {
+                    pending = { x: ev.clientX, y: ev.clientY };
+                    if (!raf) raf = requestAnimationFrame(flush);
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    if (raf) cancelAnimationFrame(raf);
+                    Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = ''; });
+                    document.querySelectorAll('.gp-divider.dragging').forEach(x => x.classList.remove('dragging'));
+                    scheduleSaveLayout();   // persist the new split ratio
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        }
+
+        // Replace a leaf in the tree (matched by panelId) with a new node.
+        function replaceLeaf(node, panelId, newNode) {
+            if (!node) return null;
+            if (node.leaf) return node.panelId === panelId ? newNode : node;
+            node.a = replaceLeaf(node.a, panelId, newNode);
+            node.b = replaceLeaf(node.b, panelId, newNode);
+            return node;
+        }
+
+        // Remove a leaf; its sibling collapses up into the parent's slot.
+        function removeLeaf(node, panelId) {
+            if (!node || node.leaf) return node;
+            if (node.a.leaf && node.a.panelId === panelId) return node.b;
+            if (node.b.leaf && node.b.panelId === panelId) return node.a;
+            node.a = removeLeaf(node.a, panelId);
+            node.b = removeLeaf(node.b, panelId);
+            return node;
+        }
+
+        // Preference order for auto-picking a new plot's preset.
+        const NEW_PLOT_PRESET_ORDER = ['preset_temp', 'preset_sal', 'preset_density', 'preset_chla', 'preset_doxy', 'preset_bbp', 'preset_ts'];
+
+        function presetAvailable(key) {
+            const p = OceanPresets[key];
+            if (!p) return false;
+            const isVal = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
+            return p.x.some(isVal) && p.y.some(isVal) && p.c.some(isVal);
+        }
+
+        // State for a freshly-added panel. New plots pick the next available
+        // preset not already on screen (so you don't get duplicates by default);
+        // singletons just need the current dataset.
+        function makeNewState(type) {
+            if (type !== 'plot') return { datasetId: datasetSelect.value || '' };
+
+            const used = new Set(Object.values(panels).filter(p => p.type === 'plot').map(p => p.state.preset).filter(Boolean));
+            for (const key of NEW_PLOT_PRESET_ORDER) {
+                if (!used.has(key) && presetAvailable(key)) return stateFromPreset(key);
+            }
+            // Any remaining available preset not yet shown.
+            for (const key of Object.keys(OceanPresets)) {
+                if (!used.has(key) && presetAvailable(key)) return stateFromPreset(key);
+            }
+            // Fall back to duplicating the active plot.
+            const src = activePlotPanel();
+            const base = src ? JSON.parse(JSON.stringify(src.state)) : captureToolbarState();
+            base.zoomBounds = null;
+            return base;
+        }
+
+        function splitPanel(panelId, side, type = 'plot', seedState = null) {
+            if (leafCount() >= MAX_PANELS) return null;
+            if (PANEL_DEFS[type].singleton && hasPanelType(type)) return null;
+            if (!panels[panelId]) return null;
+
+            const np = createPanel(type, seedState || makeNewState(type));
+
+            const dir = (side === 'left' || side === 'right') ? 'row' : 'col';
+            const existingLeaf = { leaf: true, panelId };
+            const newLeaf = { leaf: true, panelId: np.id };
+            let split;
+            if (side === 'right' || side === 'bottom') {
+                split = { dir, ratio: 0.6, a: existingLeaf, b: newLeaf };   // existing keeps the larger share
+            } else {
+                split = { dir, ratio: 0.4, a: newLeaf, b: existingLeaf };
+            }
+            layoutTree = replaceLeaf(layoutTree, panelId, split);
+
+            renderLayout();
+            setActive(np.id);
+            renderPanel(np);
+            return np;
+        }
+
+        function closePanel(panelId) {
+            if (leafCount() <= 1) return;       // never close the last panel
+            const p = panels[panelId];
+            if (p && p.hostedEl) unmountHosted(p);   // return singleton to the stash
+            layoutTree = removeLeaf(layoutTree, panelId);
+            if (p) { p.el.remove(); delete panels[panelId]; }
+            if (activePlotPanelId === panelId) activePlotPanelId = null;
+
+            if (activePanelId === panelId) {
+                renderLayout();
+                const remaining = Object.keys(panels)[0];
+                if (remaining) setActive(remaining);
+            } else {
+                renderLayout();
+            }
+            // Keep the toolbar pointed at a valid plot if one still exists.
+            // If none remain, leave plotIframe pointing at the last (now-detached)
+            // iframe — harmless, since every .contentWindow access is guarded.
+            if (!activePlotPanelId) {
+                const firstPlot = Object.values(panels).find(pp => pp.type === 'plot');
+                if (firstPlot) { activePlotPanelId = firstPlot.id; plotIframe = firstPlot.iframe; }
+            }
+        }
+
+        // Swap the positions of two panels by exchanging their leaf panelIds.
+        function swapLeafPanels(node, idA, idB) {
+            if (!node) return;
+            if (node.leaf) {
+                if (node.panelId === idA) node.panelId = idB;
+                else if (node.panelId === idB) node.panelId = idA;
+                return;
+            }
+            swapLeafPanels(node.a, idA, idB);
+            swapLeafPanels(node.b, idA, idB);
+        }
+
+        // Which drop zone of a target rect the cursor is in: 'center' (swap) or an
+        // edge name (dock the dragged panel to that side of the target).
+        function dropZone(rect, x, y) {
+            const fx = (x - rect.left) / rect.width;
+            const fy = (y - rect.top) / rect.height;
+            const band = 0.25;   // outer 25% on each side docks; centre 50% swaps
+            const dl = fx, dr = 1 - fx, dt = fy, db = 1 - fy;
+            const m = Math.min(dl, dr, dt, db);
+            if (m > band) return 'center';
+            if (m === dl) return 'left';
+            if (m === dr) return 'right';
+            if (m === dt) return 'top';
+            return 'bottom';
+        }
+
+        // Detach the dragged panel and re-insert it as a split on one side of the
+        // target (the same result as pressing that target's edge "+").
+        function moveLeafToEdge(srcId, targetId, side) {
+            if (srcId === targetId) return;
+            layoutTree = removeLeaf(layoutTree, srcId);
+            const dir = (side === 'left' || side === 'right') ? 'row' : 'col';
+            const tgt = { leaf: true, panelId: targetId };
+            const src = { leaf: true, panelId: srcId };
+            const split = (side === 'right' || side === 'bottom')
+                ? { dir, ratio: 0.5, a: tgt, b: src }
+                : { dir, ratio: 0.5, a: src, b: tgt };
+            layoutTree = replaceLeaf(layoutTree, targetId, split);
+            renderLayout();
+            setActive(srcId);
+        }
+
+        // ===== Jelly layout control helpers =====
+        const PANEL_TYPE_SYNONYMS = {
+            plot: 'plot', plots: 'plot',
+            globe: 'map', map: 'map',
+            '3d': '3d', '3dview': '3d', '3d view': '3d', threed: '3d',
+            variables: 'vars', variable: 'vars', vars: 'vars',
+            attributes: 'attrs', attribute: 'attrs', attrs: 'attrs',
+        };
+
+        // Resolve a loose panel reference (id, type word, colour variable, or
+        // preset name/label) to a panel object — so Jelly can say "the globe",
+        // "oxygen", "CHLA", "panel3", etc.
+        function resolvePanelRef(ref) {
+            if (ref == null) return null;
+            if (panels[ref]) return panels[ref];
+            const s = String(ref).trim().toLowerCase();
+            if (!s) return null;
+            for (const p of Object.values(panels)) if (p.id.toLowerCase() === s) return p;
+            const wantType = PANEL_TYPE_SYNONYMS[s];
+            if (wantType) { const hit = Object.values(panels).find(p => p.type === wantType); if (hit) return hit; }
+            // Plot by colour variable / preset key / preset label
+            for (const p of Object.values(panels)) {
+                if (p.type !== 'plot') continue;
+                const c = (p.state.c || '').toLowerCase();
+                const preset = (p.state.preset || '').toLowerCase();
+                const label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text || '').toLowerCase();
+                if (c === s || preset === s || label === s) return p;
+            }
+            for (const p of Object.values(panels)) {
+                if (p.type !== 'plot') continue;
+                const c = (p.state.c || '').toLowerCase();
+                const label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text || '').toLowerCase();
+                if ((c && (c.includes(s) || s.includes(c))) || (label && (label.includes(s) || s.includes(label)))) return p;
+            }
+            return null;
+        }
+
+        // Snapshot of the dashboard for Jelly's context.
+        function gatherLayoutContext() {
+            const rects = {};
+            computeRects(layoutTree, { x: 0, y: 0, w: 100, h: 100 }, rects, []);
+            const list = Object.values(panels).map(p => {
+                const r = rects[p.id] || {};
+                const out = {
+                    id: p.id, type: (p.type === 'map' ? 'globe' : p.type),
+                    active: p.id === activePanelId,
+                    rect: { x: Math.round(r.x || 0), y: Math.round(r.y || 0), w: Math.round(r.w || 0), h: Math.round(r.h || 0) },
+                };
+                if (p.type === 'plot') {
+                    out.x = p.state.x; out.y = p.state.y; out.c = p.state.c;
+                    out.preset = p.state.preset;
+                    out.label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text) || p.state.c || 'plot';
+                }
+                return out;
+            });
+            return {
+                panels: list, count: list.length, max: MAX_PANELS,
+                active_panel_id: activePanelId, active_plot_panel_id: activePlotPanelId,
+            };
+        }
+
+        // Find a leaf's parent split node (and which side it's on).
+        function findParent(node, panelId, parent) {
+            if (!node || node.leaf) return null;
+            if (node.a.leaf && node.a.panelId === panelId) return { parent: node, side: 'a' };
+            if (node.b.leaf && node.b.panelId === panelId) return { parent: node, side: 'b' };
+            return findParent(node.a, panelId, node) || findParent(node.b, panelId, node);
+        }
+
+        // Rebuild the whole tree from the current panels in a simple arrangement.
+        function arrangeLayout(mode) {
+            const ids = Object.keys(panels);
+            if (ids.length === 0) return;
+            if (mode === 'equalize') {
+                const setEqual = (n) => { if (!n || n.leaf) return; n.ratio = 0.5; setEqual(n.a); setEqual(n.b); };
+                setEqual(layoutTree);
+            } else if (mode === 'rows') {
+                layoutTree = buildEqualTree(ids, 'col');
+            } else if (mode === 'columns') {
+                layoutTree = buildEqualTree(ids, 'row');
+            } else if (mode === 'grid') {
+                const cols = Math.ceil(Math.sqrt(ids.length));
+                const rows = [];
+                for (let i = 0; i < ids.length; i += cols) rows.push(ids.slice(i, i + cols));
+                const rowNodes = rows.map(r => buildEqualTree(r, 'row'));
+                // Stack the row groups vertically.
+                const stack = (nodes) => nodes.length === 1 ? nodes[0]
+                    : { dir: 'col', ratio: 1 / nodes.length, a: nodes[0], b: stack(nodes.slice(1)) };
+                layoutTree = stack(rowNodes);
+            } else { return; }
+            renderLayout();
+        }
+
+        // Drag a panel header onto another panel. Drop on its centre to swap; drop
+        // near an edge to dock the panel to that side (like the edge "+").
+        let _dropOverlay = null, _dropBadge = null;
+        const DOCK_LABEL = {
+            center: { icon: 'swap_horiz',   text: 'Swap' },
+            left:   { icon: 'chevron_left', text: 'Move here' },
+            right:  { icon: 'chevron_right',text: 'Move here' },
+            top:    { icon: 'expand_less',  text: 'Move here' },
+            bottom: { icon: 'expand_more',  text: 'Move here' },
+        };
+        function startReorder(srcId, e) {
+            e.preventDefault();
+            let targetId = null, zone = null, prevTargetEl = null;
+            Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = 'none'; });
+            document.body.classList.add('gp-reordering');
+            if (panels[srcId]) panels[srcId].el.classList.add('gp-drag-source');
+            if (!_dropOverlay) {
+                _dropOverlay = document.createElement('div');
+                _dropOverlay.className = 'gp-drop-overlay';
+                _dropBadge = document.createElement('div');
+                _dropBadge.className = 'gp-drop-badge';
+                _dropOverlay.appendChild(_dropBadge);
+                panelHost.appendChild(_dropOverlay);
+            }
+            _dropOverlay.style.display = 'none';
+
+            const clearTarget = () => {
+                if (prevTargetEl) { prevTargetEl.classList.remove('gp-drag-target'); prevTargetEl = null; }
+            };
+
+            const onMove = (ev) => {
+                const el = document.elementFromPoint(ev.clientX, ev.clientY);
+                const panelEl = el && el.closest ? el.closest('.gp-panel') : null;
+                const id = panelEl && panelEl.dataset.panelId;
+                targetId = (id && id !== srcId) ? id : null;
+                if (!targetId) { _dropOverlay.style.display = 'none'; clearTarget(); return; }
+                const tp = panels[targetId];
+                if (panelEl !== prevTargetEl) { clearTarget(); prevTargetEl = panelEl; panelEl.classList.add('gp-drag-target'); }
+                zone = dropZone(panelEl.getBoundingClientRect(), ev.clientX, ev.clientY);
+                // Position the preview overlay over the landing region.
+                let L = tp.el.offsetLeft, T = tp.el.offsetTop, W = tp.el.offsetWidth, H = tp.el.offsetHeight;
+                if (zone === 'left')   W = W / 2;
+                else if (zone === 'right')  { L += W / 2; W = W / 2; }
+                else if (zone === 'top')    H = H / 2;
+                else if (zone === 'bottom') { T += H / 2; H = H / 2; }
+                _dropOverlay.style.display = 'flex';
+                _dropOverlay.style.left = L + 'px'; _dropOverlay.style.top = T + 'px';
+                _dropOverlay.style.width = W + 'px'; _dropOverlay.style.height = H + 'px';
+                _dropOverlay.classList.toggle('swap', zone === 'center');
+                const lab = DOCK_LABEL[zone] || DOCK_LABEL.center;
+                _dropBadge.innerHTML = `<span class="material-symbols-outlined">${lab.icon}</span>${lab.text}`;
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = ''; });
+                document.body.classList.remove('gp-reordering');
+                if (panels[srcId]) panels[srcId].el.classList.remove('gp-drag-source');
+                clearTarget();
+                if (_dropOverlay) _dropOverlay.style.display = 'none';
+                if (targetId && targetId !== srcId) {
+                    if (zone === 'center') { swapLeafPanels(layoutTree, srcId, targetId); renderLayout(); setActive(srcId); }
+                    else moveLeafToEdge(srcId, targetId, zone);
+                }
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        }
+
+        // Popover menu shown by an edge "+" — choose what kind of panel to add.
+        let _addMenuEl = null;
+        function closeAddMenu() { if (_addMenuEl) { _addMenuEl.remove(); _addMenuEl = null; } }
+        function showAddMenu(anchorBtn, panelId, side) {
+            closeAddMenu();
+            if (leafCount() >= MAX_PANELS) return;
+            const menu = document.createElement('div');
+            menu.className = 'gp-add-menu';
+            _addMenuEl = menu;
+            Object.entries(PANEL_DEFS).forEach(([type, def]) => {
+                const item = document.createElement('button');
+                item.className = 'gp-add-item';
+                const disabled = def.singleton && hasPanelType(type);
+                item.disabled = disabled;
+                item.innerHTML = `<span class="material-symbols-outlined">${def.icon}</span>${def.label}${disabled ? ' <span class="gp-add-open">(open)</span>' : ''}`;
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeAddMenu();
+                    splitPanel(panelId, side, type);
+                });
+                menu.appendChild(item);
+            });
+            // Position next to the button, clamped to the host.
+            panelHost.appendChild(menu);
+            const br = anchorBtn.getBoundingClientRect();
+            const hr = panelHost.getBoundingClientRect();
+            let left = br.left - hr.left + br.width + 6;
+            let top = br.top - hr.top;
+            if (left + 150 > hr.width) left = br.left - hr.left - 150 - 6;
+            top = Math.max(4, Math.min(top, hr.height - menu.offsetHeight - 4));
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+            // Dismiss on next outside click.
+            setTimeout(() => document.addEventListener('mousedown', onAddMenuOutside, { once: true }), 0);
+        }
+        function onAddMenuOutside(e) {
+            if (_addMenuEl && !_addMenuEl.contains(e.target)) closeAddMenu();
+        }
+
+        // ---- Layout persistence ----
+        const LAYOUT_KEY = 'gp_layout_v1';
+        let _saveTimer = null;
+        let _pendingRestoreSync = false;   // re-sync toolbar to restored active plot once
+
+        function serializeLayout() {
+            const out = { tree: layoutTree, activePanelId, activePlotPanelId, nextId: _nextPanelId, panels: {} };
+            Object.values(panels).forEach(p => { out.panels[p.id] = { type: p.type, state: p.state }; });
+            return out;
+        }
+        function scheduleSaveLayout() {
+            clearTimeout(_saveTimer);
+            _saveTimer = setTimeout(() => {
+                try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(serializeLayout())); } catch (_) {}
+            }, 400);
+        }
+        function loadSavedLayout() {
+            try { const raw = localStorage.getItem(LAYOUT_KEY); return raw ? JSON.parse(raw) : null; } catch (_) { return null; }
+        }
+        function clearSavedLayout() { try { localStorage.removeItem(LAYOUT_KEY); } catch (_) {} }
+
+        // Validate a tree: every leaf references a known panel, no dangling panels.
+        function treeLeafIds(node, acc) {
+            if (!node) return acc;
+            if (node.leaf) { acc.push(node.panelId); return acc; }
+            treeLeafIds(node.a, acc); treeLeafIds(node.b, acc); return acc;
+        }
+
+        function tearDownPanels() {
+            Object.values(panels).forEach(p => { if (p.hostedEl) unmountHosted(p); p.el.remove(); });
+            Object.keys(panels).forEach(k => delete panels[k]);
+            panelHost.querySelectorAll('.gp-divider').forEach(d => d.remove());
+            activePanelId = activePlotPanelId = null;
+        }
+
+        function buildDefaultLayout() {
+            // Globe (top-left) + 3D (below) in a narrow left column, main plot right.
+            tearDownPanels();
+            _nextPanelId = 1;
+            const plot = createPanel('plot', captureToolbarState());
+            const map = createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
+            layoutTree = {
+                dir: 'row', ratio: 0.30,
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
+                b: { leaf: true, panelId: plot.id }
+            };
+            plotIframe = plot.iframe;
+            renderLayout();
+            setActive(plot.id);
+        }
+
+        function buildFromSnapshot(snap) {
+            try {
+                if (!snap || !snap.tree || !snap.panels) return false;
+                const ids = treeLeafIds(snap.tree, []);
+                if (!ids.length || ids.some(id => !snap.panels[id])) return false;
+                tearDownPanels();
+                _nextPanelId = snap.nextId || (ids.length + 1);
+                ids.forEach(id => {
+                    const pd = snap.panels[id];
+                    createPanel(pd.type, pd.state || {}, id);
+                });
+                layoutTree = snap.tree;
+                const firstPlot = (Object.values(panels).find(p => p.type === 'plot') || {}).id || null;
+                activePlotPanelId = (snap.activePlotPanelId && panels[snap.activePlotPanelId]) ? snap.activePlotPanelId : firstPlot;
+                if (activePlotPanelId) plotIframe = panels[activePlotPanelId].iframe;
+                renderLayout();
+                setActive((snap.activePanelId && panels[snap.activePanelId]) ? snap.activePanelId : (activePlotPanelId || Object.keys(panels)[0]));
+                // Panels render when the dataset loads (handleDatasetChange), so
+                // we don't load a possibly-stale dataset here.
+                _pendingRestoreSync = true;
+                return true;
+            } catch (e) { console.error('Layout restore failed:', e); return false; }
+        }
+
+        function initPanels() {
+            // Restore the saved dashboard if present; otherwise build the default.
+            // Every tile is a rearrangeable panel; activation comes from
+            // 'panelActivate' messages posted by each panel iframe.
+            const snap = loadSavedLayout();
+            if (!(snap && buildFromSnapshot(snap))) buildDefaultLayout();
+        }
 
         const OceanPresets = {
             preset_phases: { text: 'Phases', icon: 'lens_blur', bg: 'bg-gray-100', textCol: 'text-gray-700', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['SCI_PHASE'], cmap: 'discrete_09', invert: true },
@@ -1445,17 +2391,24 @@
         }
         function applyTheme(theme, persist = true) {
             const t = theme === 'light' ? 'light' : 'dark';
+            // Suppress CSS transitions during the swap so the whole UI (including
+            // dropdowns/menus that animate colours) flips instantly instead of
+            // easing over their transition durations.
+            const root = document.documentElement;
+            root.classList.add('theme-switching');
             document.documentElement.setAttribute('data-theme', t);
+            // Force a reflow, then re-enable transitions next frame.
+            void root.offsetWidth;
+            requestAnimationFrame(() => root.classList.remove('theme-switching'));
             if (persist) setCookie(COOKIE_THEME, t);
             const icon = document.getElementById('themeToggleIcon');
             if (icon) icon.textContent = t === 'light' ? 'dark_mode' : 'light_mode';
             const btn = document.getElementById('themeToggle');
             if (btn) btn.title = t === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
-            // Propagate to already-loaded iframes
-            [document.getElementById('plotIframe'),
-             document.getElementById('gliderMap'),
-             document.getElementById('iframe3D')
-            ].forEach(fr => {
+            // Propagate to already-loaded iframes: every panel plot + map + 3D.
+            const frames = [document.getElementById('gliderMap'), document.getElementById('iframe3D')];
+            if (typeof panels === 'object') Object.values(panels).forEach(p => frames.push(p.iframe));
+            frames.forEach(fr => {
                 if (fr && fr.contentWindow) {
                     try { fr.contentWindow.postMessage({ type: 'setTheme', theme: t }, '*'); } catch (_) {}
                 }
@@ -1492,6 +2445,32 @@
                 return;
             }
 
+            // Route plot messages to their owning panel.
+            const srcPanel = panelByWindow(event.source);
+
+            // Any interaction inside a panel makes it the active panel, and
+            // always refreshes the highlight idle-timer.
+            if (msg.type === 'panelActivate') {
+                if (srcPanel) {
+                    if (srcPanel.id !== activePanelId) setActive(srcPanel.id);
+                    else pokeHighlight();
+                }
+                return;
+            }
+
+            // Plot messages from a non-toolbar-target plot only update that
+            // panel's stored state — they must not touch the shared toolbar / UI.
+            if (srcPanel && srcPanel.id !== activePlotPanelId) {
+                if (msg.type === 'plotZoomed') {
+                    const l = msg.limits;
+                    srcPanel.state.zoomBounds = (l && l.xMin !== 'auto' && l.xMin !== undefined)
+                        ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
+                } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
+                    srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
+                }
+                return;
+            }
+
             if (msg.type === 'plotLoaded') {
                 setLoading(false);
 
@@ -1509,9 +2488,15 @@
                     baseCMin = msg.globalLimits.cMin;
                     baseCMax = msg.globalLimits.cMax;
                     cTrimContainer.classList.replace('hidden', 'flex');
+                    setColourLabel(cVarSelect.value);
                 } else {
                     cTrimContainer.classList.replace('flex', 'hidden');
                 }
+
+                // Persist the resolved colour range into the active panel so
+                // re-activating it later restores the trim slider correctly.
+                const ap = activePlotPanel();
+                if (ap) { ap.state.cMin = baseCMin; ap.state.cMax = baseCMax; }
 
                 if (msg.stats) renderPlotStats(msg.stats);
 
@@ -1583,7 +2568,7 @@
         });
 
         function sendColourLimitsToIframe() {
-            if (!plotIframe.contentWindow || !cVarSelect.value) return;
+            if (!plotIframe || !plotIframe.contentWindow || !cVarSelect.value) return;
             const c1 = parseFloat(cTrimMinInput.value);
             const c2 = parseFloat(cTrimMaxInput.value);
             if(isNaN(c1) || isNaN(c2)) return;
@@ -1631,7 +2616,17 @@
 
         function renderPresetsDropdown() {
             presetContainer.innerHTML = '';
-            
+
+            // Dashboard: one click builds a row of thermal / chlorophyll / oxygen
+            // panels (skipping any the current file lacks).
+            const dashBtn = document.createElement('button');
+            dashBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-blue-100 text-blue-800';
+            dashBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">dashboard</span> <span class="preset-text">Dashboard</span>';
+            dashBtn.dataset.preset = '__dashboard__';
+            dashBtn.title = 'Build a multi-panel dashboard (thermal, chlorophyll, oxygen)';
+            dashBtn.addEventListener('click', () => { if (!dashBtn.disabled) applyDashboard(); });
+            presetContainer.appendChild(dashBtn);
+
             Object.entries(OceanPresets).forEach(([key, p]) => {
                 const btn = document.createElement('button');
                 btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap ${p.bg} ${p.textCol}`;
@@ -1657,6 +2652,68 @@
                 if (btn.dataset.preset === currentPreset) btn.classList.add('active');
                 else btn.classList.remove('active');
             });
+        }
+
+        // Resolve a preset into a full panel state object (variables resolved
+        // against the current file), inheriting QC/filter settings from the
+        // current toolbar. Mirrors applyPreset() but returns state instead of
+        // mutating the widgets.
+        function stateFromPreset(presetKey) {
+            const p = OceanPresets[presetKey];
+            const s = captureToolbarState();
+            const findBest = (arr) => {
+                for (const v of arr) {
+                    const adj = v + '_ADJUSTED';
+                    if (variableCache.some(vc => vc.name === adj)) return adj;
+                    if (variableCache.some(vc => vc.name === v)) return v;
+                }
+                return '';
+            };
+            s.x = findBest(p.x); s.y = findBest(p.y); s.c = findBest(p.c);
+            s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
+            s.zoomBounds = null; s.cMin = null; s.cMax = null;
+            // Don't inherit the active plot's colour-trim — it belongs to a
+            // different variable. Start at full range (filled on first load).
+            s.cTrimMin = ''; s.cTrimMax = '';
+            return s;
+        }
+
+        // Build a right-leaning split tree of equal-sized panels along one axis.
+        function buildEqualTree(ids, dir) {
+            if (ids.length === 1) return { leaf: true, panelId: ids[0] };
+            return { dir, ratio: 1 / ids.length,
+                     a: { leaf: true, panelId: ids[0] },
+                     b: buildEqualTree(ids.slice(1), dir) };
+        }
+
+        // Tear down all panels and rebuild a 1×N dashboard of the available
+        // biogeochemical presets.
+        function applyDashboard() {
+            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
+            const candidates = ['preset_temp', 'preset_chla', 'preset_doxy'];
+            const avail = candidates.filter(key => {
+                const p = OceanPresets[key];
+                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
+            });
+            if (avail.length === 0) return;
+
+            tearDownPanels();   // unmounts globe/3D back to the stash before re-adding
+
+            // Globe + 3D as a 1×2 side column, then the biogeochemical plots as a
+            // 1×N stack (landscape rows) filling the rest.
+            const map = createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
+            const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
+
+            layoutTree = {
+                dir: 'row', ratio: 0.30,
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
+                b: buildEqualTree(plotIds, 'col')
+            };
+            renderLayout();
+            plotIds.forEach(id => renderPanel(panels[id]));
+            renderPanel(map); renderPanel(td);
+            setActive(plotIds[0]);
         }
 
         function resetPlotState(fullReset = true) {
@@ -1752,11 +2809,32 @@
                 updateInputsFromHandles('c', currentTopPct, currentBottomPct);
             }
             
-            clearTimeout(trimTimeout);
-            trimTimeout = setTimeout(() => { sendColourLimitsToIframe(); }, 50);
+            scheduleColourSend();
         };
 
-        const stopDrag = () => { isDraggingCTop = isDraggingCBottom = false; };
+        // Push colour limits to the plot at a capped rate. The plot iframe is
+        // same-origin so its Plotly.restyle runs on the shared main thread and
+        // briefly blocks the slider; throttling (rather than firing every frame)
+        // leaves the thread free between updates so the slider stays smooth. A
+        // trailing call guarantees the final position lands.
+        let _colourSendAt = 0, _colourTrail = null;
+        const COLOUR_SEND_MS = 90;
+        function scheduleColourSend() {
+            const now = performance.now();
+            const since = now - _colourSendAt;
+            clearTimeout(_colourTrail);
+            if (since >= COLOUR_SEND_MS) {
+                _colourSendAt = now;
+                sendColourLimitsToIframe();
+            } else {
+                _colourTrail = setTimeout(() => { _colourSendAt = performance.now(); sendColourLimitsToIframe(); }, COLOUR_SEND_MS - since);
+            }
+        }
+
+        const stopDrag = () => {
+            if (isDraggingCTop || isDraggingCBottom) scheduleColourSend();   // land the final value
+            isDraggingCTop = isDraggingCBottom = false;
+        };
 
         cTrimTopHandle.addEventListener('mousedown', () => isDraggingCTop = true);
         cTrimBottomHandle.addEventListener('mousedown', () => isDraggingCBottom = true);
@@ -1830,36 +2908,15 @@
 
         let variableCache = [];
 
-        function switchTab(activeTabId) {
-            const tabs = [
-                { tab: tab3D, content: view3DContainer },
-                { tab: tabVariables, content: varList },
-                { tab: tabAttributes, content: attrList }
-            ];
-
-            tabs.forEach(t => {
-                if (t.tab.id === activeTabId) {
-                    t.tab.classList.replace('border-transparent', 'border-googleBlue');
-                    t.tab.classList.replace('text-gray-400', 'text-googleBlue');
-                    t.tab.classList.remove('hover:text-gray-600');
-                    t.content.classList.replace('hidden', 'flex');
-                } else {
-                    t.tab.classList.replace('border-googleBlue', 'border-transparent');
-                    t.tab.classList.replace('text-googleBlue', 'text-gray-400');
-                    t.tab.classList.add('hover:text-gray-600');
-                    t.content.classList.replace('flex', 'hidden');
-                }
-            });
-        }
+        // The 3D / Variables / Attributes sidebar tabs were replaced by dashboard
+        // panels in Phase 2; switchTab is now a no-op kept for legacy call sites.
+        function switchTab(activeTabId) {}
 
         const liveList = document.getElementById('liveList');
         const liveScannedAt = document.getElementById('liveScannedAt');
         const liveRefreshBtn = document.getElementById('liveRefreshBtn');
         const liveRefreshIcon = document.getElementById('liveRefreshIcon');
 
-        tabVariables.addEventListener('click', () => switchTab('tabVariables'));
-        tabAttributes.addEventListener('click', () => switchTab('tabAttributes'));
-        tab3D.addEventListener('click', () => switchTab('tab3D'));
         liveRefreshBtn.addEventListener('click', () => refreshLive({ force: true }));
 
         // ---------- Live BODC section (inside files dropdown) ----------
@@ -2315,12 +3372,15 @@
                 ctdContainer.style.display = anyCtdUseful ? 'flex' : 'none';
                 ctdDivider.style.display   = anyCtdUseful ? 'block' : 'none';
 
-                // First time we activate this file apply recommended defaults.
-                // Re-selecting the same file later doesn't override user's choice.
+                // First time we activate this file, apply recommended defaults —
+                // but only auto-enable when the file has NO QC variables. If the
+                // data already carries QC, leave Clean/Interpolate off by default
+                // (the user can still switch them on). Re-selecting the same file
+                // later doesn't override the user's choice.
                 if (activeRec && activeRec.id !== _ctdDefaultsAppliedFor) {
                     _ctdDefaultsAppliedFor = activeRec.id;
-                    updateToggleBtn(ctdInterpBtn, interpUseful);
-                    updateToggleBtn(ctdQcBtn, cleanUseful);
+                    updateToggleBtn(ctdInterpBtn, interpUseful && !hasAnyQc);
+                    updateToggleBtn(ctdQcBtn, cleanUseful && !hasAnyQc);
                 }
             } else {
                 ctdContainer.style.display = 'none';
@@ -2834,11 +3894,30 @@
             await CycleProfile.loadFile(fileId);
             loadLocation(fileId);
 
-            switchTab('tab3D');
-
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) {
                 iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            }
+
+            // Point every panel at the newly-selected dataset (shared-dataset
+            // default). The active plot panel is rendered via updatePlot (toolbar
+            // now reflects the new file's preset); the rest keep their own
+            // variable selections and re-render against the new file.
+            Object.values(panels).forEach(p => {
+                if (p.type === 'plot') {
+                    p.state.datasetId = fileId;
+                    if (p.id !== activePlotPanelId) { p.state.zoomBounds = null; renderPlotPanel(p); }
+                }
+            });
+
+            // First load after a layout restore: the active plot's variable
+            // selection lives in its saved state — re-sync the (now-populated)
+            // toolbar to it so loadVariables' preset doesn't clobber it. Normal
+            // file switches keep their existing preset behaviour.
+            if (_pendingRestoreSync) {
+                _pendingRestoreSync = false;
+                const ap = activePlotPanel();
+                if (ap && ap.state && ap.state.x) applyToolbarState(ap.state);
             }
 
             updatePlot();
@@ -2982,8 +4061,17 @@
 
         addFromPromptBtn.addEventListener('click', () => pickAndAddFiles());
 
+        // Renders the ACTIVE panel from the live toolbar. The toolbar always
+        // mirrors the active panel, so capturing it into the panel's state and
+        // re-rendering keeps the two in sync.
         async function updatePlot() {
+            if (_suspendToolbar) return;   // ignore widget writes done while restoring a panel
             if (isPlotting) { plotQueued = true; return; }
+
+            // The toolbar drives the active PLOT panel (which may differ from the
+            // highlighted panel when a globe/3D/vars panel is selected).
+            const p = activePlotPanel();
+            if (!p) { setLoading(false); return; }
 
             setLoading(true);
             resetInspectorState();
@@ -2993,35 +4081,19 @@
             try {
                 if (!datasetSelect.value || !xSelect.value) { setLoading(false); return; }
                 hideProcessingOverlay();
-                
-                const params = new URLSearchParams({
-                    id: datasetSelect.value, x_var: xSelect.value, y_var: ySelect.value,
-                    c_var: cVarSelect.value + (calcMldBtn.classList.contains('active') ? '|mld' : ''), cmap: cmapInput.value, invert_y: invertYBtn.classList.contains('active'),
-                    apply_qc: applyQcBtn.classList.contains('active'), qc_flags: qcFlagsInput.value,
-                    highlight_qc: highlightQcBtn.classList.contains('active'), filter_time: filterTimeBtn.classList.contains('active'),
-                    calc_mld: calcMldBtn.classList.contains('active'),
-                    ctd_interpolate: ctdInterpBtn.classList.contains('active'),
-                    ctd_qc: ctdQcBtn.classList.contains('active')
-                });
 
-                Object.entries(CycleProfile.getParams()).forEach(([k, v]) => params.set(k, v));
+                // Persist the live toolbar into the active plot panel, then render it.
+                p.state = captureToolbarState();
+                renderPlotPanel(p);
+                scheduleSaveLayout();
 
-                if (currentZoomBounds) {
-                    params.set('zXmin', currentZoomBounds.xMin);
-                    params.set('zXmax', currentZoomBounds.xMax);
-                    params.set('zYmin', currentZoomBounds.yMin);
-                    params.set('zYmax', currentZoomBounds.yMax);
-                }
-
-                plotIframe.src = `/static/main_plot.html?${params.toString()}&theme=${getCurrentTheme()}`;
-                
-                plotIframe.classList.remove('hidden');
+                p.iframe.classList.remove('hidden');
                 emptyState.classList.add('hidden');
                 downloadBtn.classList.remove('hidden');
 
-            } catch (err) { 
-                console.error("Plotting error:", err); 
-                setLoading(false); 
+            } catch (err) {
+                console.error("Plotting error:", err);
+                setLoading(false);
             }
         }
 
@@ -3055,10 +4127,10 @@
             applyPreset(currentPreset);
             CycleProfile.resetState();
             currentZoomBounds = null;
-            // Clear all Jelly overlays
+            // Clear all Jelly overlays on the current active plot
             parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
             _pendingJellyOverlays = [];
-            if (_jellyOverlayArmed && plotIframe.contentWindow) {
+            if (_jellyOverlayArmed && plotIframe && plotIframe.contentWindow) {
                 plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: { clear: true } }, '*');
             }
             updateCmapGradient(cmapInput.value);
@@ -3066,6 +4138,12 @@
             jellyHistory = [];
             jellyMessages.innerHTML = '';
             resetPlotState(true);
+
+            // Reset discards the saved/custom dashboard and restores the default
+            // layout (globe top-left, 3D below, main plot right).
+            clearSavedLayout();
+            buildDefaultLayout();
+            Object.values(panels).forEach(p => { if (p.type !== 'plot') renderPanel(p); });
             updatePlot();
         });
 
@@ -3225,6 +4303,7 @@
                 zoom: currentZoomBounds,
                 color_limits: colorLimits,
                 location: currentLocation,
+                layout: gatherLayoutContext(),
                 live_gliders: (_liveData && _liveData.active ? _liveData.active : []).slice(0, 60).map(e => ({
                     dataset: e.dataset,
                     filename: e.filename,
@@ -3558,6 +4637,8 @@
 
         // Flush queued overlays once the plot finishes loading, then re-apply persistent overrides
         window.addEventListener('message', function(event) {
+            // Jelly overlays target the active panel only.
+            if (plotIframe && event.source !== plotIframe.contentWindow) return;
             if (event.data && event.data.type === 'plotLoaded') {
                 _jellyOverlayArmed = true;
                 if (plotIframe.contentWindow) {
@@ -3575,6 +4656,7 @@
             }
         });
 
+        initPanels();
         checkJellyKey();
         init();
 

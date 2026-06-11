@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from . import plot_logic   # shared NETCDF_LOCK (HDF5 is not thread-safe)
+
 CYCLE_VAR_NAMES = ["CYCLE_NUMBER", "CYCLE"]
 
 
@@ -15,7 +17,7 @@ def get_cycles(filepath):
         return {"error": "File not found"}
 
     try:
-        with xr.open_dataset(filepath) as ds:
+        with plot_logic.NETCDF_LOCK, xr.open_dataset(filepath) as ds:
             var_names = list(ds.variables.keys())
     except Exception as e:
         return {"error": f"Failed to read dataset: {e}"}
@@ -38,7 +40,7 @@ def get_cycles(filepath):
             time_var = time_vars[0]
 
     try:
-        with xr.open_dataset(filepath) as ds:
+        with plot_logic.NETCDF_LOCK, xr.open_dataset(filepath) as ds:
             cycle_nums = ds[cycle_var].values.ravel().astype(float)
             time_vals = ds[time_var].values.ravel() if time_var else None
     except Exception as e:

@@ -566,7 +566,7 @@ def _process(file_id: str):
             else:
                 all_vars: dict = {}
                 try:
-                    with xr.open_dataset(p) as ds:
+                    with plot_logic.NETCDF_LOCK, xr.open_dataset(p) as ds:
                         for name in ds.variables:
                             if _is_removed(rec):
                                 return

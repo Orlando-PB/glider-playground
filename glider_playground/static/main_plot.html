@@ -83,6 +83,16 @@
 
     <script>
         const bgSpinner = document.getElementById('bgSpinner');
+
+        // Notify the dashboard parent when this panel is interacted with (click,
+        // zoom-drag, touch) so it becomes the active panel. Capture phase so it
+        // fires even though Plotly stops propagation on the plot surface.
+        ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
+            document.addEventListener(evt, () => {
+                try { window.parent.postMessage({ type: 'panelActivate' }, '*'); } catch (_) {}
+            }, true);
+        });
+
         let _bgFetchController = null;
         let _pendingBounds = null;
         let _originalPlotData = null;

@@ -137,7 +137,7 @@ def _read_lat_lon_pres_temp(filepath):
     else:
         if not os.path.exists(filepath):
             raise FileNotFoundError("File not found")
-        with Dataset(filepath, 'r') as nc:
+        with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
             if 'LATITUDE' not in nc.variables or 'LONGITUDE' not in nc.variables:
                 raise ValueError("No LATITUDE/LONGITUDE in this file")
             lat = nc.variables['LATITUDE'][:]
@@ -167,7 +167,7 @@ def _read_named_arrays(filepath, names):
         return out
     if not os.path.exists(filepath):
         raise FileNotFoundError("File not found")
-    with Dataset(filepath, 'r') as nc:
+    with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
         for n in names:
             if n in nc.variables:
                 out[n] = _to_float_array(nc.variables[n][:])
@@ -191,7 +191,7 @@ def _read_track_times(filepath):
                 break
     else:
         try:
-            with Dataset(filepath, 'r') as nc:
+            with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
                 for k in ('TIME', 'TIME_GPS'):
                     if k in nc.variables:
                         raw = nc.variables[k][:]
@@ -429,7 +429,7 @@ def get_last_time_iso(filepath):
                 break
     if time_arr is None:
         try:
-            with Dataset(filepath, 'r') as nc:
+            with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
                 for k in ('TIME', 'TIME_GPS'):
                     if k in nc.variables:
                         time_arr = nc.variables[k][:]

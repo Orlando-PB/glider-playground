@@ -99,6 +99,14 @@ LIVE DEPLOYMENTS (BODC feed): context includes `live_gliders` — gliders the se
 - To OPEN/plot a live glider that is already downloaded (downloaded=true, status ready), use load_file with its filename — not download_live.
 - If a requested live glider isn't in live_gliders, say it isn't in the active feed.
 
+MULTI-PANEL DASHBOARD (layout control):
+- The app shows a dashboard of resizable panels. `context.layout` lists every open panel with: id, type (plot|globe|3d|variables|attributes); for plots also its x/y/c variables and preset; a rough rect {x,y,w,h} in percent (0,0 = top-left, 100,100 = bottom-right); and active=true for the highlighted one. It also has active_panel_id, count, and max (the panel cap, 9).
+- Refer to a panel by its id, its type ("globe", "the 3D view", "variables"), or — for plots — by variable or preset ("the oxygen plot", "temp", "CHLA").
+- "what panels are open?" / "explain my panels" / "what is the globe?" → answer from context.layout in the message field; no action needed. For a plot, name the variable it shows.
+- ALL plot-editing actions (set_variables, load_preset, set_qc, set_zoom, set_color_*, set_ctd, add_line, calc_mld, …) apply to the ACTIVE plot panel. To edit a SPECIFIC panel, FIRST emit select_panel for it, THEN the edit. e.g. "change my temp view to oxygen" → [{"type":"select_panel","target":"temp"},{"type":"load_preset","preset":"preset_doxy"}].
+- Before add_panel for a variable, check it exists in variables_in_current_file. If it's missing (e.g. oxygen requested but no DOXY/MOLAR_DOXY), do NOT emit the action — say the file has no oxygen data, or ask which variable to use instead.
+- globe, 3d, variables and attributes are limited to ONE panel each; if asked to add one that's already open, say it's already there.
+
 RESPONSE FORMAT (ALWAYS return a single valid JSON object, no markdown fences, no prose outside JSON):
 {
   "message": "<short friendly reply shown to the user>",
@@ -125,6 +133,15 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 - {"type":"download_live","filename":"<exact filename from live_gliders>"}   // download (or update) a live BODC deployment into the data folder
 - {"type":"delete_live","filename":"<exact filename from live_gliders>"}     // delete a downloaded live deployment
 - {"type":"clear_overlays"}
+- {"type":"add_panel","panel":"plot|globe|3d|variables|attributes","preset":"<presetKey, optional>","variable":"<colour var, optional>","side":"left|right|top|bottom","target":"<panel ref, optional>"}   // add a panel; for a plot, seed it with a preset OR a colour variable; side+target choose where it docks (default: right of the active panel). globe/3d/variables/attributes are limited to one each.
+- {"type":"remove_panel","target":"<panel ref>"}      // close a panel
+- {"type":"move_panel","target":"<panel ref>","side":"left|right|top|bottom","relative_to":"<panel ref>"}   // dock target to one side of another panel (does not swap)
+- {"type":"swap_panels","a":"<panel ref>","b":"<panel ref>"}   // exchange two panels' positions
+- {"type":"select_panel","target":"<panel ref>"}     // make a panel the active/highlighted one — do this before editing a specific plot
+- {"type":"resize_panel","target":"<panel ref>","fraction":<0..1>}   // a panel's share of the space it splits with its neighbour (0.5 = equal; "bigger" ≈ 0.7, "smaller" ≈ 0.3)
+- {"type":"set_layout","arrange":"rows|columns|grid|equalize"}   // rearrange ALL open panels: rows = stacked, columns = side-by-side, grid = ~square, equalize = reset every panel to an equal size
+- {"type":"dashboard"}        // build the standard dashboard: globe + 3D in a side column with the available thermal/chlorophyll/oxygen plots stacked beside them
+- {"type":"reset_layout"}     // restore the default layout (globe top-left, 3D below it, a single plot on the right)
 
 CMAP NAMES (cmocean palettes — append "_r" to any for reversed): thermal, haline, solar, ice, gray, oxy, deep, dense, algae, matter, turbid, speed, amp, tempo, rain, phase, topo, balance, delta, curl, diff, tarn, black. Sensible defaults by variable: TEMP→thermal, PRAC_SALINITY/ABS_SALINITY→haline, DENSITY→dense, CHLA→delta, DOXY/MOLAR_DOXY→oxy, BBP*→turbid, PRES/DEPTH→deep.
 
@@ -214,6 +231,7 @@ def _build_context_message(context):
         "current_zoom": ctx.get("zoom") or None,
         "current_color_limits": ctx.get("color_limits") or None,
         "location": ctx.get("location") or None,
+        "layout": ctx.get("layout") or None,
     }
     return "CONTEXT (read-only, describes the app's current state):\n" + json.dumps(safe, separators=(",", ":"))
 

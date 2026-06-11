@@ -54,7 +54,7 @@
 
     <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
     <button id="dacToggle" title="Toggle depth-averaged currents"
-        style="display:none; position:absolute; top:10px; right:10px; z-index:60;
+        style="display:none; position:absolute; bottom:10px; right:10px; z-index:60;
                align-items:center; gap:6px; padding:6px 10px; border:none; cursor:pointer;
                border-radius:8px; font-size:11px; font-weight:600; color:var(--text-primary);
                background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
@@ -67,6 +67,13 @@
     </button>
 
     <script>
+        // Tell the dashboard parent to activate this panel on interaction.
+        ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
+            document.addEventListener(evt, () => {
+                try { window.parent.postMessage({ type: 'panelActivate' }, '*'); } catch (_) {}
+            }, true);
+        });
+
         function readThemeColors() {
             const s = getComputedStyle(document.documentElement);
             return {

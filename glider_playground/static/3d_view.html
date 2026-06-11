@@ -42,6 +42,18 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Spin pause / resume control — top-left, appears on hover */
+        #spinToggle {
+            position: absolute; bottom: 8px; right: 8px; z-index: 40;
+            width: 26px; height: 26px; border: none; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.45); color: #fff; cursor: pointer;
+            font-size: 12px; line-height: 1; opacity: 0; transition: opacity 0.15s, background 0.15s;
+        }
+        body:hover #spinToggle { opacity: 1; }
+        #spinToggle:hover { background: var(--accent); }
+        #spinToggle.paused { opacity: 1; }   /* keep visible while paused */
     </style>
     <script>
         (function() {
@@ -62,8 +74,16 @@
     </div>
 
     <div id="plot3d"></div>
+    <button id="spinToggle" title="Pause / resume auto-rotate">⏸</button>
 
     <script>
+        // Tell the dashboard parent to activate this panel on interaction.
+        ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
+            document.addEventListener(evt, () => {
+                try { window.parent.postMessage({ type: 'panelActivate' }, '*'); } catch (_) {}
+            }, true);
+        });
+
         window.addEventListener('message', function(event) {
             if (!event.data || event.data.type !== 'setTheme') return;
             const t = event.data.theme === 'light' ? 'light' : 'dark';
@@ -235,12 +255,13 @@
                         setTimeout(() => overlay.style.display = 'none', 500);
 
                         const plotDiv = document.getElementById('plot3d');
-                        
+
                         let lastInteractionTime = 0;
                         let currentEye = { x: 1.25, y: -1.25, z: 0.6 };
+                        let paused = false;   // hard pause toggled by a click
 
                         const resetIdle = () => { lastInteractionTime = Date.now(); };
-                        
+
                         plotDiv.on('plotly_relayout', (e) => {
                             if (e && e['scene.camera'] && e['scene.camera'].eye) {
                                 currentEye = { ...currentEye, ...e['scene.camera'].eye };
@@ -252,15 +273,41 @@
                         plotDiv.addEventListener('mousedown', resetIdle, true);
                         plotDiv.addEventListener('wheel', resetIdle, true);
                         plotDiv.addEventListener('touchstart', resetIdle, true);
-                        plotDiv.addEventListener('touchmove', resetIdle, true); 
+                        plotDiv.addEventListener('touchmove', resetIdle, true);
+
+                        // Pause / resume on a click (not a drag-to-rotate). A click
+                        // is a press+release with little movement; a drag rotates and
+                        // must NOT toggle the pause.
+                        const spinToggle = document.getElementById('spinToggle');
+                        const updateSpinIcon = () => {
+                            spinToggle.textContent = paused ? '▶' : '⏸';
+                            spinToggle.classList.toggle('paused', paused);
+                            spinToggle.title = paused ? 'Resume auto-rotate' : 'Pause auto-rotate';
+                        };
+                        const togglePause = () => { paused = !paused; updateSpinIcon(); };
+
+                        let _downX = 0, _downY = 0, _downT = 0, _moved = false;
+                        document.addEventListener('pointerdown', (e) => {
+                            _downX = e.clientX; _downY = e.clientY; _downT = Date.now(); _moved = false;
+                        }, true);
+                        document.addEventListener('pointermove', (e) => {
+                            if (Math.abs(e.clientX - _downX) > 4 || Math.abs(e.clientY - _downY) > 4) _moved = true;
+                        }, true);
+                        document.addEventListener('pointerup', (e) => {
+                            if (e.target.closest && e.target.closest('#spinToggle')) return; // button handles itself
+                            if (!_moved && (Date.now() - _downT) < 400) togglePause();
+                        }, true);
+                        spinToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
+                        updateSpinIcon();
 
                         let lastFrameTime = 0;
 
                         function animate(time) {
                             requestAnimationFrame(animate);
-                            
-                            if (Date.now() - lastInteractionTime < idleDelayMs) return; 
-                            if (time - lastFrameTime < 30) return; 
+
+                            if (paused) return;
+                            if (Date.now() - lastInteractionTime < idleDelayMs) return;
+                            if (time - lastFrameTime < 30) return;
                             
                             lastFrameTime = time;
 
