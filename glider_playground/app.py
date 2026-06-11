@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cache_logic
+from . import chla_logic
 from . import cycle_profile_logic
 from . import jelly_logic
 from . import live_logic
@@ -339,6 +340,34 @@ def api_plot_data_bounds(
         profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
         ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
+    )
+
+
+# ---------- chla overlay ----------
+
+@app.get("/api/chla")
+def api_chla(id: str):
+    """Ocean-colour chlorophyll-a overlay for the glider's bounding box.
+
+    The date is tied to the glider's last GPS fix so the satellite field is
+    contemporaneous with the deployment; chla_logic caps it to the dataset's
+    latest available day when the deployment is more recent than the product.
+    """
+    loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
+    if not loc or "error" in loc:
+        raise HTTPException(status_code=404, detail="No spatial data for this file")
+
+    rec = cache_logic.get_record(id)
+    target_date = None
+    if rec and rec.get("last_time"):
+        target_date = str(rec["last_time"])[:10]
+
+    return chla_logic.fetch_chla_overlay(
+        lat_min=loc["lat_min"],
+        lat_max=loc["lat_max"],
+        lon_min=loc["lon_min"],
+        lon_max=loc["lon_max"],
+        target_date=target_date,
     )
 
 

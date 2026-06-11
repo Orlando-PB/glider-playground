@@ -7,7 +7,10 @@
     <script src="/static/console_log.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
-    <script src="https://unpkg.com/globe.gl"></script>
+    <script src="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
+    <!-- Standalone THREE (matches globe.gl 2.46.1's bundled three ≥0.154) for the
+         CHL-a overlay mesh. Loaded AFTER globe.gl so globe.gl initialises untouched. -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-globe: #121420;
@@ -29,8 +32,46 @@
         #globe-container { width: 100vw; height: 100vh; z-index: 1; cursor: grab; visibility: hidden; }
         #globe-container:active { cursor: grabbing; }
         #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: var(--bg-panel); color: var(--text-muted); }
-        #dacToggle:hover { filter: brightness(1.12); }
-        #dacToggle.off { opacity: 0.45; }
+        #dacToggle:hover, #chlaToggle:hover { filter: brightness(1.12); }
+        #dacToggle.off, #chlaToggle.off { opacity: 0.45; }
+        #chlaToggle.loading { opacity: 0.7; cursor: progress; }
+        #chlaToggle .spin { animation: chlaspin 0.9s linear infinite; }
+        @keyframes chlaspin { to { transform: rotate(360deg); } }
+
+        /* CHL-a colourbar — bottom-left, only while the layer is on. */
+        #chla-bar {
+            display: none; position: absolute; bottom: 10px; left: 10px; z-index: 60;
+            align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
+            font-size: 10px; font-weight: 500; color: var(--text-primary);
+            background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
+            box-shadow: 0 1px 6px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
+        }
+        #chla-bar.visible { display: flex; }
+        #chla-bar-title {
+            font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; margin-right: 2px;
+        }
+        #chla-bar-grad {
+            height: 8px; width: 90px; border-radius: 4px;
+            /* low → high, left to right (matches the lo/hi labels around it) */
+            background: linear-gradient(to right,
+                #edfeed 0%, #8ae08a 30%, #1a9a1a 55%, #004d00 78%, #000d00 100%);
+        }
+        #chla-bar-hi, #chla-bar-lo { font-size: 9px; white-space: nowrap; }
+        #chla-bar-date { font-size: 9px; opacity: 0.55; margin-left: 4px; }
+
+        /* CHL-a error toast */
+        #chla-err {
+            display: none; position: absolute; bottom: 54px; left: 50%;
+            transform: translateX(-50%); z-index: 70; max-width: 80%;
+            padding: 8px 12px; border-radius: 8px; font-size: 11px;
+            color: var(--text-primary);
+            background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+            text-align: center;
+        }
+        #chla-err.visible { display: block; }
+        #chla-err .hint { color: var(--text-muted); margin-top: 4px; font-size: 10px; }
     </style>
     <script>
         (function() {
@@ -52,19 +93,49 @@
     
     <div id="globe-container"></div>
 
-    <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
-    <button id="dacToggle" title="Toggle depth-averaged currents"
-        style="display:none; position:absolute; bottom:10px; right:10px; z-index:60;
-               align-items:center; gap:6px; padding:6px 10px; border:none; cursor:pointer;
-               border-radius:8px; font-size:11px; font-weight:600; color:var(--text-primary);
-               background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
-               box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
-        <span style="display:inline-block; width:18px; height:0; border-top:2px solid currentColor; position:relative;">
-            <span style="position:absolute; right:-1px; top:-4px; width:0; height:0;
-                   border-left:6px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent;"></span>
-        </span>
-        Currents
-    </button>
+    <!-- Overlay toggles, stacked bottom-right: CHL-a sits above Currents. -->
+    <div id="map-toggles"
+        style="position:absolute; bottom:10px; right:10px; z-index:60;
+               display:flex; flex-direction:column; align-items:stretch; gap:6px;">
+
+        <!-- Chlorophyll-a satellite overlay (Copernicus Marine). Hidden until map loads. -->
+        <button id="chlaToggle" class="off" title="Toggle chlorophyll-a satellite overlay"
+            style="display:none; align-items:center; justify-content:center; gap:6px;
+                   padding:6px 10px; border:none; cursor:pointer; border-radius:8px;
+                   font-size:11px; font-weight:600; color:var(--text-primary);
+                   background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
+                   box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
+            <span id="chlaIcon" style="display:inline-block; width:11px; height:11px; border-radius:2px;
+                   background:linear-gradient(135deg,#8ae08a,#004d00);"></span>
+            <span id="chlaLabel">Chl-a</span>
+        </button>
+
+        <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
+        <button id="dacToggle" title="Toggle depth-averaged currents"
+            style="display:none; align-items:center; justify-content:center; gap:6px;
+                   padding:6px 10px; border:none; cursor:pointer; border-radius:8px;
+                   font-size:11px; font-weight:600; color:var(--text-primary);
+                   background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
+                   box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
+            <span style="display:inline-block; width:18px; height:0; border-top:2px solid currentColor; position:relative;">
+                <span style="position:absolute; right:-1px; top:-4px; width:0; height:0;
+                       border-left:6px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent;"></span>
+            </span>
+            Currents
+        </button>
+    </div>
+
+    <!-- CHL-a colourbar legend (shown only while the layer is on). -->
+    <div id="chla-bar">
+        <span id="chla-bar-title">Chl-a</span>
+        <span id="chla-bar-lo">–</span>
+        <div id="chla-bar-grad"></div>
+        <span id="chla-bar-hi">–</span>
+        <span id="chla-bar-date"></span>
+    </div>
+
+    <!-- CHL-a error toast -->
+    <div id="chla-err"><div id="chla-err-msg"></div><div class="hint" id="chla-err-hint"></div></div>
 
     <script>
         // Tell the dashboard parent to activate this panel on interaction.
@@ -223,6 +294,57 @@
         let dacArrows = [];
         let showDac = true;
 
+        // ── CHL-a satellite overlay state ──────────────────────────────
+        let chlaData = null;     // {points, p10, p90, date, half_deg} once fetched
+        let chlaMesh = null;     // single merged THREE mesh of all cells
+        let showChla = false;
+        let chlaLoading = false;
+        const CHLA_HALF_DEG_DEFAULT = 0.054; // ~12 km cell fallback if server omits it
+
+        // Green ocean-colour ramp: pale → deep green, low → high chlorophyll.
+        const CHLA_STOPS = [
+            [0.00, [237, 254, 237]],
+            [0.20, [178, 228, 158]],
+            [0.45, [ 78, 178,  68]],
+            [0.70, [ 18,  98,  18]],
+            [0.90, [  4,  48,   8]],
+            [1.00, [  0,  13,   0]],
+        ];
+
+        // Map a CHL value (mg/m³) to an rgba string, log-scaled between p10/p90
+        // so the dynamic range of ocean colour reads well at a glance.
+        function chlaColor(val, p10, p90, alpha) {
+            const lo = Math.log10(Math.max(p10, 0.001));
+            const hi = Math.log10(Math.max(p90, 0.002));
+            const t = Math.max(0, Math.min(1, (Math.log10(Math.max(val, 0.001)) - lo) / (hi - lo)));
+            let S0 = CHLA_STOPS[0], S1 = CHLA_STOPS[CHLA_STOPS.length - 1];
+            for (let i = 0; i < CHLA_STOPS.length - 1; i++) {
+                if (t >= CHLA_STOPS[i][0] && t <= CHLA_STOPS[i + 1][0]) { S0 = CHLA_STOPS[i]; S1 = CHLA_STOPS[i + 1]; break; }
+            }
+            const f = S0[0] === S1[0] ? 0 : (t - S0[0]) / (S1[0] - S0[0]);
+            const r = Math.round(S0[1][0] + f * (S1[1][0] - S0[1][0]));
+            const g = Math.round(S0[1][1] + f * (S1[1][1] - S0[1][1]));
+            const b = Math.round(S0[1][2] + f * (S1[1][2] - S0[1][2]));
+            return `rgba(${r},${g},${b},${alpha == null ? 1 : alpha})`;
+        }
+
+        // Same ramp as chlaColor() but returns [r,g,b] in 0–1 for THREE vertex colours.
+        function chlaColor01(val, p10, p90) {
+            const lo = Math.log10(Math.max(p10, 0.001));
+            const hi = Math.log10(Math.max(p90, 0.002));
+            const t = Math.max(0, Math.min(1, (Math.log10(Math.max(val, 0.001)) - lo) / (hi - lo)));
+            let S0 = CHLA_STOPS[0], S1 = CHLA_STOPS[CHLA_STOPS.length - 1];
+            for (let i = 0; i < CHLA_STOPS.length - 1; i++) {
+                if (t >= CHLA_STOPS[i][0] && t <= CHLA_STOPS[i + 1][0]) { S0 = CHLA_STOPS[i]; S1 = CHLA_STOPS[i + 1]; break; }
+            }
+            const f = S0[0] === S1[0] ? 0 : (t - S0[0]) / (S1[0] - S0[0]);
+            return [
+                (S0[1][0] + f * (S1[1][0] - S0[1][0])) / 255,
+                (S0[1][1] + f * (S1[1][1] - S0[1][1])) / 255,
+                (S0[1][2] + f * (S1[1][2] - S0[1][2])) / 255,
+            ];
+        }
+
         // What goes into pathsData: always the track, plus DAC arrows when shown.
         function visiblePaths() {
             return showDac ? trackSegments.concat(dacArrows) : trackSegments;
@@ -301,6 +423,9 @@
                 }
                 dacArrows = buildDacArrows(data.dac, trackSpanKm);
                 updateDacToggle();
+
+                // The satellite overlay is available for any mappable file.
+                document.getElementById('chlaToggle').style.display = 'flex';
 
                 // Live-position blob for NRT (Near Real-Time) deployments —
                 // the glider is presumed still in the water at this last fix.
@@ -415,6 +540,170 @@
             showDac = !showDac;
             updateDacToggle();
             if (myGlobe) myGlobe.pathsData(visiblePaths());
+        });
+
+        // ── CHL-a overlay: toggle, fetch, render ───────────────────────
+
+        // Build ONE mesh holding every cell as a coloured quad. A single
+        // geometry (a few thousand triangles) is what keeps this fast — the
+        // earlier per-cell globe.gl polygon layer froze the tab at ~2500 cells.
+        const CHLA_ALT = 0.00005;  // just above surface, below track (0.00015) and arrows (0.0004)
+        const CHLA_OPACITY = 0.72;
+
+        function buildChlaMesh(data) {
+            const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
+                ? data.half_deg : CHLA_HALF_DEG_DEFAULT;
+            const pts = data.points;
+            const positions = new Float32Array(pts.length * 4 * 3);
+            const colors = new Float32Array(pts.length * 4 * 3);
+            const index = new Uint32Array(pts.length * 6);
+            let vi = 0, ci = 0, ii = 0, base = 0;
+
+            for (const [lat, lng, chl] of pts) {
+                const c = chlaColor01(chl, data.p10, data.p90);
+                // 4 corners, placed on the globe via getCoords so the patch
+                // follows the curvature exactly.
+                const corners = [
+                    [lat - H, lng - H], [lat - H, lng + H],
+                    [lat + H, lng + H], [lat + H, lng - H],
+                ];
+                for (const [la, lo] of corners) {
+                    const p = myGlobe.getCoords(la, lo, CHLA_ALT);
+                    positions[vi++] = p.x; positions[vi++] = p.y; positions[vi++] = p.z;
+                    colors[ci++] = c[0]; colors[ci++] = c[1]; colors[ci++] = c[2];
+                }
+                index[ii++] = base; index[ii++] = base + 1; index[ii++] = base + 2;
+                index[ii++] = base; index[ii++] = base + 2; index[ii++] = base + 3;
+                base += 4;
+            }
+
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geom.setIndex(new THREE.BufferAttribute(index, 1));
+            const mat = new THREE.MeshBasicMaterial({
+                vertexColors: true, transparent: true, opacity: CHLA_OPACITY,
+                side: THREE.DoubleSide, depthWrite: false,
+            });
+            return new THREE.Mesh(geom, mat);
+        }
+
+        function disposeChlaMesh() {
+            if (!chlaMesh) return;
+            if (myGlobe) myGlobe.scene().remove(chlaMesh);
+            chlaMesh.geometry.dispose();
+            chlaMesh.material.dispose();
+            chlaMesh = null;
+        }
+
+        function showChlaBar(p10, p90, date) {
+            const fmt = v => v < 1 ? v.toFixed(2) : v.toFixed(1);
+            document.getElementById('chla-bar-lo').textContent = fmt(p10) + ' mg/m³';
+            document.getElementById('chla-bar-hi').textContent = fmt(p90) + ' mg/m³';
+            document.getElementById('chla-bar-date').textContent = date || '';
+            document.getElementById('chla-bar').classList.add('visible');
+        }
+
+        function showChlaError(msg, hint) {
+            const box = document.getElementById('chla-err');
+            document.getElementById('chla-err-msg').textContent = msg || 'Could not load chlorophyll data';
+            document.getElementById('chla-err-hint').textContent = hint || '';
+            box.classList.add('visible');
+            clearTimeout(showChlaError._t);
+            showChlaError._t = setTimeout(() => box.classList.remove('visible'), 7000);
+        }
+
+        function setChlaButton() {
+            const btn = document.getElementById('chlaToggle');
+            const icon = document.getElementById('chlaIcon');
+            const label = document.getElementById('chlaLabel');
+            btn.classList.toggle('off', !showChla && !chlaLoading);
+            btn.classList.toggle('loading', chlaLoading);
+            if (chlaLoading) {
+                icon.style.cssText = 'display:inline-block;width:11px;height:11px;';
+                icon.innerHTML = '<span class="material-symbols-outlined spin" style="font-size:13px;line-height:11px;">progress_activity</span>';
+                label.textContent = 'Fetching…';
+                btn.title = 'Fetching chlorophyll-a satellite data…';
+            } else {
+                icon.innerHTML = '';
+                icon.style.cssText = 'display:inline-block;width:11px;height:11px;border-radius:2px;background:linear-gradient(135deg,#8ae08a,#004d00);';
+                label.textContent = 'Chl-a';
+                btn.title = (showChla ? 'Hide' : 'Show') + ' chlorophyll-a satellite overlay';
+            }
+        }
+
+        function applyChla() {
+            if (myGlobe && showChla && chlaData) {
+                try {
+                    if (typeof THREE === 'undefined') throw new Error('3D library (THREE) failed to load');
+                    if (!chlaMesh) chlaMesh = buildChlaMesh(chlaData);
+                    if (!chlaMesh.parent) myGlobe.scene().add(chlaMesh);
+                } catch (err) {
+                    console.error('[CHL-a] render failed:', err);
+                    showChla = false;
+                    disposeChlaMesh();
+                    showChlaError('Could not draw the chlorophyll layer', err.message);
+                }
+            } else if (myGlobe) {
+                disposeChlaMesh();
+            }
+            document.getElementById('chla-bar').classList.toggle('visible', showChla && !!chlaData);
+            setChlaButton();
+        }
+
+        async function loadChla() {
+            const params = new URLSearchParams(window.location.search);
+            const fileId = params.get('id') || params.get('filename');
+            if (!fileId) return;
+
+            chlaLoading = true;
+            setChlaButton();
+            try {
+                console.log('[CHL-a] Fetching /api/chla …');
+                const t0 = performance.now();
+                const res = await fetch(`/api/chla?id=${encodeURIComponent(fileId)}`);
+                const data = await res.json();
+
+                if (!res.ok || data.error) {
+                    showChla = false;
+                    showChlaError(data.error || `Request failed (${res.status})`, data.hint);
+                    return;
+                }
+                if (!Array.isArray(data.points) || data.points.length === 0) {
+                    showChla = false;
+                    showChlaError('No chlorophyll data for this region/date');
+                    return;
+                }
+
+                chlaData = data;
+                disposeChlaMesh();   // drop any stale mesh so it rebuilds from new data
+                showChla = true;
+                showChlaBar(data.p10, data.p90, data.date);
+                console.log(`[CHL-a] ${data.points.length} cells in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
+            } catch (err) {
+                showChla = false;
+                showChlaError(err.message || 'Failed to load chlorophyll data');
+            } finally {
+                chlaLoading = false;
+                applyChla();
+            }
+        }
+
+        document.getElementById('chlaToggle').addEventListener('click', async () => {
+            if (chlaLoading) return;
+            if (showChla) {
+                showChla = false;
+                applyChla();
+                return;
+            }
+            // Turning on: reuse already-fetched cells if we have them.
+            if (chlaData) {
+                showChla = true;
+                showChlaBar(chlaData.p10, chlaData.p90, chlaData.date);
+                applyChla();
+            } else {
+                await loadChla();
+            }
         });
 
         initMap();
