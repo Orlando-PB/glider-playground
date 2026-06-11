@@ -381,6 +381,31 @@ def api_overlay(id: str, var: str):
     )
 
 
+@app.get("/api/currents")
+def api_currents(id: str):
+    """Surface current (uo/vo) grid for a file's bbox, for the animated flow layer.
+
+    Like /api/overlay, the date is tied to the glider's last fix and capped to the
+    product's latest available day when the deployment is more recent.
+    """
+    loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
+    if not loc or "error" in loc:
+        raise HTTPException(status_code=404, detail="No spatial data for this file")
+
+    rec = cache_logic.get_record(id)
+    target_date = None
+    if rec and rec.get("last_time"):
+        target_date = str(rec["last_time"])[:10]
+
+    return overlay_logic.fetch_currents(
+        lat_min=loc["lat_min"],
+        lat_max=loc["lat_max"],
+        lon_min=loc["lon_min"],
+        lon_max=loc["lon_max"],
+        target_date=target_date,
+    )
+
+
 # ---------- jelly ----------
 
 @app.get("/api/jelly/key_status")

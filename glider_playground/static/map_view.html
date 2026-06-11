@@ -139,7 +139,7 @@
             <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
             <button id="dacToggle" title="Toggle depth-averaged currents">
                 <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">near_me</span>
-                Currents
+                Glider DAC
             </button>
         </div>
     </div>
@@ -581,7 +581,7 @@
         const OVERLAY_ALT = 0.00005;  // just above surface, below track (0.00015) and arrows (0.0004)
         const OVERLAY_OPACITY = 0.72;
 
-        function buildOverlayMesh(data, ov) {
+        function buildOverlayMesh(data, ov, opacity = OVERLAY_OPACITY) {
             const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
                 ? data.half_deg : OVERLAY_HALF_DEG_DEFAULT;
             const pts = data.points;
@@ -613,7 +613,7 @@
             geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             geom.setIndex(new THREE.BufferAttribute(index, 1));
             const mat = new THREE.MeshBasicMaterial({
-                vertexColors: true, transparent: true, opacity: OVERLAY_OPACITY,
+                vertexColors: true, transparent: true, opacity,
                 side: THREE.DoubleSide, depthWrite: false,
             });
             return new THREE.Mesh(geom, mat);
@@ -757,9 +757,11 @@
                 activeOverlay = null;
                 applyOverlay();
             } else if (overlayCache[key]) {
+                deactivateCurrents();          // scalar + currents share the legend
                 activeOverlay = key;           // already fetched — switch instantly
                 applyOverlay();
             } else {
+                deactivateCurrents();
                 loadOverlay(key);
             }
         }
@@ -774,9 +776,366 @@
                 return;
             }
             if (activeOverlay === key) return;
+            deactivateCurrents();
             if (overlayCache[key]) { activeOverlay = key; applyOverlay(); }
             else loadOverlay(key);
         }
+
+        // ── Copernicus surface currents: speed mesh + animated particle flow ──
+        // The flow field (uo, vo grid) is interpolated bilinearly; thousands of
+        // short line "streaklets" are advected through it each frame and fade in
+        // and out, giving the moving look of the My Ocean / nullschool viewers.
+        // Speed ramp: cream (slow) → olive → deep green (fast), matching the
+        // My Ocean "speed" colormap the user supplied.
+        const CURRENTS_DEF = { key: 'currents', label: 'Currents', units: 'm/s', log: false, stops: [
+            [0,[255,253,205]],[0.12,[235,219,143]],[0.25,[214,195,91]],[0.38,[187,179,50]],
+            [0.50,[150,165,16]],[0.62,[104,149,9]],[0.74,[57,131,28]],[0.85,[24,115,40]],
+            [0.93,[18,84,44]],[1,[23,35,19]] ] };
+        const CUR_MESH_OPACITY = 0.25;     // faint speed backdrop under the flow
+        const CUR_PARTICLES = 4000;        // particles advected each frame
+        const CUR_TRAIL = 16;              // points kept per particle's fading trail
+        const CUR_ALT = 0.00013;           // above the speed mesh, just below the track
+        const CUR_LIFE_MIN = 90, CUR_LIFE_MAX = 220;   // particle lifespan (frames)
+        const CUR_BASE_OPACITY = 1.0;
+        const CUR_DEG_PER_SEC = 0.32;      // arc/sec a p90-strength current sweeps
+        const CUR_ALPHA_FLOOR = 0.45;      // tail opacity floor → keeps lines bold, not wispy
+        const CUR_SPAWN_BIAS = 0.7;        // chance a new particle picks the fastest candidate
+
+        let currentsData = null;     // fetched {lat0,lon0,dlat,dlon,nlat,nlon,u,v,...}
+        let currentsActive = false;
+        let currentsLoading = false;
+        let currentsMesh = null;     // THREE mesh of the speed backdrop
+        let flowLines = null;        // THREE.LineSegments of the fading trails
+        let flowState = null;        // per-particle sim arrays
+        let flowRAF = 0, flowLastT = 0;
+
+        // Bilinear sample of the flow at (lat, lng) → [u, v] m/s, or null off-grid.
+        // Cells touching land hold null; we fill from the valid corners so flow
+        // doesn't stall against coastlines, and bail only when all four are land.
+        function sampleFlow(d, lat, lng) {
+            const fx = (lng - d.lon0) / d.dlon;
+            const fy = (lat - d.lat0) / d.dlat;
+            if (fx < 0 || fy < 0 || fx > d.nlon - 1 || fy > d.nlat - 1) return null;
+            const x0 = Math.floor(fx), y0 = Math.floor(fy);
+            const x1 = Math.min(x0 + 1, d.nlon - 1), y1 = Math.min(y0 + 1, d.nlat - 1);
+            const tx = fx - x0, ty = fy - y0;
+            let u00 = d.u[y0][x0], u10 = d.u[y0][x1], u01 = d.u[y1][x0], u11 = d.u[y1][x1];
+            let v00 = d.v[y0][x0], v10 = d.v[y0][x1], v01 = d.v[y1][x0], v11 = d.v[y1][x1];
+            if (u00 == null || u10 == null || u01 == null || u11 == null) {
+                let su = 0, sv = 0, n = 0;
+                if (u00 != null) { su += u00; sv += v00; n++; }
+                if (u10 != null) { su += u10; sv += v10; n++; }
+                if (u01 != null) { su += u01; sv += v01; n++; }
+                if (u11 != null) { su += u11; sv += v11; n++; }
+                if (n === 0) return null;
+                const au = su / n, av = sv / n;
+                if (u00 == null) { u00 = au; v00 = av; }
+                if (u10 == null) { u10 = au; v10 = av; }
+                if (u01 == null) { u01 = au; v01 = av; }
+                if (u11 == null) { u11 = au; v11 = av; }
+            }
+            const u = (u00 * (1 - tx) + u10 * tx) * (1 - ty) + (u01 * (1 - tx) + u11 * tx) * ty;
+            const v = (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+            return [u, v];
+        }
+
+        // Build the [lat, lng, speed] point grid the speed mesh is drawn from.
+        function currentsSpeedData(d) {
+            const points = [];
+            for (let y = 0; y < d.nlat; y++) {
+                for (let x = 0; x < d.nlon; x++) {
+                    const u = d.u[y][x], v = d.v[y][x];
+                    if (u == null || v == null) continue;
+                    points.push([d.lat0 + y * d.dlat, d.lon0 + x * d.dlon, Math.hypot(u, v)]);
+                }
+            }
+            return { points, half_deg: d.half_deg, p10: 0,
+                     p90: Math.max(d.speed_p90, 0.05), date: d.date, units: d.units };
+        }
+
+        // Random position on flowing water, biased toward faster currents so the
+        // strong areas stay denser — but slower areas still get seeded.
+        function spawnFlow(d) {
+            let best = null, bestSpeed = -1, anyValid = null;
+            for (let i = 0; i < 6; i++) {
+                const lat = d.lat0 + Math.random() * (d.nlat - 1) * d.dlat;
+                const lng = d.lon0 + Math.random() * (d.nlon - 1) * d.dlon;
+                const f = sampleFlow(d, lat, lng);
+                if (!f) continue;
+                anyValid = [lat, lng];
+                const sp = Math.hypot(f[0], f[1]);
+                if (sp > bestSpeed) { bestSpeed = sp; best = [lat, lng]; }
+            }
+            if (best && Math.random() < CUR_SPAWN_BIAS) return best;   // usually the fastest pick
+            if (anyValid) return anyValid;                            // else seed slower water
+            return [d.lat0 + Math.random() * (d.nlat - 1) * d.dlat,
+                    d.lon0 + Math.random() * (d.nlon - 1) * d.dlon];
+        }
+
+        // Minimal shader so each streaklet vertex carries its own fade alpha —
+        // standard line materials only do a single global opacity.
+        function flowMaterial() {
+            return new THREE.ShaderMaterial({
+                transparent: true, depthWrite: false, side: THREE.DoubleSide,
+                uniforms: { uOpacity: { value: CUR_BASE_OPACITY } },
+                vertexShader: `
+                    attribute float alpha; attribute vec3 vcolor;
+                    varying float vAlpha; varying vec3 vCol;
+                    void main() {
+                        vAlpha = alpha; vCol = vcolor;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }`,
+                fragmentShader: `
+                    uniform float uOpacity; varying float vAlpha; varying vec3 vCol;
+                    void main() { gl_FragColor = vec4(vCol, vAlpha * uOpacity); }`,
+            });
+        }
+
+        // Set every point of particle i's trail to one cartesian spot (used on
+        // spawn so a fresh particle is a dot, not a line streaking from nowhere).
+        function fillTrail(s, i, x, y, z) {
+            const base = i * CUR_TRAIL * 3;
+            for (let k = 0; k < CUR_TRAIL; k++) {
+                s.trail[base + k * 3] = x;
+                s.trail[base + k * 3 + 1] = y;
+                s.trail[base + k * 3 + 2] = z;
+            }
+        }
+
+        function initFlowParticles(d) {
+            const n = CUR_PARTICLES, L = CUR_TRAIL;
+            const lat = new Float32Array(n), lng = new Float32Array(n);
+            const age = new Float32Array(n), life = new Float32Array(n);
+            const trail = new Float32Array(n * L * 3);   // cartesian history per particle
+            // Adaptive advection: scale flow so a p90-strength current sweeps about
+            // CUR_DEG_PER_SEC of arc each second, whatever the field's magnitude.
+            // dtFrames is in ~60fps frame units, so divide the per-second target by 60.
+            const degPerStep = (CUR_DEG_PER_SEC / Math.max(d.speed_p90, 0.05)) / 60;
+            flowState = { d, n, L, lat, lng, age, life, degPerStep, trail };
+
+            for (let i = 0; i < n; i++) {
+                const [la, lo] = spawnFlow(d);
+                lat[i] = la; lng[i] = lo;
+                life[i] = CUR_LIFE_MIN + Math.random() * (CUR_LIFE_MAX - CUR_LIFE_MIN);
+                age[i] = Math.random() * life[i];   // stagger so respawns are spread
+                const p = myGlobe.getCoords(la, lo, CUR_ALT);
+                fillTrail(flowState, i, p.x, p.y, p.z);
+            }
+
+            // (L-1) line segments per particle → 2 vertices each.
+            const segVerts = n * (L - 1) * 2;
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segVerts * 3), 3));
+            geom.setAttribute('vcolor', new THREE.BufferAttribute(new Float32Array(segVerts * 3), 3));
+            geom.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segVerts), 1));
+            flowLines = new THREE.LineSegments(geom, flowMaterial());
+            flowLines.frustumCulled = false;
+            myGlobe.scene().add(flowLines);
+        }
+
+        function stepFlow(dtFrames) {
+            const s = flowState;
+            if (!s || !flowLines) return;
+            const d = s.d, L = s.L;
+            const pos = flowLines.geometry.attributes.position.array;
+            const col = flowLines.geometry.attributes.vcolor.array;
+            const alp = flowLines.geometry.attributes.alpha.array;
+            const hi = Math.max(d.speed_p90, 0.05);
+
+            for (let i = 0; i < s.n; i++) {
+                s.age[i] += dtFrames;
+                let flow = sampleFlow(d, s.lat[i], s.lng[i]);
+                let respawned = false;
+                if (!flow || s.age[i] >= s.life[i]) {
+                    const [la, lo] = spawnFlow(d);
+                    s.lat[i] = la; s.lng[i] = lo; s.age[i] = 0;
+                    s.life[i] = CUR_LIFE_MIN + Math.random() * (CUR_LIFE_MAX - CUR_LIFE_MIN);
+                    flow = sampleFlow(d, la, lo) || [0, 0];
+                    respawned = true;
+                }
+                const u = flow[0], v = flow[1];
+                const speed = Math.hypot(u, v);
+                const cosLat = Math.cos(s.lat[i] * Math.PI / 180) || 1e-6;
+                // Advance one step (dtFrames folds in elapsed frame time).
+                s.lng[i] += u * s.degPerStep * dtFrames / cosLat;
+                s.lat[i] += v * s.degPerStep * dtFrames;
+                const p = myGlobe.getCoords(s.lat[i], s.lng[i], CUR_ALT);
+
+                const tb = i * L * 3;
+                if (respawned) {
+                    fillTrail(s, i, p.x, p.y, p.z);
+                } else {
+                    // Shift the trail back one slot and append the new head.
+                    s.trail.copyWithin(tb, tb + 3, tb + L * 3);
+                    s.trail[tb + (L - 1) * 3] = p.x;
+                    s.trail[tb + (L - 1) * 3 + 1] = p.y;
+                    s.trail[tb + (L - 1) * 3 + 2] = p.z;
+                }
+
+                const c = overlayColor01(CURRENTS_DEF, speed, 0, hi);
+                // Whole-life fade: in over the first 12%, out over the last 30%.
+                const lt = s.age[i] / s.life[i];
+                const lifeFade = lt < 0.12 ? lt / 0.12 : (lt > 0.7 ? (1 - lt) / 0.3 : 1);
+
+                // Emit (L-1) line segments; alpha ramps tail→head, but sits on a
+                // floor so the whole streak reads bold rather than wispy.
+                const segs = L - 1;
+                const sb = i * segs * 2;
+                for (let j = 0; j < segs; j++) {
+                    const vb = (sb + j * 2) * 3, ab = sb + j * 2;
+                    const t0 = tb + j * 3, t1 = tb + (j + 1) * 3;
+                    pos[vb] = s.trail[t0]; pos[vb + 1] = s.trail[t0 + 1]; pos[vb + 2] = s.trail[t0 + 2];
+                    pos[vb + 3] = s.trail[t1]; pos[vb + 4] = s.trail[t1 + 1]; pos[vb + 5] = s.trail[t1 + 2];
+                    col[vb] = c[0]; col[vb + 1] = c[1]; col[vb + 2] = c[2];
+                    col[vb + 3] = c[0]; col[vb + 4] = c[1]; col[vb + 5] = c[2];
+                    const fA = CUR_ALPHA_FLOOR + (1 - CUR_ALPHA_FLOOR) * (j / segs);
+                    const fB = CUR_ALPHA_FLOOR + (1 - CUR_ALPHA_FLOOR) * ((j + 1) / segs);
+                    alp[ab] = fA * lifeFade;
+                    alp[ab + 1] = fB * lifeFade;
+                }
+            }
+            flowLines.geometry.attributes.position.needsUpdate = true;
+            flowLines.geometry.attributes.vcolor.needsUpdate = true;
+            flowLines.geometry.attributes.alpha.needsUpdate = true;
+        }
+
+        function flowTick(now) {
+            if (!currentsActive || !flowState) { flowRAF = 0; return; }
+            const dtMs = flowLastT ? Math.min(now - flowLastT, 60) : 16.7;
+            flowLastT = now;
+            stepFlow(dtMs / 16.7);   // normalise to ~60fps frames
+            flowRAF = requestAnimationFrame(flowTick);
+        }
+
+        function startFlow() {
+            if (flowRAF) return;
+            flowLastT = 0;
+            flowRAF = requestAnimationFrame(flowTick);
+        }
+
+        function disposeCurrents() {
+            if (flowRAF) { cancelAnimationFrame(flowRAF); flowRAF = 0; }
+            if (flowLines && myGlobe) myGlobe.scene().remove(flowLines);
+            if (flowLines) { flowLines.geometry.dispose(); flowLines.material.dispose(); }
+            flowLines = null; flowState = null;
+            if (currentsMesh && myGlobe) myGlobe.scene().remove(currentsMesh);
+            if (currentsMesh) { currentsMesh.geometry.dispose(); currentsMesh.material.dispose(); }
+            currentsMesh = null;
+        }
+
+        function applyCurrents() {
+            disposeCurrents();
+            if (!(currentsActive && currentsData && myGlobe)) {
+                if (!activeOverlay) document.getElementById('chla-bar').classList.remove('visible');
+                updateCurrentsButton();
+                return;
+            }
+            try {
+                const speedData = currentsSpeedData(currentsData);
+                currentsMesh = buildOverlayMesh(speedData, CURRENTS_DEF, CUR_MESH_OPACITY);
+                myGlobe.scene().add(currentsMesh);
+                initFlowParticles(currentsData);
+                startFlow();
+                setOverlayBar(CURRENTS_DEF, 0, Math.max(currentsData.speed_p90, 0.05), currentsData.date);
+                document.getElementById('chla-bar').classList.add('visible');
+            } catch (err) {
+                console.error('[currents] render failed:', err);
+                currentsActive = false;
+                disposeCurrents();
+                showOverlayError('Could not draw currents', err.message);
+            }
+            updateCurrentsButton();
+        }
+
+        function deactivateCurrents() {
+            if (!currentsActive) return;
+            currentsActive = false;
+            applyCurrents();
+        }
+
+        async function loadCurrents() {
+            const params = new URLSearchParams(window.location.search);
+            const fileId = params.get('id') || params.get('filename');
+            if (!fileId) return;
+            currentsLoading = true;
+            updateCurrentsButton();
+            try {
+                const t0 = performance.now();
+                const res = await fetch(`/api/currents?id=${encodeURIComponent(fileId)}`);
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
+                    return;
+                }
+                if (!data.u || !data.nlat) {
+                    showOverlayError('No current data for this region/date');
+                    return;
+                }
+                currentsData = data;
+                currentsActive = true;
+                console.log(`[currents] ${data.nlat}x${data.nlon} grid in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
+            } catch (err) {
+                showOverlayError(err.message || 'Failed to load currents');
+            } finally {
+                currentsLoading = false;
+                applyCurrents();
+            }
+        }
+
+        // Toggle the currents layer; mutually exclusive with scalar overlays.
+        function selectCurrents() {
+            if (currentsLoading) return;
+            if (currentsActive) { deactivateCurrents(); return; }
+            if (activeOverlay) { activeOverlay = null; applyOverlay(); }  // free the legend
+            if (currentsData) { currentsActive = true; applyCurrents(); }
+            else loadCurrents();
+        }
+
+        function updateCurrentsButton() {
+            const btn = document.getElementById('curBtn');
+            if (!btn) return;
+            const sw = btn.querySelector('.ovSwatch');
+            const lbl = btn.querySelector('.ovLabel');
+            btn.classList.toggle('on', currentsActive && !currentsLoading);
+            btn.classList.toggle('loading', currentsLoading);
+            if (currentsLoading) {
+                sw.innerHTML = '<span class="material-symbols-outlined spin" style="font-size:13px;line-height:13px;">progress_activity</span>';
+                sw.style.background = 'transparent';
+                lbl.textContent = 'Fetching…';
+                btn.title = 'Fetching ocean currents …';
+            } else {
+                sw.innerHTML = '';
+                sw.style.background = rampGradient(CURRENTS_DEF);
+                lbl.textContent = CURRENTS_DEF.label;
+                btn.title = (currentsActive ? 'Hide ' : 'Show ') + 'Copernicus surface currents';
+            }
+        }
+
+        // Build the Currents row (above the Glider DAC toggle).
+        function buildCurrentsButton() {
+            const dac = document.getElementById('dacToggle');
+            const btn = document.createElement('button');
+            btn.id = 'curBtn';
+            btn.className = 'ovBtn';
+            const sw = document.createElement('span');
+            sw.className = 'ovSwatch';
+            sw.style.cssText = 'display:inline-block; width:13px; height:13px; border-radius:3px; background:' + rampGradient(CURRENTS_DEF) + ';';
+            const lbl = document.createElement('span');
+            lbl.className = 'ovLabel';
+            lbl.textContent = CURRENTS_DEF.label;
+            btn.append(sw, lbl);
+            btn.addEventListener('click', selectCurrents);
+            dac.parentNode.insertBefore(btn, dac);   // sits just above Glider DAC
+        }
+
+        // Pause the animation when the tab/panel is hidden; resume on return.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (flowRAF) { cancelAnimationFrame(flowRAF); flowRAF = 0; }
+            } else if (currentsActive && flowState) {
+                startFlow();
+            }
+        });
 
         // Collapse / expand the Layers sidebar (default open).
         document.getElementById('layer-header').addEventListener('click', () => {
@@ -786,6 +1145,7 @@
         });
 
         buildOverlayButtons();
+        buildCurrentsButton();
         initMap();
 
         window.addEventListener('resize', () => {
@@ -815,7 +1175,13 @@
                 reportDacStatus();
             } else if (event.data.type === 'setOverlay') {
                 // Parent (e.g. Jelly) choosing a surface overlay, or 'none' to hide.
-                setOverlayByKey(event.data.overlay);
+                const key = event.data.overlay;
+                if (key === 'currents') {
+                    if (!currentsActive) selectCurrents();
+                } else {
+                    if (currentsActive) deactivateCurrents();
+                    setOverlayByKey(key);
+                }
             }
         });
     </script>

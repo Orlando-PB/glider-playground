@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 _DS_CHL_NRT = "cmems_obs-oc_glo_bgc-plankton_nrt_l4-gapfree-multi-4km_P1D"
 _DS_CHL_MY = "cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D"
 
+# Surface currents: eastward (uo) + northward (vo) velocity, analysis/forecast.
+_DS_CUR = "cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m"
+
 # Registry of available overlays. `surface` marks the 3D model products whose
 # top depth level we extract. Order here is the order shown in the map legend.
 OVERLAYS: dict[str, dict] = {
@@ -32,6 +35,11 @@ OVERLAYS: dict[str, dict] = {
     "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"],     "variable": "phyc",   "surface": True},
 }
 
+# Currents is a vector field (uo, vo) rather than a single scalar, so it gets its
+# own spec and fetch path. The frontend draws a speed colour mesh plus an animated
+# particle flow advected through the u/v grid.
+CURRENTS: dict = {"dataset": _DS_CUR, "variables": ["uo", "vo"]}
+
 # Session-level LRU dict: key → result; avoids re-fetching on repeat toggle.
 _CACHE: dict = {}
 _MAX_CACHE = 24
@@ -40,6 +48,11 @@ _MAX_CACHE = 24
 # enough that the model products (≤0.25°) and most of the satellite grid render
 # at their native resolution; the merged-mesh overlay handles this easily.
 _MAX_CELLS_PER_SIDE = 400
+
+# Currents are subsampled harder: the field is smooth, the payload carries two
+# components per cell, and the frontend interpolates a continuous flow from it —
+# so a coarser grid is plenty and keeps the particle advection cheap.
+_MAX_CURRENT_CELLS_PER_SIDE = 160
 
 
 def _cache_key(var, lat_min, lat_max, lon_min, lon_max, date_str):
@@ -67,6 +80,42 @@ def fetch_overlay(
     if spec is None:
         return {"error": f"Unknown overlay '{var}'", "hint": ""}
 
+    return _fetch_cached(
+        var, lat_min, lat_max, lon_min, lon_max, target_date,
+        lambda cm, lo, la, lo2, la2, d: _fetch(cm, spec, lo, la, lo2, la2, d),
+        size_of=lambda r: f"{len(r['points'])} points",
+    )
+
+
+def fetch_currents(
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+    target_date: str | None = None,
+) -> dict:
+    """
+    Return the surface current (uo, vo) field over the bounding box as a regular
+    lat/lon grid the frontend can interpolate for particle advection.
+
+    On success: {"lat0", "lon0", "dlat", "dlon", "nlat", "nlon",
+                 "u": [[..]], "v": [[..]],  # nlat x nlon, null where masked
+                 "date", "speed_p90", "speed_max", "half_deg", "units"}
+    On failure: {"error": str, "hint": str}
+    """
+    return _fetch_cached(
+        "currents", lat_min, lat_max, lon_min, lon_max, target_date,
+        _fetch_currents,
+        size_of=lambda r: f"{r['nlat']}x{r['nlon']} grid",
+    )
+
+
+def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, size_of):
+    """Shared bbox-pad + date-default + session-cache wrapper around a fetch run.
+
+    `runner(cm, min_lat, max_lat, min_lon, max_lon, date_str)` does the actual
+    Copernicus call and returns a result dict (or {"error": ...}).
+    """
     try:
         import copernicusmarine
     except ImportError:
@@ -94,12 +143,12 @@ def fetch_overlay(
 
     print(f"[{var}] Fetching for date={date_str} bbox=({min_lat:.1f},{min_lon:.1f})-({max_lat:.1f},{max_lon:.1f})", flush=True)
     t0 = time.time()
-    result = _fetch(copernicusmarine, spec, min_lat, max_lat, min_lon, max_lon, date_str)
+    result = runner(copernicusmarine, min_lat, max_lat, min_lon, max_lon, date_str)
     elapsed = time.time() - t0
     if "error" in result:
         print(f"[{var}] Fetch failed in {elapsed:.1f}s: {result['error']}", flush=True)
     else:
-        print(f"[{var}] Fetch OK in {elapsed:.1f}s — {len(result['points'])} points, date={result['date']}", flush=True)
+        print(f"[{var}] Fetch OK in {elapsed:.1f}s — {size_of(result)}, date={result['date']}", flush=True)
         if len(_CACHE) >= _MAX_CACHE:
             _CACHE.pop(next(iter(_CACHE)))
         _CACHE[key] = result
@@ -110,11 +159,32 @@ def fetch_overlay(
 # ---------- internals ----------
 
 def _fetch(cm, spec, min_lat, max_lat, min_lon, max_lon, date_str):
-    """Try each candidate dataset; cap the date to the dataset's max on overrun."""
+    """Try each candidate scalar dataset; cap the date to its max on overrun."""
+    return _try_datasets(
+        spec["datasets"],
+        lambda dataset_id, d: _open_and_extract(
+            cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, d),
+        date_str,
+    )
+
+
+def _fetch_currents(cm, min_lat, max_lat, min_lon, max_lon, date_str):
+    """Fetch the uo/vo current grid, with the same auth/bounds handling."""
+    return _try_datasets(
+        [CURRENTS["dataset"]],
+        lambda dataset_id, d: _open_and_extract_vec(
+            cm, dataset_id, min_lat, max_lat, min_lon, max_lon, d),
+        date_str,
+    )
+
+
+def _try_datasets(dataset_ids, open_fn, date_str):
+    """Run `open_fn(dataset_id, date)` over candidates, translating Copernicus
+    auth failures and date-out-of-range errors (retrying at the capped date)."""
     last_err = None
-    for dataset_id in spec["datasets"]:
+    for dataset_id in dataset_ids:
         try:
-            return _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str)
+            return open_fn(dataset_id, date_str)
         except Exception as exc:
             msg = str(exc)
             logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
@@ -131,8 +201,7 @@ def _fetch(cm, spec, min_lat, max_lat, min_lon, max_lon, date_str):
                 if capped and capped != date_str:
                     logger.info("Date %s exceeds range — retrying with %s", date_str, capped)
                     try:
-                        return _open_and_extract(cm, dataset_id, spec, min_lat, max_lat,
-                                                 min_lon, max_lon, capped)
+                        return open_fn(dataset_id, capped)
                     except Exception as exc2:
                         logger.warning("Overlay retry error (dataset=%s, date=%s): %s",
                                        dataset_id, capped, exc2)
@@ -168,6 +237,27 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
     ds = cm.open_dataset(**kwargs)
     print(f"[{spec['variable']}] open_dataset done in {time.time()-t0:.1f}s", flush=True)
     return _extract(ds, spec["variable"], date_str)
+
+
+def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str):
+    variables = CURRENTS["variables"]
+    logger.info("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
+    print(f"[currents] open_dataset {dataset_id} …", flush=True)
+    t0 = time.time()
+    ds = cm.open_dataset(
+        dataset_id=dataset_id,
+        variables=variables,
+        minimum_latitude=min_lat,
+        maximum_latitude=max_lat,
+        minimum_longitude=min_lon,
+        maximum_longitude=max_lon,
+        start_datetime=f"{date_str}T00:00:00",
+        end_datetime=f"{date_str}T23:59:59",
+        minimum_depth=0.0,
+        maximum_depth=1.0,
+    )
+    print(f"[currents] open_dataset done in {time.time()-t0:.1f}s", flush=True)
+    return _extract_vec(ds, variables, date_str)
 
 
 def _is_auth_error(msg: str) -> bool:
@@ -244,3 +334,89 @@ def _extract(ds, variable: str, date_str: str) -> dict:
 
     return {"points": points, "date": date_str, "p10": p10, "p90": p90,
             "half_deg": half_deg, "units": units}
+
+
+def _extract_vec(ds, variables, date_str: str) -> dict:
+    """Flatten the surface (uo, vo) field into a regular lat/lon grid.
+
+    Unlike `_extract`, currents keep their grid shape (nlat x nlon) so the
+    frontend can bilinearly interpolate the flow when advecting particles.
+    Masked cells (land / no data) become null. The grid is returned south→north
+    and west→east with positive dlat/dlon for simple index arithmetic in JS.
+    """
+    keys = []
+    for v in variables:
+        k = next((kk for kk in ds.data_vars if kk.lower() == v.lower()), None)
+        if k is None:
+            return {"error": f"Variable '{v}' not found in dataset", "hint": ""}
+        keys.append(k)
+
+    units = str(ds[keys[0]].attrs.get("units", "") or "m s-1")
+
+    arrs = []
+    for k in keys:
+        a = ds[k]
+        for dim in ("time", "depth", "elevation"):
+            if dim in a.dims:
+                a = a.isel({dim: 0})
+        arrs.append(a)
+
+    lat_key = next((k for k in ds.coords if k.lower() in ("latitude", "lat")), None)
+    lon_key = next((k for k in ds.coords if k.lower() in ("longitude", "lon")), None)
+    if lat_key is None or lon_key is None:
+        return {"error": "Could not find lat/lon coordinates in dataset", "hint": ""}
+
+    lats = ds[lat_key].values.astype(float)
+    lons = ds[lon_key].values.astype(float)
+    U = np.array(arrs[0].values, dtype=float)
+    V = np.array(arrs[1].values, dtype=float)
+
+    longest = max(len(lats), len(lons), 1)
+    stride = max(1, int(np.ceil(longest / _MAX_CURRENT_CELLS_PER_SIDE)))
+    lats = lats[::stride]
+    lons = lons[::stride]
+    U = U[::stride, ::stride]
+    V = V[::stride, ::stride]
+
+    # Normalise to ascending lat/lon so dlat/dlon are positive in the payload.
+    if len(lats) >= 2 and lats[1] < lats[0]:
+        lats = lats[::-1]
+        U = U[::-1, :]
+        V = V[::-1, :]
+    if len(lons) >= 2 and lons[1] < lons[0]:
+        lons = lons[::-1]
+        U = U[:, ::-1]
+        V = V[:, ::-1]
+
+    speed = np.hypot(U, V)
+    mask = np.isfinite(U) & np.isfinite(V)
+    if not np.any(mask):
+        return {
+            "error": "No current data for this region/date (all masked)",
+            "hint": "The model field may be off-grid here — try a different region",
+        }
+
+    sp = speed[mask]
+    speed_p90 = float(np.percentile(sp, 90))
+    speed_max = float(np.max(sp))
+
+    # nlat x nlon nested lists, null where masked (JSON has no NaN).
+    U_clean = np.where(mask, np.round(U, 4), None)
+    V_clean = np.where(mask, np.round(V, 4), None)
+    u_grid = [[None if x is None else float(x) for x in row] for row in U_clean]
+    v_grid = [[None if x is None else float(x) for x in row] for row in V_clean]
+
+    dlat = float(lats[1] - lats[0]) if len(lats) >= 2 else 0.083
+    dlon = float(lons[1] - lons[0]) if len(lons) >= 2 else 0.083
+
+    logger.info("Currents: %dx%d grid for %s (speed p90=%.3f max=%.3f, stride=%d)",
+                len(lats), len(lons), date_str, speed_p90, speed_max, stride)
+
+    return {
+        "lat0": float(lats[0]), "lon0": float(lons[0]),
+        "dlat": dlat, "dlon": dlon,
+        "nlat": len(lats), "nlon": len(lons),
+        "u": u_grid, "v": v_grid,
+        "date": date_str, "speed_p90": speed_p90, "speed_max": speed_max,
+        "half_deg": float(abs(dlat) / 2.0), "units": units,
+    }
