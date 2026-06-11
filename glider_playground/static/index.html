@@ -626,14 +626,23 @@
             box-sizing: border-box;
             overflow: visible;            /* let edge "+" buttons straddle the border */
             /* No layout border — panels sit flush so plots pack tightly. The
-               active highlight is an inset shadow (no layout impact). */
+               active highlight is the ::after ring below (no layout impact). */
             border: none;
             border-radius: 3px;
             background: var(--plot-bg);
         }
-        .gp-panel.active { box-shadow: inset 0 0 0 2px var(--accent); }
+        /* Active highlight + drag-target ring. Drawn as a pseudo-element on TOP of
+           the panel body (z 7) because an inset box-shadow on .gp-panel is painted
+           under the body/iframe, which fully covers it — so the border never showed. */
+        .gp-panel.active::after,
+        .gp-panel.gp-drag-target::after {
+            content: ''; position: absolute; inset: 0; z-index: 7;
+            border: 2px solid var(--accent); border-radius: 3px;
+            pointer-events: none; transition: opacity 0.12s;
+        }
+        .gp-panel.gp-drag-target::after { border-color: rgba(91,156,255,0.6); }
         /* Idle: active highlight + edge buttons fade out after a few seconds */
-        .gp-panel.active.idle { box-shadow: none; }
+        .gp-panel.active.idle::after { opacity: 0; }
         .gp-panel.active.idle .gp-add.show { display: none; }
         .gp-panel.active.idle .gp-panel-header { opacity: 0; }
         .gp-panel-body { position: absolute; inset: 0; overflow: hidden; border-radius: 3px; }
@@ -667,9 +676,26 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.35); white-space: nowrap;
         }
         .gp-drop-badge .material-symbols-outlined { font-size: 15px; }
-        /* The panel being dragged dims; the hovered target gets a soft ring */
+        /* The panel being dragged dims; the hovered target's ring is drawn by the
+           shared .gp-panel.gp-drag-target::after rule above. */
         .gp-panel.gp-drag-source { opacity: 0.5; }
-        .gp-panel.gp-drag-target { box-shadow: inset 0 0 0 2px rgba(91,156,255,0.5); }
+        /* Resize preview: while a divider is dragged, every panel shows a filled
+           placeholder that expands/shrinks with it (the live iframes don't reflow
+           until drop, so without this you'd just see blank letterboxed space). */
+        .gp-resize-veil {
+            position: absolute; inset: 0; z-index: 5; display: none;
+            align-items: center; justify-content: center;
+            background: var(--plot-bg); border: 1px dashed var(--accent); border-radius: 3px;
+        }
+        body.gp-resizing .gp-resize-veil { display: flex; }
+        .gp-resize-chip {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 12px; border-radius: 999px;
+            background: rgba(91,156,255,0.18); color: var(--accent);
+            font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+        .gp-resize-chip .material-symbols-outlined { font-size: 16px; }
         /* Add-panel popover menu */
         .gp-add-menu {
             position: absolute; z-index: 20; min-width: 142px;
@@ -742,6 +768,12 @@
             border-radius: var(--radius-md, 8px);
             box-shadow: 0 1px 5px rgba(0,0,0,0.15);
         }
+        /* Always reserve the rail's column (no layout shift). When there's no
+           active colour-mapped plot it stays as a dimmed, non-interactive
+           placeholder rather than collapsing away. */
+        #cTrimContainer.cTrim-inactive { opacity: 0.4; pointer-events: none; }
+        #cTrimContainer.cTrim-inactive #cTrimMaxInput,
+        #cTrimContainer.cTrim-inactive #cTrimMinInput { visibility: hidden; }
 
         /* ---------- Inspector card ---------- */
         #inspectorContainer {
@@ -1226,7 +1258,7 @@
                     </div>
                 </div>
 
-                <div id="cTrimContainer" class="hidden flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px] mt-2 mb-16 mr-2">
+                <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px] mt-2 mb-16 mr-2">
                     <span id="cTrimLabel" class="font-bold uppercase tracking-wide text-center w-full pb-1.5 whitespace-nowrap overflow-hidden" style="color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 9px;">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
@@ -1507,6 +1539,14 @@
 
         // Show the active plot's colour (Z) variable above the bar, shrinking the
         // font so even long names fit the bar's fixed width without widening it.
+        // Show/hide the colour-trim rail. The rail's column is always reserved
+        // (so the plot never shifts); `active=false` just dims it to a placeholder.
+        function setColourRail(active) {
+            cTrimContainer.classList.remove('hidden');
+            cTrimContainer.classList.add('flex');
+            cTrimContainer.classList.toggle('cTrim-inactive', !active);
+        }
+
         function setColourLabel(name) {
             if (!cTrimLabel) return;
             cTrimLabel.textContent = name || 'Colour';
@@ -1730,6 +1770,13 @@
                 body.appendChild(iframe);
             }
 
+            // Resize placeholder: covers this panel's content (which doesn't reflow
+            // until the drag ends) so divider drags show a clean expanding tile.
+            const veil = document.createElement('div');
+            veil.className = 'gp-resize-veil';
+            veil.innerHTML = `<span class="gp-resize-chip"><span class="material-symbols-outlined">${def.icon}</span>${def.label}</span>`;
+            body.appendChild(veil);
+
             // Header: drag handle + type label (left) + close (right)
             const header = document.createElement('div');
             header.className = 'gp-panel-header';
@@ -1775,12 +1822,13 @@
             if (panel.type === 'plot') {
                 activePlotPanelId = id;
                 plotIframe = panel.iframe;
+                resetColourFlow();   // don't let a stale lock block this plot's slider
                 applyToolbarState(panel.state);
                 if (baseCMin !== null && cmapInput.value !== 'discrete_09') {
-                    cTrimContainer.classList.replace('hidden', 'flex');
+                    setColourRail(true);
                     setColourLabel(cVarSelect.value);
                 } else {
-                    cTrimContainer.classList.replace('flex', 'hidden');
+                    setColourRail(false);
                 }
             }
             // Non-plot panels leave the toolbar pointed at the last active plot.
@@ -1895,6 +1943,7 @@
             div.addEventListener('mousedown', (e) => {
                 e.preventDefault(); e.stopPropagation();
                 div.classList.add('dragging');
+                document.body.classList.add('gp-resizing');   // reveal panel placeholders
                 const hostRect = panelHost.getBoundingClientRect();
                 // Prevent iframes from swallowing mousemove while dragging.
                 Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = 'none'; });
@@ -1917,6 +1966,7 @@
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
                     if (raf) cancelAnimationFrame(raf);
+                    document.body.classList.remove('gp-resizing');
                     Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = ''; });
                     document.querySelectorAll('.gp-divider.dragging').forEach(x => x.classList.remove('dragging'));
                     scheduleSaveLayout();   // persist the new split ratio
@@ -2311,7 +2361,7 @@
             const map = createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
             layoutTree = {
-                dir: 'row', ratio: 0.30,
+                dir: 'row', ratio: 0.24,
                 a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
                 b: { leaf: true, panelId: plot.id }
             };
@@ -2448,6 +2498,13 @@
             // Route plot messages to their owning panel.
             const srcPanel = panelByWindow(event.source);
 
+            // Ack that the active plot finished applying a colour-trim update —
+            // releases the flow-control lock so the next slider value can be sent.
+            if (msg.type === 'colourUpdated') {
+                if (srcPanel && srcPanel.id === activePlotPanelId) onColourAck();
+                return;
+            }
+
             // Any interaction inside a panel makes it the active panel, and
             // always refreshes the highlight idle-timer.
             if (msg.type === 'panelActivate') {
@@ -2467,6 +2524,17 @@
                         ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
                 } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
+                } else if (msg.type === 'plotLoaded') {
+                    // Capture a background plot's colour range as soon as it loads,
+                    // so its trim slider works the instant the user switches to it.
+                    // Without this, only the plot that was active at load time had a
+                    // populated cMin — the others showed greyed/empty with no numbers.
+                    const gl = msg.globalLimits;
+                    if (msg.hasC && gl && gl.cMin !== undefined && !isNaN(gl.cMin)) {
+                        srcPanel.state.cMin = gl.cMin; srcPanel.state.cMax = gl.cMax;
+                    } else {
+                        srcPanel.state.cMin = null; srcPanel.state.cMax = null;
+                    }
                 }
                 return;
             }
@@ -2487,10 +2555,10 @@
                 if (msg.hasC && cmapInput.value !== 'discrete_09') {
                     baseCMin = msg.globalLimits.cMin;
                     baseCMax = msg.globalLimits.cMax;
-                    cTrimContainer.classList.replace('hidden', 'flex');
+                    setColourRail(true);
                     setColourLabel(cVarSelect.value);
                 } else {
-                    cTrimContainer.classList.replace('flex', 'hidden');
+                    setColourRail(false);
                 }
 
                 // Persist the resolved colour range into the active panel so
@@ -2513,7 +2581,7 @@
                     <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
                 `;
                 downloadBtn.classList.add('hidden');
-                cTrimContainer.classList.replace('flex', 'hidden');
+                setColourRail(false);
                 plotStatsContainer.classList.add('hidden');
             }
             else if (msg.type === 'plotHover') {
@@ -2568,11 +2636,12 @@
         });
 
         function sendColourLimitsToIframe() {
-            if (!plotIframe || !plotIframe.contentWindow || !cVarSelect.value) return;
+            if (!plotIframe || !plotIframe.contentWindow || !cVarSelect.value) return false;
             const c1 = parseFloat(cTrimMinInput.value);
             const c2 = parseFloat(cTrimMaxInput.value);
-            if(isNaN(c1) || isNaN(c2)) return;
+            if(isNaN(c1) || isNaN(c2)) return false;
             plotIframe.contentWindow.postMessage({ type: 'updateColour', limits: { cMin: c1, cMax: c2 } }, '*');
+            return true;
         }
 
         function detectCurrentPreset() {
@@ -2658,6 +2727,18 @@
         // against the current file), inheriting QC/filter settings from the
         // current toolbar. Mirrors applyPreset() but returns state instead of
         // mutating the widgets.
+        // The CTD Clean / Interpolate defaults for a fresh preset plot. A step is
+        // on whenever the file actually supports it (the recommended flags), so
+        // dashboard tiles always get clean/interp — the only time it's off is when
+        // there's no relevant CTD data. QC presence is deliberately ignored here.
+        function recommendedCtd() {
+            const rec = fileById(datasetSelect.value);
+            return {
+                interp: !!(rec && rec.ctd_interp_recommended),
+                qc:     !!(rec && rec.ctd_clean_recommended),
+            };
+        }
+
         function stateFromPreset(presetKey) {
             const p = OceanPresets[presetKey];
             const s = captureToolbarState();
@@ -2672,6 +2753,11 @@
             s.x = findBest(p.x); s.y = findBest(p.y); s.c = findBest(p.c);
             s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
             s.zoomBounds = null; s.cMin = null; s.cMax = null;
+            // A fresh preset plot (dashboard tile, new panel, Jelly) should honour
+            // the dataset's recommended CTD processing rather than inheriting
+            // whatever the toolbar happens to show for the active panel.
+            const ctd = recommendedCtd();
+            s.ctdInterp = ctd.interp; s.ctdQc = ctd.qc;
             // Don't inherit the active plot's colour-trim — it belongs to a
             // different variable. Start at full range (filled on first load).
             s.cTrimMin = ''; s.cTrimMax = '';
@@ -2706,7 +2792,7 @@
             const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
 
             layoutTree = {
-                dir: 'row', ratio: 0.30,
+                dir: 'row', ratio: 0.24,
                 a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
                 b: buildEqualTree(plotIds, 'col')
             };
@@ -2723,7 +2809,7 @@
             downloadBtn.classList.add('hidden');
 
             if (fullReset) {
-                cTrimContainer.classList.replace('flex', 'hidden');
+                setColourRail(false);
                 baseCMin = null; baseCMax = null;
                 currentZoomBounds = null;
                 
@@ -2812,23 +2898,44 @@
             scheduleColourSend();
         };
 
-        // Push colour limits to the plot at a capped rate. The plot iframe is
-        // same-origin so its Plotly.restyle runs on the shared main thread and
-        // briefly blocks the slider; throttling (rather than firing every frame)
-        // leaves the thread free between updates so the slider stays smooth. A
-        // trailing call guarantees the final position lands.
-        let _colourSendAt = 0, _colourTrail = null;
-        const COLOUR_SEND_MS = 90;
+        // Push colour limits to the plot with ack-based flow control. The plot
+        // iframe is same-origin, so its Plotly.restyle runs on the shared main
+        // thread and blocks the slider while it recolours every point. A fixed
+        // throttle can't know how long that takes, so on big datasets restyles
+        // pile up and the slider freezes / jumps in steps. Instead we keep at most
+        // ONE restyle in flight: send the latest value, then wait for the plot to
+        // post 'colourUpdated' before sending again. This self-paces to whatever
+        // the machine can handle, so the slider stays responsive at any data size.
+        let _colourPending = false;   // a newer value is waiting to be sent
+        let _colourInFlight = false;  // the plot is busy applying the last value
+        let _colourAckTimer = null;
         function scheduleColourSend() {
-            const now = performance.now();
-            const since = now - _colourSendAt;
-            clearTimeout(_colourTrail);
-            if (since >= COLOUR_SEND_MS) {
-                _colourSendAt = now;
-                sendColourLimitsToIframe();
-            } else {
-                _colourTrail = setTimeout(() => { _colourSendAt = performance.now(); sendColourLimitsToIframe(); }, COLOUR_SEND_MS - since);
-            }
+            _colourPending = true;
+            if (!_colourInFlight) flushColourSend();
+        }
+        function flushColourSend() {
+            if (!_colourPending) return;
+            _colourPending = false;
+            _colourInFlight = true;
+            if (!sendColourLimitsToIframe()) { _colourInFlight = false; return; }
+            // Safety net: only fires if the plot genuinely never acks (iframe
+            // swapped out / no colour trace). It's set well above any real redraw
+            // time so a slow-but-working restyle always acks first — that keeps the
+            // safety path from racing the real ack and double-sending.
+            clearTimeout(_colourAckTimer);
+            _colourAckTimer = setTimeout(onColourAck, 1000);
+        }
+        function onColourAck() {
+            if (!_colourInFlight) return;
+            clearTimeout(_colourAckTimer);
+            _colourInFlight = false;
+            if (_colourPending) flushColourSend();
+        }
+        // Drop any pending/in-flight colour send — used when the toolbar re-targets
+        // a different plot so the new panel's slider isn't blocked by a stale lock.
+        function resetColourFlow() {
+            clearTimeout(_colourAckTimer);
+            _colourPending = false; _colourInFlight = false;
         }
 
         const stopDrag = () => {
@@ -2899,7 +3006,7 @@
                 cmapInput.value = btn.dataset.val;
                 updateCmapGradient(btn.dataset.val);
                 cmapMenu.classList.add('hidden');
-                if (btn.dataset.val === 'discrete_09') cTrimContainer.classList.replace('flex', 'hidden');
+                if (btn.dataset.val === 'discrete_09') setColourRail(false);
                 checkAndUpdatePreset();
                 resetPlotState(false);
                 updatePlot();
@@ -4555,6 +4662,76 @@
                 case 'delete_live': {
                     const fn = resolveLiveFilename(a.filename);
                     if (fn) await bodcDelete(fn);
+                    break;
+                }
+                case 'add_panel': {
+                    if (leafCount() >= MAX_PANELS) break;
+                    const t = PANEL_TYPE_SYNONYMS[String(a.panel || 'plot').toLowerCase()] || 'plot';
+                    if (PANEL_DEFS[t].singleton && hasPanelType(t)) break;   // already open
+                    const targetPanel = resolvePanelRef(a.target) || activePanel() || activePlotPanel();
+                    if (!targetPanel) break;
+                    const side = ['left', 'right', 'top', 'bottom'].includes(a.side) ? a.side : 'right';
+                    let seed = null;
+                    if (t === 'plot') {
+                        if (a.preset && OceanPresets[a.preset]) {
+                            seed = stateFromPreset(a.preset);
+                        } else if (a.variable) {
+                            const src = activePlotPanel();
+                            seed = src ? JSON.parse(JSON.stringify(src.state)) : captureToolbarState();
+                            seed.zoomBounds = null; seed.cMin = null; seed.cMax = null;
+                            seed.cTrimMin = ''; seed.cTrimMax = '';
+                            seed.c = a.variable; seed.preset = '';
+                        } else {
+                            seed = makeNewState('plot');
+                        }
+                    }
+                    splitPanel(targetPanel.id, side, t, seed);
+                    break;
+                }
+                case 'remove_panel': {
+                    const p = resolvePanelRef(a.target);
+                    if (p) closePanel(p.id);
+                    break;
+                }
+                case 'move_panel': {
+                    const p = resolvePanelRef(a.target);
+                    const rel = resolvePanelRef(a.relative_to);
+                    const side = ['left', 'right', 'top', 'bottom'].includes(a.side) ? a.side : 'right';
+                    if (p && rel && p.id !== rel.id) moveLeafToEdge(p.id, rel.id, side);
+                    break;
+                }
+                case 'swap_panels': {
+                    const pa = resolvePanelRef(a.a), pb = resolvePanelRef(a.b);
+                    if (pa && pb && pa.id !== pb.id) { swapLeafPanels(layoutTree, pa.id, pb.id); renderLayout(); setActive(pa.id); }
+                    break;
+                }
+                case 'select_panel': {
+                    const p = resolvePanelRef(a.target);
+                    if (p) setActive(p.id);
+                    break;
+                }
+                case 'resize_panel': {
+                    const p = resolvePanelRef(a.target);
+                    let frac = Number(a.fraction);
+                    if (!p || isNaN(frac)) break;
+                    frac = Math.max(0.1, Math.min(0.9, frac));
+                    const found = findParent(layoutTree, p.id, null);
+                    if (found) { found.parent.ratio = (found.side === 'a') ? frac : 1 - frac; renderLayout(); }
+                    break;
+                }
+                case 'set_layout': {
+                    arrangeLayout(String(a.arrange || '').toLowerCase());
+                    break;
+                }
+                case 'dashboard': {
+                    applyDashboard();
+                    break;
+                }
+                case 'reset_layout': {
+                    clearSavedLayout();
+                    buildDefaultLayout();
+                    Object.values(panels).forEach(p => { if (p.type !== 'plot') renderPanel(p); });
+                    updatePlot();
                     break;
                 }
                 case 'set_title':

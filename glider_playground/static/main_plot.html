@@ -840,7 +840,14 @@
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
                 // If dual trace, update the second trace (Passed QC)
                 const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
-                Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [traceIdx]);
+                // Ack once the restyle has actually been applied and painted, so the
+                // parent paces the next slider value to this plot's real redraw cost
+                // (keeps the slider smooth instead of flooding it with restyles).
+                const ackColour = () => requestAnimationFrame(() => {
+                    try { window.parent.postMessage({ type: 'colourUpdated' }, '*'); } catch (_) {}
+                });
+                const p = Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [traceIdx]);
+                if (p && p.then) p.then(ackColour); else ackColour();
             }
             
             if (msg.type === 'downloadPlot') {
