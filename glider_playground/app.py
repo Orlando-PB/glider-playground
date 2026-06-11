@@ -14,10 +14,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cache_logic
-from . import chla_logic
 from . import cycle_profile_logic
 from . import jelly_logic
 from . import live_logic
+from . import overlay_logic
 from . import plot_logic
 from . import spatial_logic
 from . import update_logic
@@ -343,16 +343,25 @@ def api_plot_data_bounds(
     )
 
 
-# ---------- chla overlay ----------
+# ---------- satellite / model overlays ----------
 
-@app.get("/api/chla")
-def api_chla(id: str):
-    """Ocean-colour chlorophyll-a overlay for the glider's bounding box.
+@app.get("/api/overlays")
+def api_overlays():
+    """List of overlay variables the map view can request."""
+    return {"overlays": list(overlay_logic.OVERLAYS.keys())}
 
-    The date is tied to the glider's last GPS fix so the satellite field is
-    contemporaneous with the deployment; chla_logic caps it to the dataset's
-    latest available day when the deployment is more recent than the product.
+
+@app.get("/api/overlay")
+def api_overlay(id: str, var: str):
+    """Surface overlay (chla/temp/salinity/o2/ph/biomass) for a file's bbox.
+
+    The date is tied to the glider's last GPS fix so the field is contemporaneous
+    with the deployment; overlay_logic caps it to the dataset's latest available
+    day when the deployment is more recent than the product.
     """
+    if var not in overlay_logic.OVERLAYS:
+        raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
+
     loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
     if not loc or "error" in loc:
         raise HTTPException(status_code=404, detail="No spatial data for this file")
@@ -362,7 +371,8 @@ def api_chla(id: str):
     if rec and rec.get("last_time"):
         target_date = str(rec["last_time"])[:10]
 
-    return chla_logic.fetch_chla_overlay(
+    return overlay_logic.fetch_overlay(
+        var,
         lat_min=loc["lat_min"],
         lat_max=loc["lat_max"],
         lon_min=loc["lon_min"],

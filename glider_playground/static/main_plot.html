@@ -17,7 +17,6 @@
             --spinner-track: #1f2432;
             --grid: rgba(255,255,255,0.05);
             --title: #e4e7ef;
-            --mld-line: #ffffff;
             --anno-bg: rgba(18,20,32,0.85);
         }
         :root[data-theme="light"] {
@@ -30,7 +29,6 @@
             --spinner-track: #e2e5ec;
             --grid: rgba(0,0,0,0.06);
             --title: #171a22;
-            --mld-line: #111827;
             --anno-bg: rgba(255,255,255,0.9);
         }
         body { margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: var(--text-primary); }
@@ -144,7 +142,6 @@
                 grid:  g('--grid',           'rgba(255,255,255,0.05)'),
                 line:  g('--border',         '#262b38'),
                 title: g('--title',          '#e4e7ef'),
-                mld:   g('--mld-line',       '#ffffff'),
                 anno:  g('--anno-bg',        'rgba(18,20,32,0.85)')
             };
         }
@@ -543,17 +540,6 @@
                 }
             }
 
-            if (data.mld_x && data.mld_x.length > 0 && data.mld_y && data.mld_y.length > 0) {
-                traces.push({
-                    x: data.mld_x, y: data.mld_y,
-                    mode: 'lines', type: 'scattergl',
-                    line: { color: readThemeColors().mld, width: 2.5 },
-                    name: 'Mixed Layer Depth',
-                    showlegend: false,
-                    hoverinfo: 'x+y'
-                });
-            }
-
             return traces;
         }
 
@@ -689,13 +675,6 @@
             bgSpinner.classList.add('active'); 
             const params = new URLSearchParams(urlParams);
             
-            // Prevent MLD recalculation on zoomed chunks to keep the line static
-            params.delete('calc_mld');
-            let cVarStr = params.get('c_var') || '';
-            if (cVarStr.includes('|mld')) {
-                params.set('c_var', cVarStr.replace('|mld', ''));
-            }
-            
             // Plotly emits datetime axis values as naive strings like
             // '2026-04-25 10:08:25.6638'. The server's data is naive UTC, so
             // we MUST parse these as UTC. `new Date(naiveString).getTime()`
@@ -755,12 +734,8 @@
                 const newData = await res.json();
                 if (newData.error) return;
 
-                // Carry over the static MLD line and var/unit metadata from the full-dataset load
+                // Carry over var/unit metadata from the full-dataset load
                 if (_originalPlotData) {
-                    if (_originalPlotData.mld_x && _originalPlotData.mld_x.length > 0) {
-                        newData.mld_x = _originalPlotData.mld_x;
-                        newData.mld_y = _originalPlotData.mld_y;
-                    }
                     if (!newData.x_var) newData.x_var = _originalPlotData.x_var;
                     if (!newData.y_var) newData.y_var = _originalPlotData.y_var;
                     if (!newData.x_units) newData.x_units = _originalPlotData.x_units;

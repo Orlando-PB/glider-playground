@@ -32,19 +32,49 @@
         #globe-container { width: 100vw; height: 100vh; z-index: 1; cursor: grab; visibility: hidden; }
         #globe-container:active { cursor: grabbing; }
         #overlay { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 50; background: var(--bg-panel); color: var(--text-muted); }
-        #dacToggle:hover, #chlaToggle:hover { filter: brightness(1.12); }
-        #dacToggle.off, #chlaToggle.off { opacity: 0.45; }
-        #chlaToggle.loading { opacity: 0.7; cursor: progress; }
-        #chlaToggle .spin { animation: chlaspin 0.9s linear infinite; }
-        @keyframes chlaspin { to { transform: rotate(360deg); } }
+        /* ── Layers sidebar (collapsible, top-right) ─────────────────── */
+        #layer-panel {
+            display: none; position: absolute; bottom: 10px; right: 10px; z-index: 60;
+            flex-direction: column-reverse; gap: 4px; padding: 6px; max-width: 168px;
+            border-radius: 10px; background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
+        }
+        #layer-panel.ready { display: flex; }
+        #layer-header {
+            display: flex; align-items: center; gap: 6px; cursor: pointer; border: none;
+            background: transparent; color: var(--text-primary); font-size: 11px;
+            font-weight: 700; padding: 2px 4px; width: 100%;
+        }
+        #layer-header .material-symbols-outlined { font-size: 16px; }
+        #layer-title { letter-spacing: 0.04em; }
+        #layer-header .chev { margin-left: auto; transition: transform 0.2s; }
+        #layer-panel.collapsed { max-width: none; }
+        #layer-panel.collapsed #layer-title,
+        #layer-panel.collapsed .chev,
+        #layer-panel.collapsed #layer-body { display: none; }
+        #layer-body { display: flex; flex-direction: column; gap: 4px; }
 
-        /* CHL-a colourbar — bottom-left, only while the layer is on. */
+        /* Toggle rows inside the sidebar */
+        #dacToggle, .ovBtn {
+            display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+            padding: 5px 8px; border: none; cursor: pointer; border-radius: 6px;
+            font-size: 11px; font-weight: 600; color: var(--text-primary); background: transparent;
+        }
+        #dacToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
+        #dacToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+        .ovBtn.loading { cursor: progress; }
+        .ovBtn .spin { animation: chlaspin 0.9s linear infinite; }
+        @keyframes chlaspin { to { transform: rotate(360deg); } }
+        .ovSwatch { flex: 0 0 auto; }
+
+        /* CHL-a colourbar — bottom-left, only while a layer is on. */
         #chla-bar {
             display: none; position: absolute; bottom: 10px; left: 10px; z-index: 60;
             align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
             font-size: 10px; font-weight: 500; color: var(--text-primary);
             background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
             box-shadow: 0 1px 6px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
+            max-width: calc(100vw - 20px); box-sizing: border-box;
         }
         #chla-bar.visible { display: flex; }
         #chla-bar-title {
@@ -52,13 +82,17 @@
             text-transform: uppercase; margin-right: 2px;
         }
         #chla-bar-grad {
-            height: 8px; width: 90px; border-radius: 4px;
-            /* low → high, left to right (matches the lo/hi labels around it) */
+            height: 8px; width: 90px; border-radius: 4px; flex: 0 0 auto;
             background: linear-gradient(to right,
                 #edfeed 0%, #8ae08a 30%, #1a9a1a 55%, #004d00 78%, #000d00 100%);
         }
         #chla-bar-hi, #chla-bar-lo { font-size: 9px; white-space: nowrap; }
-        #chla-bar-date { font-size: 9px; opacity: 0.55; margin-left: 4px; }
+        #chla-bar-date { font-size: 9px; opacity: 0.55; margin-left: 4px; white-space: nowrap; }
+        /* Narrow panels: drop the redundant title, then the date, then hide the
+           whole bar when there's simply no room. */
+        @media (max-width: 340px) { #chla-bar-title { display: none; } }
+        @media (max-width: 280px) { #chla-bar-date { display: none; } #chla-bar-grad { width: 70px; } }
+        @media (max-width: 230px) { #chla-bar.visible { display: none; } }
 
         /* CHL-a error toast */
         #chla-err {
@@ -93,36 +127,21 @@
     
     <div id="globe-container"></div>
 
-    <!-- Overlay toggles, stacked bottom-right: CHL-a sits above Currents. -->
-    <div id="map-toggles"
-        style="position:absolute; bottom:10px; right:10px; z-index:60;
-               display:flex; flex-direction:column; align-items:stretch; gap:6px;">
-
-        <!-- Chlorophyll-a satellite overlay (Copernicus Marine). Hidden until map loads. -->
-        <button id="chlaToggle" class="off" title="Toggle chlorophyll-a satellite overlay"
-            style="display:none; align-items:center; justify-content:center; gap:6px;
-                   padding:6px 10px; border:none; cursor:pointer; border-radius:8px;
-                   font-size:11px; font-weight:600; color:var(--text-primary);
-                   background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
-                   box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
-            <span id="chlaIcon" style="display:inline-block; width:11px; height:11px; border-radius:2px;
-                   background:linear-gradient(135deg,#8ae08a,#004d00);"></span>
-            <span id="chlaLabel">Chl-a</span>
+    <!-- Layers sidebar (collapsible). Surface-overlay rows are generated by JS
+         into #layer-body, above Currents. Whole panel hidden until map loads. -->
+    <div id="layer-panel">
+        <button id="layer-header" title="Collapse layers">
+            <span class="material-symbols-outlined">layers</span>
+            <span id="layer-title">Layers</span>
+            <span class="material-symbols-outlined chev">expand_more</span>
         </button>
-
-        <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
-        <button id="dacToggle" title="Toggle depth-averaged currents"
-            style="display:none; align-items:center; justify-content:center; gap:6px;
-                   padding:6px 10px; border:none; cursor:pointer; border-radius:8px;
-                   font-size:11px; font-weight:600; color:var(--text-primary);
-                   background:color-mix(in srgb, var(--bg-panel) 80%, transparent);
-                   box-shadow:0 1px 6px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
-            <span style="display:inline-block; width:18px; height:0; border-top:2px solid currentColor; position:relative;">
-                <span style="position:absolute; right:-1px; top:-4px; width:0; height:0;
-                       border-left:6px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent;"></span>
-            </span>
-            Currents
-        </button>
+        <div id="layer-body">
+            <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
+            <button id="dacToggle" title="Toggle depth-averaged currents">
+                <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">near_me</span>
+                Currents
+            </button>
+        </div>
     </div>
 
     <!-- CHL-a colourbar legend (shown only while the layer is on). -->
@@ -294,55 +313,67 @@
         let dacArrows = [];
         let showDac = true;
 
-        // ── CHL-a satellite overlay state ──────────────────────────────
-        let chlaData = null;     // {points, p10, p90, date, half_deg} once fetched
-        let chlaMesh = null;     // single merged THREE mesh of all cells
-        let showChla = false;
-        let chlaLoading = false;
-        const CHLA_HALF_DEG_DEFAULT = 0.054; // ~12 km cell fallback if server omits it
+        // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass) ──
+        // Only one surface field is shown at a time; turning one on replaces the
+        // other. Currents (DAC arrows) are separate and coexist.
+        const OVERLAY_HALF_DEG_DEFAULT = 0.054; // ~12 km cell fallback if server omits it
+        const overlayCache = {};   // key -> fetched {points, p10, p90, date, half_deg, units}
+        let activeOverlay = null;  // key of the overlay currently drawn, or null
+        let overlayMesh = null;    // single merged THREE mesh of the active overlay
+        let overlayLoading = null; // key currently being fetched, or null
 
-        // Green ocean-colour ramp: pale → deep green, low → high chlorophyll.
-        const CHLA_STOPS = [
-            [0.00, [237, 254, 237]],
-            [0.20, [178, 228, 158]],
-            [0.45, [ 78, 178,  68]],
-            [0.70, [ 18,  98,  18]],
-            [0.90, [  4,  48,   8]],
-            [1.00, [  0,  13,   0]],
+        // Each overlay: ramp colour stops (0–1 → [r,g,b]), log/linear scaling,
+        // label and units for the legend. `log` suits values spanning orders of
+        // magnitude (chlorophyll, biomass); the rest read better linearly.
+        const OVERLAYS = [
+            { key: 'chla', label: 'Chl-a', units: 'mg/m³', log: true, stops: [
+                [0,[237,254,237]],[0.2,[178,228,158]],[0.45,[78,178,68]],[0.7,[18,98,18]],[0.9,[4,48,8]],[1,[0,13,0]] ] },
+            { key: 'temp', label: 'Temp', units: '°C', log: false, stops: [
+                [0,[12,28,120]],[0.25,[30,110,200]],[0.5,[90,200,180]],[0.7,[240,220,90]],[0.85,[235,120,40]],[1,[150,20,20]] ] },
+            { key: 'salinity', label: 'Salinity', units: 'PSU', log: false, stops: [
+                [0,[16,32,80]],[0.3,[24,96,140]],[0.55,[34,158,148]],[0.8,[130,206,96]],[1,[250,242,128]] ] },
+            { key: 'o2', label: 'O₂', units: 'mmol/m³', log: false, stops: [
+                [0,[140,20,20]],[0.3,[220,120,40]],[0.6,[240,222,120]],[1,[40,120,200]] ] },
+            { key: 'ph', label: 'pH', units: '', log: false, stops: [
+                [0,[180,40,40]],[0.5,[238,238,238]],[1,[40,80,180]] ] },
+            { key: 'biomass', label: 'Biomass', units: 'mmol/m³', log: false, stops: [
+                [0,[68,1,84]],[0.25,[59,82,139]],[0.5,[33,145,140]],[0.75,[94,201,98]],[1,[253,231,37]] ] },
         ];
+        const overlayByKey = Object.fromEntries(OVERLAYS.map(o => [o.key, o]));
 
-        // Map a CHL value (mg/m³) to an rgba string, log-scaled between p10/p90
-        // so the dynamic range of ocean colour reads well at a glance.
-        function chlaColor(val, p10, p90, alpha) {
-            const lo = Math.log10(Math.max(p10, 0.001));
-            const hi = Math.log10(Math.max(p90, 0.002));
-            const t = Math.max(0, Math.min(1, (Math.log10(Math.max(val, 0.001)) - lo) / (hi - lo)));
-            let S0 = CHLA_STOPS[0], S1 = CHLA_STOPS[CHLA_STOPS.length - 1];
-            for (let i = 0; i < CHLA_STOPS.length - 1; i++) {
-                if (t >= CHLA_STOPS[i][0] && t <= CHLA_STOPS[i + 1][0]) { S0 = CHLA_STOPS[i]; S1 = CHLA_STOPS[i + 1]; break; }
+        // Position of a value within an overlay's [lo, hi] range, 0–1.
+        function overlayT(ov, val, lo, hi) {
+            if (ov.log) {
+                const l = Math.log10(Math.max(lo, 1e-3)), h = Math.log10(Math.max(hi, 2e-3));
+                return Math.max(0, Math.min(1, (Math.log10(Math.max(val, 1e-3)) - l) / (h - l || 1)));
             }
-            const f = S0[0] === S1[0] ? 0 : (t - S0[0]) / (S1[0] - S0[0]);
-            const r = Math.round(S0[1][0] + f * (S1[1][0] - S0[1][0]));
-            const g = Math.round(S0[1][1] + f * (S1[1][1] - S0[1][1]));
-            const b = Math.round(S0[1][2] + f * (S1[1][2] - S0[1][2]));
-            return `rgba(${r},${g},${b},${alpha == null ? 1 : alpha})`;
+            return Math.max(0, Math.min(1, (val - lo) / (hi - lo || 1)));
         }
 
-        // Same ramp as chlaColor() but returns [r,g,b] in 0–1 for THREE vertex colours.
-        function chlaColor01(val, p10, p90) {
-            const lo = Math.log10(Math.max(p10, 0.001));
-            const hi = Math.log10(Math.max(p90, 0.002));
-            const t = Math.max(0, Math.min(1, (Math.log10(Math.max(val, 0.001)) - lo) / (hi - lo)));
-            let S0 = CHLA_STOPS[0], S1 = CHLA_STOPS[CHLA_STOPS.length - 1];
-            for (let i = 0; i < CHLA_STOPS.length - 1; i++) {
-                if (t >= CHLA_STOPS[i][0] && t <= CHLA_STOPS[i + 1][0]) { S0 = CHLA_STOPS[i]; S1 = CHLA_STOPS[i + 1]; break; }
+        // Interpolate an overlay's colour stops at fraction t → [r,g,b] (0–255).
+        function rampRGB(stops, t) {
+            let S0 = stops[0], S1 = stops[stops.length - 1];
+            for (let i = 0; i < stops.length - 1; i++) {
+                if (t >= stops[i][0] && t <= stops[i + 1][0]) { S0 = stops[i]; S1 = stops[i + 1]; break; }
             }
             const f = S0[0] === S1[0] ? 0 : (t - S0[0]) / (S1[0] - S0[0]);
             return [
-                (S0[1][0] + f * (S1[1][0] - S0[1][0])) / 255,
-                (S0[1][1] + f * (S1[1][1] - S0[1][1])) / 255,
-                (S0[1][2] + f * (S1[1][2] - S0[1][2])) / 255,
+                S0[1][0] + f * (S1[1][0] - S0[1][0]),
+                S0[1][1] + f * (S1[1][1] - S0[1][1]),
+                S0[1][2] + f * (S1[1][2] - S0[1][2]),
             ];
+        }
+
+        // [r,g,b] in 0–1 for THREE vertex colours.
+        function overlayColor01(ov, val, lo, hi) {
+            const c = rampRGB(ov.stops, overlayT(ov, val, lo, hi));
+            return [c[0] / 255, c[1] / 255, c[2] / 255];
+        }
+
+        // CSS `linear-gradient(...)` string spanning an overlay's ramp.
+        function rampGradient(ov) {
+            const parts = ov.stops.map(([t, c]) => `rgb(${c[0]},${c[1]},${c[2]}) ${Math.round(t * 100)}%`);
+            return `linear-gradient(to right, ${parts.join(', ')})`;
         }
 
         // What goes into pathsData: always the track, plus DAC arrows when shown.
@@ -371,7 +402,7 @@
                 return;
             }
             btn.style.display = 'flex';
-            btn.classList.toggle('off', !showDac);
+            btn.classList.toggle('on', showDac);
             btn.title = (showDac ? 'Hide' : 'Show') +
                 ` depth-averaged currents (${dacArrows.length} dives)`;
         }
@@ -424,8 +455,8 @@
                 dacArrows = buildDacArrows(data.dac, trackSpanKm);
                 updateDacToggle();
 
-                // The satellite overlay is available for any mappable file.
-                document.getElementById('chlaToggle').style.display = 'flex';
+                // Overlays are available for any mappable file.
+                revealOverlayButtons();
 
                 // Live-position blob for NRT (Near Real-Time) deployments —
                 // the glider is presumed still in the water at this last fix.
@@ -542,25 +573,25 @@
             if (myGlobe) myGlobe.pathsData(visiblePaths());
         });
 
-        // ── CHL-a overlay: toggle, fetch, render ───────────────────────
+        // ── Surface overlays: buttons, fetch, render ───────────────────
 
         // Build ONE mesh holding every cell as a coloured quad. A single
-        // geometry (a few thousand triangles) is what keeps this fast — the
-        // earlier per-cell globe.gl polygon layer froze the tab at ~2500 cells.
-        const CHLA_ALT = 0.00005;  // just above surface, below track (0.00015) and arrows (0.0004)
-        const CHLA_OPACITY = 0.72;
+        // geometry (a few thousand triangles) keeps this fast — a per-cell
+        // globe.gl polygon layer froze the tab at ~2500 cells.
+        const OVERLAY_ALT = 0.00005;  // just above surface, below track (0.00015) and arrows (0.0004)
+        const OVERLAY_OPACITY = 0.72;
 
-        function buildChlaMesh(data) {
+        function buildOverlayMesh(data, ov) {
             const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
-                ? data.half_deg : CHLA_HALF_DEG_DEFAULT;
+                ? data.half_deg : OVERLAY_HALF_DEG_DEFAULT;
             const pts = data.points;
             const positions = new Float32Array(pts.length * 4 * 3);
             const colors = new Float32Array(pts.length * 4 * 3);
             const index = new Uint32Array(pts.length * 6);
             let vi = 0, ci = 0, ii = 0, base = 0;
 
-            for (const [lat, lng, chl] of pts) {
-                const c = chlaColor01(chl, data.p10, data.p90);
+            for (const [lat, lng, val] of pts) {
+                const c = overlayColor01(ov, val, data.p10, data.p90);
                 // 4 corners, placed on the globe via getCoords so the patch
                 // follows the curvature exactly.
                 const corners = [
@@ -568,7 +599,7 @@
                     [lat + H, lng + H], [lat + H, lng - H],
                 ];
                 for (const [la, lo] of corners) {
-                    const p = myGlobe.getCoords(la, lo, CHLA_ALT);
+                    const p = myGlobe.getCoords(la, lo, OVERLAY_ALT);
                     positions[vi++] = p.x; positions[vi++] = p.y; positions[vi++] = p.z;
                     colors[ci++] = c[0]; colors[ci++] = c[1]; colors[ci++] = c[2];
                 }
@@ -582,130 +613,179 @@
             geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             geom.setIndex(new THREE.BufferAttribute(index, 1));
             const mat = new THREE.MeshBasicMaterial({
-                vertexColors: true, transparent: true, opacity: CHLA_OPACITY,
+                vertexColors: true, transparent: true, opacity: OVERLAY_OPACITY,
                 side: THREE.DoubleSide, depthWrite: false,
             });
             return new THREE.Mesh(geom, mat);
         }
 
-        function disposeChlaMesh() {
-            if (!chlaMesh) return;
-            if (myGlobe) myGlobe.scene().remove(chlaMesh);
-            chlaMesh.geometry.dispose();
-            chlaMesh.material.dispose();
-            chlaMesh = null;
+        function disposeOverlayMesh() {
+            if (!overlayMesh) return;
+            if (myGlobe) myGlobe.scene().remove(overlayMesh);
+            overlayMesh.geometry.dispose();
+            overlayMesh.material.dispose();
+            overlayMesh = null;
         }
 
-        function showChlaBar(p10, p90, date) {
-            const fmt = v => v < 1 ? v.toFixed(2) : v.toFixed(1);
-            document.getElementById('chla-bar-lo').textContent = fmt(p10) + ' mg/m³';
-            document.getElementById('chla-bar-hi').textContent = fmt(p90) + ' mg/m³';
+        function setOverlayBar(ov, lo, hi, date) {
+            const fmt = v => Math.abs(v) < 1 ? v.toFixed(2) : v.toFixed(1);
+            const u = ov.units ? ' ' + ov.units : '';
+            document.getElementById('chla-bar-title').textContent = ov.label;
+            document.getElementById('chla-bar-grad').style.background = rampGradient(ov);
+            document.getElementById('chla-bar-lo').textContent = fmt(lo) + u;
+            document.getElementById('chla-bar-hi').textContent = fmt(hi) + u;
             document.getElementById('chla-bar-date').textContent = date || '';
-            document.getElementById('chla-bar').classList.add('visible');
         }
 
-        function showChlaError(msg, hint) {
+        function showOverlayError(msg, hint) {
             const box = document.getElementById('chla-err');
-            document.getElementById('chla-err-msg').textContent = msg || 'Could not load chlorophyll data';
+            document.getElementById('chla-err-msg').textContent = msg || 'Could not load overlay';
             document.getElementById('chla-err-hint').textContent = hint || '';
             box.classList.add('visible');
-            clearTimeout(showChlaError._t);
-            showChlaError._t = setTimeout(() => box.classList.remove('visible'), 7000);
+            clearTimeout(showOverlayError._t);
+            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), 7000);
         }
 
-        function setChlaButton() {
-            const btn = document.getElementById('chlaToggle');
-            const icon = document.getElementById('chlaIcon');
-            const label = document.getElementById('chlaLabel');
-            btn.classList.toggle('off', !showChla && !chlaLoading);
-            btn.classList.toggle('loading', chlaLoading);
-            if (chlaLoading) {
-                icon.style.cssText = 'display:inline-block;width:11px;height:11px;';
-                icon.innerHTML = '<span class="material-symbols-outlined spin" style="font-size:13px;line-height:11px;">progress_activity</span>';
-                label.textContent = 'Fetching…';
-                btn.title = 'Fetching chlorophyll-a satellite data…';
-            } else {
-                icon.innerHTML = '';
-                icon.style.cssText = 'display:inline-block;width:11px;height:11px;border-radius:2px;background:linear-gradient(135deg,#8ae08a,#004d00);';
-                label.textContent = 'Chl-a';
-                btn.title = (showChla ? 'Hide' : 'Show') + ' chlorophyll-a satellite overlay';
+        // Build the overlay rows in the sidebar (above Currents). Mutually
+        // exclusive: clicking one replaces the active field. Styling is in CSS.
+        function buildOverlayButtons() {
+            const dac = document.getElementById('dacToggle');
+            const body = document.getElementById('layer-body');
+            for (const ov of OVERLAYS) {
+                const btn = document.createElement('button');
+                btn.id = 'ovBtn-' + ov.key;
+                btn.className = 'ovBtn';
+                const sw = document.createElement('span');
+                sw.className = 'ovSwatch';
+                sw.style.cssText = 'display:inline-block; width:13px; height:13px; border-radius:3px; background:' + rampGradient(ov) + ';';
+                const lbl = document.createElement('span');
+                lbl.className = 'ovLabel';
+                lbl.textContent = ov.label;
+                btn.append(sw, lbl);
+                btn.addEventListener('click', () => selectOverlay(ov.key));
+                body.insertBefore(btn, dac);   // overlays sit above Currents
             }
         }
 
-        function applyChla() {
-            if (myGlobe && showChla && chlaData) {
+        // Reveal the whole Layers sidebar once the map is ready.
+        function revealOverlayButtons() {
+            document.getElementById('layer-panel').classList.add('ready');
+        }
+
+        function updateOverlayButtons() {
+            for (const ov of OVERLAYS) {
+                const btn = document.getElementById('ovBtn-' + ov.key);
+                if (!btn) continue;
+                const loading = overlayLoading === ov.key;
+                const active = activeOverlay === ov.key;
+                btn.classList.toggle('on', active && !loading);
+                btn.classList.toggle('loading', loading);
+                const sw = btn.querySelector('.ovSwatch');
+                const lbl = btn.querySelector('.ovLabel');
+                if (loading) {
+                    sw.innerHTML = '<span class="material-symbols-outlined spin" style="font-size:13px;line-height:13px;">progress_activity</span>';
+                    sw.style.background = 'transparent';
+                    lbl.textContent = 'Fetching…';
+                    btn.title = 'Fetching ' + ov.label + ' …';
+                } else {
+                    sw.innerHTML = '';
+                    sw.style.background = rampGradient(ov);
+                    lbl.textContent = ov.label;
+                    btn.title = (active ? 'Hide ' : 'Show ') + ov.label + ' overlay';
+                }
+            }
+        }
+
+        // Draw whatever activeOverlay points at (rebuilding the mesh), or nothing.
+        function applyOverlay() {
+            if (myGlobe && activeOverlay && overlayCache[activeOverlay]) {
                 try {
                     if (typeof THREE === 'undefined') throw new Error('3D library (THREE) failed to load');
-                    if (!chlaMesh) chlaMesh = buildChlaMesh(chlaData);
-                    if (!chlaMesh.parent) myGlobe.scene().add(chlaMesh);
+                    disposeOverlayMesh();
+                    const ov = overlayByKey[activeOverlay];
+                    const d = overlayCache[activeOverlay];
+                    overlayMesh = buildOverlayMesh(d, ov);
+                    myGlobe.scene().add(overlayMesh);
+                    setOverlayBar(ov, d.p10, d.p90, d.date);
                 } catch (err) {
-                    console.error('[CHL-a] render failed:', err);
-                    showChla = false;
-                    disposeChlaMesh();
-                    showChlaError('Could not draw the chlorophyll layer', err.message);
+                    console.error('[overlay] render failed:', err);
+                    activeOverlay = null;
+                    disposeOverlayMesh();
+                    showOverlayError('Could not draw the overlay', err.message);
                 }
             } else if (myGlobe) {
-                disposeChlaMesh();
+                disposeOverlayMesh();
             }
-            document.getElementById('chla-bar').classList.toggle('visible', showChla && !!chlaData);
-            setChlaButton();
+            document.getElementById('chla-bar').classList.toggle('visible', !!activeOverlay && !!overlayCache[activeOverlay]);
+            updateOverlayButtons();
         }
 
-        async function loadChla() {
+        async function loadOverlay(key) {
             const params = new URLSearchParams(window.location.search);
             const fileId = params.get('id') || params.get('filename');
             if (!fileId) return;
 
-            chlaLoading = true;
-            setChlaButton();
+            overlayLoading = key;
+            updateOverlayButtons();
             try {
-                console.log('[CHL-a] Fetching /api/chla …');
                 const t0 = performance.now();
-                const res = await fetch(`/api/chla?id=${encodeURIComponent(fileId)}`);
+                const res = await fetch(`/api/overlay?id=${encodeURIComponent(fileId)}&var=${key}`);
                 const data = await res.json();
-
                 if (!res.ok || data.error) {
-                    showChla = false;
-                    showChlaError(data.error || `Request failed (${res.status})`, data.hint);
+                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
                     return;
                 }
                 if (!Array.isArray(data.points) || data.points.length === 0) {
-                    showChla = false;
-                    showChlaError('No chlorophyll data for this region/date');
+                    showOverlayError('No ' + overlayByKey[key].label + ' data for this region/date');
                     return;
                 }
-
-                chlaData = data;
-                disposeChlaMesh();   // drop any stale mesh so it rebuilds from new data
-                showChla = true;
-                showChlaBar(data.p10, data.p90, data.date);
-                console.log(`[CHL-a] ${data.points.length} cells in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
+                overlayCache[key] = data;
+                activeOverlay = key;   // newly fetched field becomes the active one
+                console.log(`[${key}] ${data.points.length} cells in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
             } catch (err) {
-                showChla = false;
-                showChlaError(err.message || 'Failed to load chlorophyll data');
+                showOverlayError(err.message || 'Failed to load overlay');
             } finally {
-                chlaLoading = false;
-                applyChla();
+                if (overlayLoading === key) overlayLoading = null;
+                applyOverlay();
             }
         }
 
-        document.getElementById('chlaToggle').addEventListener('click', async () => {
-            if (chlaLoading) return;
-            if (showChla) {
-                showChla = false;
-                applyChla();
+        // Click handler: toggle off if already active, else switch to this field.
+        function selectOverlay(key) {
+            if (overlayLoading) return;        // ignore clicks mid-fetch
+            if (activeOverlay === key) {
+                activeOverlay = null;
+                applyOverlay();
+            } else if (overlayCache[key]) {
+                activeOverlay = key;           // already fetched — switch instantly
+                applyOverlay();
+            } else {
+                loadOverlay(key);
+            }
+        }
+
+        // Explicit setter for Jelly: show `key` (no toggling), or 'none'/unknown
+        // to hide. Unlike selectOverlay, asking for the already-active field is
+        // a no-op rather than turning it off.
+        function setOverlayByKey(key) {
+            if (overlayLoading) return;
+            if (!key || key === 'none' || !overlayByKey[key]) {
+                if (activeOverlay !== null) { activeOverlay = null; applyOverlay(); }
                 return;
             }
-            // Turning on: reuse already-fetched cells if we have them.
-            if (chlaData) {
-                showChla = true;
-                showChlaBar(chlaData.p10, chlaData.p90, chlaData.date);
-                applyChla();
-            } else {
-                await loadChla();
-            }
+            if (activeOverlay === key) return;
+            if (overlayCache[key]) { activeOverlay = key; applyOverlay(); }
+            else loadOverlay(key);
+        }
+
+        // Collapse / expand the Layers sidebar (default open).
+        document.getElementById('layer-header').addEventListener('click', () => {
+            const panel = document.getElementById('layer-panel');
+            const collapsed = panel.classList.toggle('collapsed');
+            document.getElementById('layer-header').title = collapsed ? 'Show layers' : 'Collapse layers';
         });
 
+        buildOverlayButtons();
         initMap();
 
         window.addEventListener('resize', () => {
@@ -733,6 +813,9 @@
                 if (myGlobe) myGlobe.pathsData(visiblePaths());
             } else if (event.data.type === 'queryDac') {
                 reportDacStatus();
+            } else if (event.data.type === 'setOverlay') {
+                // Parent (e.g. Jelly) choosing a surface overlay, or 'none' to hide.
+                setOverlayByKey(event.data.overlay);
             }
         });
     </script>

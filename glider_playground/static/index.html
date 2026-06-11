@@ -69,7 +69,6 @@
             --scroll-thumb: #2f3443;
             --scroll-thumb-hover: #3b4152;
             --plot-bg: #121420;
-            --mld-line: #ffffff;
         }
         :root[data-theme="light"] {
             --bg-app: #f4f6fa;
@@ -98,7 +97,6 @@
             --scroll-thumb: #c7cdd8;
             --scroll-thumb-hover: #aeb5c2;
             --plot-bg: #ffffff;
-            --mld-line: #111827;
         }
 
         html, body {
@@ -1057,7 +1055,6 @@
                         <span class="text-[9px] text-gray-500 font-medium">Y</span>
                         <select id="yVar" class="p-1.5 w-28 transition-all"></select>
                     </div>
-                    <button id="calcMldBtn" class="toggle-btn px-2.5 py-1.5 rounded hidden" title="Overlay Mixed Layer Depth (ΔT = 0.2°C)">MLD</button>
                     <!-- Advanced only: Invert Y -->
                     <button id="invertYBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded">Invert Y</button>
                 </div>
@@ -1361,7 +1358,6 @@
         }
 
         const invertYBtn = document.getElementById('invertYBtn');
-        const calcMldBtn = document.getElementById('calcMldBtn');
         const applyQcBtn = document.getElementById('applyQcBtn');
         const highlightQcBtn = document.getElementById('highlightQcBtn');
         const filterTimeBtn = document.getElementById('filterTimeBtn');
@@ -1620,7 +1616,6 @@
                 highlightQc: highlightQcBtn.classList.contains('active'),
                 qcFlags: qcFlagsInput.value,
                 filterTime: filterTimeBtn.classList.contains('active'),
-                calcMld: calcMldBtn.classList.contains('active'),
                 ctdInterp: ctdInterpBtn.classList.contains('active'),
                 ctdQc: ctdQcBtn.classList.contains('active'),
                 cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
@@ -1649,7 +1644,6 @@
                 qcFlagsContainer.style.display = s.applyQc ? 'flex' : 'none';
                 highlightQcBtn.style.display = s.applyQc ? 'flex' : 'none';
                 updateToggleBtn(filterTimeBtn, !!s.filterTime);
-                updateToggleBtn(calcMldBtn, !!s.calcMld);
                 updateToggleBtn(ctdInterpBtn, !!s.ctdInterp);
                 updateToggleBtn(ctdQcBtn, !!s.ctdQc);
                 currentZoomBounds = s.zoomBounds || null;
@@ -1686,11 +1680,10 @@
         function buildPlotParams(s) {
             const params = new URLSearchParams({
                 id: s.datasetId, x_var: s.x, y_var: s.y,
-                c_var: (s.c || '') + (s.calcMld ? '|mld' : ''),
+                c_var: (s.c || ''),
                 cmap: s.cmap, invert_y: !!s.invertY,
                 apply_qc: !!s.applyQc, qc_flags: s.qcFlags || '',
                 highlight_qc: !!s.highlightQc, filter_time: !!s.filterTime,
-                calc_mld: !!s.calcMld,
                 ctd_interpolate: !!s.ctdInterp, ctd_qc: !!s.ctdQc,
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
@@ -2672,15 +2665,6 @@
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
             
-            const stripAdj = (n) => n.replace(/_ADJUSTED$/i, '');
-            const isYDepth = ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'].includes(stripAdj(ySelect.value.toUpperCase()));
-            const isCTemp = ['TEMP', 'CONS_TEMP'].includes(stripAdj(cVarSelect.value.toUpperCase()));
-            if (isXDateTime && isYDepth && isCTemp) {
-                calcMldBtn.classList.remove('hidden');
-            } else {
-                calcMldBtn.classList.add('hidden');
-                calcMldBtn.classList.remove('active');
-            }
         }
 
         function renderPresetsDropdown() {
@@ -3565,7 +3549,6 @@
         };
 
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
-        calcMldBtn.addEventListener('click', () => handleToggle(calcMldBtn, false));
         filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
         
         applyQcBtn.addEventListener('click', () => {
@@ -4596,12 +4579,6 @@
                     if (typeof a.qc === 'boolean' && ctdQcBtn.classList.contains('active') !== a.qc) ctdQcBtn.click();
                     break;
                 }
-                case 'calc_mld': {
-                    if (!calcMldBtn.classList.contains('hidden') && !calcMldBtn.classList.contains('active')) {
-                        calcMldBtn.click();
-                    }
-                    break;
-                }
                 case 'set_zoom': {
                     const toNum = v => {
                         if (v === null || v === undefined) return undefined;
@@ -4651,6 +4628,14 @@
                         const show = (typeof a.show === 'boolean') ? a.show : true;
                         gliderMap.contentWindow.postMessage({ type: 'setDac', show }, '*');
                         currentDacStatus.shown = show && currentDacStatus.available;
+                    }
+                    break;
+                }
+                case 'set_overlay': {
+                    // Show/replace/hide a Copernicus surface field on the globe.
+                    if (gliderMap.contentWindow && currentMapDataset) {
+                        const overlay = (typeof a.overlay === 'string') ? a.overlay.toLowerCase() : 'none';
+                        gliderMap.contentWindow.postMessage({ type: 'setOverlay', overlay }, '*');
                     }
                     break;
                 }
