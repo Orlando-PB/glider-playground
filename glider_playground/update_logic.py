@@ -151,6 +151,26 @@ def _compute() -> dict:
 
 def check(force: bool = False) -> dict:
     """Cached update check. Safe to call on every page load."""
+    # --- TEMP: local testing of the update banner. Remove this block when done. ---
+    # Set GP_FAKE_UPDATE to force an "outdated" response without a real PyPI bump:
+    #   GP_FAKE_UPDATE=1        -> pretend latest is 99.0.0
+    #   GP_FAKE_UPDATE=0.3.0    -> pretend latest is 0.3.0
+    _fake = os.getenv("GP_FAKE_UPDATE")
+    if _fake:
+        current = _installed_version() or "0.0.0"
+        latest = _fake if _fake[:1].isdigit() and _fake != "1" else "99.0.0"
+        method, repo_dir = _detect_install()
+        env = _detect_env()
+        return {
+            "current": current,
+            "latest": latest,
+            "outdated": True,
+            "method": method,
+            "env": env,
+            "steps": _build_steps(method, repo_dir, env),
+        }
+    # --- end TEMP block ---
+
     now = time.time()
     with _lock:
         fresh = (now - _cache["at"]) < CACHE_TTL

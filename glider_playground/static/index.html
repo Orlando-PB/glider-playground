@@ -955,6 +955,25 @@
             border: 1px solid rgba(248,113,113,0.3);
         }
         .jelly-actions { font-size: 9px; color: var(--text-muted); margin-top: 3px; }
+        /* Copyable command block inside a Jelly bubble (e.g. update instructions). */
+        .jelly-cmd {
+            display: flex; align-items: stretch; gap: 6px; margin-top: 6px;
+            background: var(--bg-input, rgba(0,0,0,0.25)); border: 1px solid var(--border);
+            border-radius: 6px; overflow: hidden;
+        }
+        .jelly-cmd-text {
+            flex: 1 1 auto; margin: 0; padding: 6px 8px; overflow-x: auto;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 10.5px; line-height: 1.45; white-space: pre; color: var(--text-primary);
+        }
+        .jelly-cmd-copy {
+            flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+            width: 30px; border: none; border-left: 1px solid var(--border); cursor: pointer;
+            background: transparent; color: var(--text-muted);
+        }
+        .jelly-cmd-copy:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+        .jelly-cmd-copy.copied { color: #34d399; }
+        .jelly-cmd-copy .material-symbols-outlined { font-size: 15px; }
 
         /* ---------- Misc ---------- */
         .grab-handle { touch-action: none; }
@@ -1812,7 +1831,7 @@
             header.className = 'gp-panel-header';
             const label = document.createElement('span');
             label.className = 'gp-panel-label';
-            label.innerHTML = `<span class="material-symbols-outlined gp-drag-grip">drag_indicator</span><span class="material-symbols-outlined">${def.icon}</span>${def.label}`;
+            label.innerHTML = `<span class="material-symbols-outlined gp-drag-grip">drag_indicator</span>${def.label}`;
             label.title = 'Drag to reorder';
             label.addEventListener('mousedown', (e) => { e.stopPropagation(); setActive(id); startReorder(id, e); });
             header.appendChild(label);
@@ -3313,6 +3332,53 @@
         // deliver the reminder — a notification dot on the bubble, plus a chat
         // message with upgrade instructions tailored to how this copy was
         // installed (git pull vs pip upgrade, plus env activation if known).
+        // Copy text to the clipboard, with a fallback for non-secure (LAN/http)
+        // contexts where navigator.clipboard is unavailable. Returns a promise.
+        async function copyToClipboard(text) {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_) {}
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.focus(); ta.select();
+                const ok = document.execCommand('copy');
+                ta.remove();
+                return ok;
+            } catch (_) { return false; }
+        }
+
+        // Append a monospace command block with a copy button to a message bubble.
+        function appendCommandBlock(parent, commands) {
+            const cmd = (Array.isArray(commands) ? commands.join('\n') : String(commands || '')).trim();
+            if (!parent || !cmd) return;
+            const wrap = document.createElement('div');
+            wrap.className = 'jelly-cmd';
+            const pre = document.createElement('pre');
+            pre.className = 'jelly-cmd-text';
+            pre.textContent = cmd;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'jelly-cmd-copy';
+            btn.title = 'Copy to clipboard';
+            btn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+            btn.addEventListener('click', async () => {
+                const ok = await copyToClipboard(cmd);
+                btn.classList.toggle('copied', ok);
+                btn.innerHTML = `<span class="material-symbols-outlined">${ok ? 'check' : 'error'}</span>`;
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+                }, 1500);
+            });
+            wrap.append(pre, btn);
+            parent.appendChild(wrap);
+        }
+
         async function checkForUpdate() {
             let info;
             try {
@@ -3332,7 +3398,7 @@
                     const envLabel = info.env.kind === 'conda' ? 'conda env' : 'environment';
                     how += ` (in the "${info.env.name}" ${envLabel})`;
                 }
-                text += `\n\n${how}, run:\n${steps.join('\n')}`;
+                text += `\n\n${how}, run:`;   // commands go in the copyable block below
             } else {
                 text += `\n\nPlease update to the latest version.`;
             }
@@ -3349,9 +3415,11 @@
                 jellyOpen(true);   // greeting (if a key is set) lands first
             }
 
-            // Put the reminder in the panel and preserve its line breaks.
+            // Put the reminder in the panel and preserve its line breaks, then
+            // drop the commands into a copyable code block beneath the prose.
             const div = addJellyMessage('jelly', text);
             if (div) div.style.whiteSpace = 'pre-wrap';
+            if (steps.length) appendCommandBlock(div, steps);
         }
 
         async function init() {
@@ -4254,7 +4322,10 @@
             }
             if (e.key === 'Enter' && !cmapMenu.classList.contains('hidden')) return;
             
-            if (e.key === 'Enter' && !e.target.closest('#qcDropdown')) updatePlot();
+            // Enter re-plots from the toolbar, but NOT when typing in the Jelly
+            // chat (its own form handles submit) — otherwise every prompt would
+            // reload the active plot and flash "Fetching data...".
+            if (e.key === 'Enter' && !e.target.closest('#qcDropdown') && !e.target.closest('#jellyPanel')) updatePlot();
                 
             if (e.key === 'Escape') {
                 // Esc dismisses transient UI only — it must NOT blank the active

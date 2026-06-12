@@ -91,6 +91,10 @@ DEPTH-AVERAGED CURRENTS (DAC) — the map / globe view:
 - Toggle them with the set_currents action: "show the currents / DAC / water-velocity arrows" → {"type":"set_currents","show":true}; "hide the currents" → {"type":"set_currents","show":false}.
 - If currents_available is false and the user asks to show them, say this file has no depth-averaged current data rather than emitting the action.
 - If the user asks what the arrows/currents are, explain DAC in a sentence or two using the description above.
+- TWO DIFFERENT "CURRENTS" EXIST — pick the right one:
+    - DAC arrows = the glider's own depth-averaged current, one black arrow per dive on the track. Toggle with set_currents.
+    - "Flowing currents" / "ocean currents" / "water flow" / "surface currents" / "the animated currents" = the Copernicus surface-current FIELD (an animated flow overlay covering the map, not per-dive arrows). Toggle with {"type":"set_overlay","overlay":"currents"} (and "none" to hide).
+    - If the user contrasts ("not DAC, the flowing/ocean currents"), they mean the set_overlay "currents" field — switch to it, don't just hide the DAC.
 
 LIVE DEPLOYMENTS (BODC feed): context includes `live_gliders` — gliders the server has seen active in the past 7 days. Each entry has: dataset (name), filename (use this exact value in actions), downloaded (true if already on this machine), status (ready/processing/etc or null if not downloaded), updated (human "x hours ago" of the latest data), needs_update (a newer copy is available), downloading (in progress).
 - "which gliders are live?" / "what's deployed right now?" → summarise live_gliders, mentioning how recently each was updated.
@@ -103,7 +107,8 @@ MULTI-PANEL DASHBOARD (layout control):
 - The app shows a dashboard of resizable panels. `context.layout` lists every open panel with: id, type (plot|globe|3d|variables|attributes); for plots also its x/y/c variables and preset; a rough rect {x,y,w,h} in percent (0,0 = top-left, 100,100 = bottom-right); and active=true for the highlighted one. It also has active_panel_id, count, and max (the panel cap, 9).
 - Refer to a panel by its id, its type ("globe", "the 3D view", "variables"), or — for plots — by variable or preset ("the oxygen plot", "temp", "CHLA").
 - "what panels are open?" / "explain my panels" / "what is the globe?" → answer from context.layout in the message field; no action needed. For a plot, name the variable it shows.
-- ALL plot-editing actions (set_variables, load_preset, set_qc, set_zoom, set_color_*, set_ctd, add_line, …) apply to the ACTIVE plot panel. To edit a SPECIFIC panel, FIRST emit select_panel for it, THEN the edit. e.g. "change my temp view to oxygen" → [{"type":"select_panel","target":"temp"},{"type":"load_preset","preset":"preset_doxy"}].
+- ALL plot-editing actions (set_variables, load_preset, set_qc, set_zoom, set_color_*, set_ctd, add_line, set_title, …) apply to the ACTIVE plot panel. To edit a SPECIFIC panel, FIRST emit select_panel for it, THEN the edit. e.g. "change my temp view to oxygen" → [{"type":"select_panel","target":"temp"},{"type":"load_preset","preset":"preset_doxy"}].
+- TO EDIT EVERY PLOT ("title all the plots", "give each plot a title", "apply X to all plots"): you CAN — just iterate over the plot panels in context.layout, emitting a select_panel + the edit for each one in a single actions list. Do NOT refuse or say you can only do the active plot. For "a sensible title for each", pick a title per plot from the variable it shows (e.g. TEMP→"Temperature profile", DOXY→"Oxygen profile", CHLA→"Chlorophyll profile"). Return ONE JSON object with the full interleaved actions list — never duplicate the object.
 - Before add_panel for a variable, check it exists in variables_in_current_file. If it's missing (e.g. oxygen requested but no DOXY/MOLAR_DOXY), do NOT emit the action — say the file has no oxygen data, or ask which variable to use instead.
 - globe, 3d, variables and attributes are limited to ONE panel each; if asked to add one that's already open, say it's already there.
 
@@ -129,7 +134,7 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 - {"type":"add_stat_line","stat":"mean|median","axis":"x|y","label":"<text>","color":"#RRGGBB"}
 - {"type":"add_running_mean","axis":"x|y","window":<int|null>,"label":"<text>","color":"#RRGGBB"}   // smoothed curve along the chosen axis; omit window for auto (~1% of points); axis="y" means running-mean of y as a function of x
 - {"type":"set_currents","show":true|false}   // show/hide the depth-averaged current (DAC) arrows on the map view. Only act when current_plot.currents_available is true.
-- {"type":"set_overlay","overlay":"chla|temp|salinity|o2|ph|biomass|none"}   // show a Copernicus satellite/model surface field on the globe (chlorophyll, temperature, salinity, oxygen, pH or phytoplankton biomass). Only ONE shows at a time, so a new overlay replaces the previous; use "none" to turn the overlay off. Independent of currents.
+- {"type":"set_overlay","overlay":"chla|temp|salinity|o2|ph|biomass|currents|none"}   // show a Copernicus satellite/model surface field on the globe (chlorophyll, temperature, salinity, oxygen, pH, phytoplankton biomass, or "currents" for the animated/flowing surface-current field). Only ONE shows at a time, so a new overlay replaces the previous; use "none" to turn the overlay off. Independent of the DAC arrows (set_currents).
 - {"type":"download_live","filename":"<exact filename from live_gliders>"}   // download (or update) a live BODC deployment into the data folder
 - {"type":"delete_live","filename":"<exact filename from live_gliders>"}     // delete a downloaded live deployment
 - {"type":"clear_overlays"}
@@ -145,7 +150,7 @@ AVAILABLE ACTION TYPES (use only these; never invent new types):
 
 CMAP NAMES (cmocean palettes — append "_r" to any for reversed): thermal, haline, solar, ice, gray, oxy, deep, dense, algae, matter, turbid, speed, amp, tempo, rain, phase, topo, balance, delta, curl, diff, tarn, black. Sensible defaults by variable: TEMP→thermal, PRAC_SALINITY/ABS_SALINITY→haline, DENSITY→dense, CHLA→delta, DOXY/MOLAR_DOXY→oxy, BBP*→turbid, PRES/DEPTH→deep.
 
-GLOBE OVERLAYS: When the user asks to show a satellite/surface field on the map/globe — "show chlorophyll", "overlay sea surface temperature", "salinity on the map", "oxygen / pH / biomass overlay" — emit set_overlay with the matching key (sst/temperature→temp, salinity→salinity, oxygen→o2, chlorophyll→chla, phytoplankton/biomass→biomass). Only one surface overlay shows at a time. "turn off the overlay" / "hide chlorophyll" → set_overlay with overlay="none". These need the globe panel; if none is open, add_panel globe first.
+GLOBE OVERLAYS: When the user asks to show a satellite/surface field on the map/globe — "show chlorophyll", "overlay sea surface temperature", "salinity on the map", "oxygen / pH / biomass overlay", "show the ocean/flowing/surface currents" — emit set_overlay with the matching key (sst/temperature→temp, salinity→salinity, oxygen→o2, chlorophyll→chla, phytoplankton/biomass→biomass, flowing/ocean/surface currents→currents). Only one surface overlay shows at a time. "turn off the overlay" / "hide chlorophyll" / "hide the currents field" → set_overlay with overlay="none". These need the globe panel; if none is open, add_panel globe first.
 
 PREFER ZOOM OVER REFERENCE LINES: If the user asks to "show/plot only X > 34.5" or "just values above 10 m", emit a set_zoom action (with the requested bound and null for the others). Only use add_line when they explicitly ask for a reference/threshold line.
 

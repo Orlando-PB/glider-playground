@@ -74,7 +74,11 @@
             font-size: 10px; font-weight: 500; color: var(--text-primary);
             background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
             box-shadow: 0 1px 6px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
-            max-width: calc(100vw - 20px); box-sizing: border-box;
+            /* The width cap is set in JS (fitColourBar) since it depends on whether
+               the bottom-right layers panel is open. overflow:hidden is only a
+               safety net — fitColourBar drops the title, then the date, then hides
+               the whole bar rather than ever clipping text mid-character. */
+            max-width: calc(100vw - 140px); overflow: hidden; box-sizing: border-box;
         }
         #chla-bar.visible { display: flex; }
         #chla-bar-title {
@@ -88,11 +92,8 @@
         }
         #chla-bar-hi, #chla-bar-lo { font-size: 9px; white-space: nowrap; }
         #chla-bar-date { font-size: 9px; opacity: 0.55; margin-left: 4px; white-space: nowrap; }
-        /* Narrow panels: drop the redundant title, then the date, then hide the
-           whole bar when there's simply no room. */
-        @media (max-width: 340px) { #chla-bar-title { display: none; } }
-        @media (max-width: 280px) { #chla-bar-date { display: none; } #chla-bar-grad { width: 70px; } }
-        @media (max-width: 230px) { #chla-bar.visible { display: none; } }
+        /* Narrow panels are handled in JS (fitColourBar): drop the title, then the
+           date, then hide the bar — see the script below. */
 
         /* CHL-a error toast */
         #chla-err {
@@ -106,6 +107,27 @@
         }
         #chla-err.visible { display: block; }
         #chla-err .hint { color: var(--text-muted); margin-top: 4px; font-size: 10px; }
+        /* Copyable command row inside the error toast (e.g. pip install copernicus). */
+        #chla-err-cmd {
+            display: none; align-items: stretch; gap: 6px; margin-top: 6px;
+            background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+            border: 1px solid var(--border, rgba(127,127,127,0.3));
+            border-radius: 6px; overflow: hidden; text-align: left;
+        }
+        #chla-err-cmd.show { display: flex; }
+        #chla-err-cmd code {
+            flex: 1 1 auto; padding: 5px 8px; overflow-x: auto; white-space: pre;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 10px; color: var(--text-primary);
+        }
+        #chla-err-cmd button {
+            flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+            width: 28px; border: none; border-left: 1px solid var(--border, rgba(127,127,127,0.3));
+            cursor: pointer; background: transparent; color: var(--text-muted);
+        }
+        #chla-err-cmd button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+        #chla-err-cmd button.copied { color: #34d399; }
+        #chla-err-cmd .material-symbols-outlined { font-size: 14px; }
     </style>
     <script>
         (function() {
@@ -154,7 +176,11 @@
     </div>
 
     <!-- CHL-a error toast -->
-    <div id="chla-err"><div id="chla-err-msg"></div><div class="hint" id="chla-err-hint"></div></div>
+    <div id="chla-err">
+        <div id="chla-err-msg"></div>
+        <div class="hint" id="chla-err-hint"></div>
+        <div id="chla-err-cmd"><code id="chla-err-cmd-text"></code><button id="chla-err-cmd-copy" type="button" title="Copy to clipboard"><span class="material-symbols-outlined">content_copy</span></button></div>
+    </div>
 
     <script>
         // Tell the dashboard parent to activate this panel on interaction.
@@ -637,13 +663,88 @@
             document.getElementById('chla-bar-date').textContent = date || '';
         }
 
+        // The legend shares the bottom row with the bottom-right layers panel. When
+        // the contents don't fit the available width we drop pieces in priority
+        // order — first the leading title ("Currents"/"Chl-a"/…), then the date,
+        // then hide the bar entirely — rather than truncating text mid-character.
+        function fitColourBar() {
+            const bar = document.getElementById('chla-bar');
+            if (!bar.classList.contains('visible')) return;
+            const panel = document.getElementById('layer-panel');
+            const collapsed = !panel.classList.contains('ready') || panel.classList.contains('collapsed');
+            // Reserve room on the right for the layers panel (less when collapsed).
+            bar.style.maxWidth = `calc(100vw - ${collapsed ? 66 : 140}px)`;
+
+            const title = document.getElementById('chla-bar-title');
+            const date = document.getElementById('chla-bar-date');
+            // Start fully shown, then hide in priority order until it fits.
+            title.style.display = '';
+            date.style.display = '';
+            bar.style.visibility = '';
+            const fits = () => bar.scrollWidth <= bar.clientWidth + 1;
+            if (fits()) return;
+            title.style.display = 'none';
+            if (fits()) return;
+            date.style.display = 'none';
+            if (fits()) return;
+            // Genuinely no room left → hide the whole bar (kept laid out so it
+            // reappears automatically once there's space again).
+            bar.style.visibility = 'hidden';
+        }
+
+        // Pull a runnable command out of a hint string, e.g.
+        //   "Run: pip install copernicusmarine"            -> "pip install copernicusmarine"
+        //   "Run 'copernicusmarine login' in your terminal" -> "copernicusmarine login"
+        function extractCommand(hint) {
+            if (!hint) return '';
+            const quoted = hint.match(/['"`]([^'"`]+)['"`]/);
+            if (quoted) return quoted[1].trim();
+            const run = hint.match(/[Rr]un:\s*(.+?)\s*$/);
+            if (run) return run[1].trim();
+            return '';
+        }
+
         function showOverlayError(msg, hint) {
             const box = document.getElementById('chla-err');
             document.getElementById('chla-err-msg').textContent = msg || 'Could not load overlay';
             document.getElementById('chla-err-hint').textContent = hint || '';
+
+            // If the hint names a command (pip install / copernicusmarine login),
+            // surface it as a copyable row so the user doesn't have to retype it.
+            const cmd = extractCommand(hint);
+            const cmdRow = document.getElementById('chla-err-cmd');
+            const copyBtn = document.getElementById('chla-err-cmd-copy');
+            cmdRow.classList.toggle('show', !!cmd);
+            if (cmd) {
+                document.getElementById('chla-err-cmd-text').textContent = cmd;
+                copyBtn.onclick = async () => {
+                    let ok = false;
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(cmd); ok = true;
+                        }
+                    } catch (_) {}
+                    if (!ok) {
+                        try {
+                            const ta = document.createElement('textarea');
+                            ta.value = cmd; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                            document.body.appendChild(ta); ta.focus(); ta.select();
+                            ok = document.execCommand('copy'); ta.remove();
+                        } catch (_) {}
+                    }
+                    copyBtn.classList.toggle('copied', ok);
+                    copyBtn.innerHTML = `<span class="material-symbols-outlined">${ok ? 'check' : 'error'}</span>`;
+                    setTimeout(() => {
+                        copyBtn.classList.remove('copied');
+                        copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+                    }, 1500);
+                };
+            }
+
             box.classList.add('visible');
             clearTimeout(showOverlayError._t);
-            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), 7000);
+            // Give a bit longer to read/copy when there's a command to act on.
+            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), cmd ? 15000 : 7000);
         }
 
         // Build the overlay rows in the sidebar (above Currents). Mutually
@@ -717,6 +818,7 @@
                 disposeOverlayMesh();
             }
             document.getElementById('chla-bar').classList.toggle('visible', !!activeOverlay && !!overlayCache[activeOverlay]);
+            fitColourBar();
             updateOverlayButtons();
         }
 
@@ -1038,6 +1140,7 @@
                 startFlow();
                 setOverlayBar(CURRENTS_DEF, 0, Math.max(currentsData.speed_p90, 0.05), currentsData.date);
                 document.getElementById('chla-bar').classList.add('visible');
+                fitColourBar();
             } catch (err) {
                 console.error('[currents] render failed:', err);
                 currentsActive = false;
@@ -1142,6 +1245,7 @@
             const panel = document.getElementById('layer-panel');
             const collapsed = panel.classList.toggle('collapsed');
             document.getElementById('layer-header').title = collapsed ? 'Show layers' : 'Collapse layers';
+            fitColourBar();   // the cap depends on whether the panel is open
         });
 
         buildOverlayButtons();
@@ -1152,6 +1256,7 @@
             if (myGlobe) {
                 myGlobe.width(window.innerWidth).height(window.innerHeight);
             }
+            fitColourBar();
         });
 
         window.addEventListener('message', (event) => {
