@@ -338,6 +338,7 @@
         let trackSegments = [];
         let dacArrows = [];
         let showDac = true;
+        let _trackView = null;   // {centreLat, centreLng, maxSpan} for re-fitting the camera
 
         // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass) ──
         // Only one surface field is shown at a time; turning one on replaces the
@@ -584,7 +585,12 @@
                 const maxSpan = Math.max(maxLat - minLat, maxLng - minLng);
                 const dynamicAltitude = Math.max(0.05, maxSpan / CONFIG.zoomScaleFactor);
 
+                // Remember the track extent so the parent can re-fit on demand.
+                _trackView = { centreLat, centreLng, maxSpan };
                 myGlobe.pointOfView({ lat: centreLat, lng: centreLng, altitude: dynamicAltitude }, 0);
+
+                // Let the dashboard know the globe is ready (e.g. for the Map preset).
+                try { window.parent.postMessage({ type: 'mapReady' }, '*'); } catch (_) {}
 
             } catch (err) {
                 document.getElementById('loadingIcon').textContent = 'error';
@@ -598,6 +604,23 @@
             updateDacToggle();
             if (myGlobe) myGlobe.pathsData(visiblePaths());
         });
+
+        // Re-centre the camera on the track. With opts.whole the camera frames the
+        // whole globe (with edge space); otherwise it fits the track tightly plus
+        // opts.padding extra altitude.
+        function fitView(opts) {
+            if (!myGlobe || !_trackView) return;
+            opts = opts || {};
+            const tight = Math.max(0.05, _trackView.maxSpan / CONFIG.zoomScaleFactor);
+            let alt;
+            if (opts.whole) {
+                alt = 2.4;   // whole globe with a little edge space
+            } else {
+                const pad = (typeof opts.padding === 'number' && opts.padding >= 0) ? opts.padding : 0.4;
+                alt = tight * (1 + pad);
+            }
+            myGlobe.pointOfView({ lat: _trackView.centreLat, lng: _trackView.centreLng, altitude: alt }, 700);
+        }
 
         // ── Surface overlays: buttons, fetch, render ───────────────────
 
@@ -1278,6 +1301,8 @@
                 if (myGlobe) myGlobe.pathsData(visiblePaths());
             } else if (event.data.type === 'queryDac') {
                 reportDacStatus();
+            } else if (event.data.type === 'fitView') {
+                fitView(event.data);
             } else if (event.data.type === 'setOverlay') {
                 // Parent (e.g. Jelly) choosing a surface overlay, or 'none' to hide.
                 const key = event.data.overlay;

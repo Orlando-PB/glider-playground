@@ -1069,10 +1069,10 @@
                     <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
                 </div>
 
-                <div class="group-divider"></div>
+                <div class="group-divider adv-only"></div>
 
-                <!-- Axes group -->
-                <div class="toolbar-group">
+                <!-- Axes group (advanced only — presets drive variables by default) -->
+                <div class="toolbar-group adv-only">
                     <span class="group-label">
                         Axes
                         <span class="info-dot" data-tip="Pick variables for the X and Y axes. Invert Y flips the axis so depth increases downward."><span class="material-symbols-outlined">info</span></span>
@@ -1177,10 +1177,10 @@
                     </button>
                 </div>
 
-                <div class="group-divider"></div>
+                <div class="group-divider adv-only"></div>
 
-                <!-- Colour -->
-                <div class="toolbar-group">
+                <!-- Colour (advanced only — presets set the colour variable by default) -->
+                <div class="toolbar-group adv-only">
                     <span class="group-label">
                         Colour
                         <span class="info-dot" data-tip="Pick a variable to colour-map points. Choose a palette from the swatch to the right."><span class="material-symbols-outlined">info</span></span>
@@ -1613,6 +1613,7 @@
         let _nextPanelId = 1;
         let _suspendToolbar = false; // guard: writing widgets from state must not fire updatePlot
         let _highlightTimer = null;
+        let _pendingGlobeFit = false; // ask the globe to fit-to-track once it reloads (Map preset)
 
         // Panel type catalogue. Singletons host an existing DOM element (kept in
         // #panelStash) so all their population code keeps working by id.
@@ -1881,6 +1882,8 @@
                 }
             }
             // Non-plot panels leave the toolbar pointed at the last active plot.
+            // With no plot panel anywhere, grey the colour rail — nothing drives it.
+            if (!hasPanelType('plot')) setColourRail(false);
             updateAddButtons();
             refreshPanelPlaceholders();
             pokeHighlight();
@@ -2123,6 +2126,8 @@
                 const firstPlot = Object.values(panels).find(pp => pp.type === 'plot');
                 if (firstPlot) { activePlotPanelId = firstPlot.id; plotIframe = firstPlot.iframe; }
             }
+            // No plot left anywhere → the toolbar drives nothing; grey the colour bar.
+            if (!hasPanelType('plot')) setColourRail(false);
         }
 
         // Swap the positions of two panels by exchanging their leaf panelIds.
@@ -2406,6 +2411,7 @@
 
         function buildDefaultLayout() {
             // Globe (top-left) + 3D (below) in a narrow left column, main plot right.
+            _pendingGlobeFit = false;
             tearDownPanels();
             _nextPanelId = 1;
             const plot = createPanel('plot', captureToolbarState());
@@ -2441,6 +2447,8 @@
                 // Panels render when the dataset loads (handleDatasetChange), so
                 // we don't load a possibly-stale dataset here.
                 _pendingRestoreSync = true;
+                // A restored plot-less (Map) layout should also frame the whole globe.
+                if (!Object.values(panels).some(p => p.type === 'plot')) _pendingGlobeFit = true;
                 return true;
             } catch (e) { console.error('Layout restore failed:', e); return false; }
         }
@@ -2546,6 +2554,16 @@
                 return;
             }
 
+            // The globe finished (re)loading. If we just built the Map preset, ask
+            // it to zoom out to fit the whole track with a margin.
+            if (msg.type === 'mapReady') {
+                if (_pendingGlobeFit && gliderMap.contentWindow) {
+                    gliderMap.contentWindow.postMessage({ type: 'fitView', whole: true }, '*');
+                    _pendingGlobeFit = false;
+                }
+                return;
+            }
+
             // Route plot messages to their owning panel.
             const srcPanel = panelByWindow(event.source);
 
@@ -2624,7 +2642,7 @@
             else if (msg.type === 'plotError') {
                 setLoading(false);
                 plotQueued = false;
-                plotIframe.classList.add('hidden');
+                plotIframe?.classList.add('hidden');
                 emptyState.classList.remove('hidden');
                 emptyState.innerHTML = `
                     <span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">error</span>
@@ -2728,6 +2746,15 @@
         function renderPresetsDropdown() {
             presetContainer.innerHTML = '';
 
+            // Map: globe + 3D side by side, no plot panel.
+            const mapBtn = document.createElement('button');
+            mapBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-sky-100 text-sky-800';
+            mapBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">map</span> <span class="preset-text">Map</span>';
+            mapBtn.dataset.preset = '__map__';
+            mapBtn.title = 'Globe + 3D view side by side (no plot)';
+            mapBtn.addEventListener('click', () => { if (!mapBtn.disabled) applyMapView(); });
+            presetContainer.appendChild(mapBtn);
+
             // Dashboard: one click builds a row of thermal / chlorophyll / oxygen
             // panels (skipping any the current file lacks).
             const dashBtn = document.createElement('button');
@@ -2746,6 +2773,13 @@
                 
                 btn.addEventListener('click', () => {
                     if (btn.disabled) return;
+                    // No plot open (e.g. the Map preset) → fully reset to the default
+                    // view seeded with this preset. With a plot present, just retarget
+                    // the active plot — don't disturb the rest of the layout.
+                    if (!hasPanelType('plot')) {
+                        applyDefaultView(key);
+                        return;
+                    }
                     currentPreset = key;
                     updatePresetUI();
                     applyPreset(key);
@@ -2814,8 +2848,32 @@
                      b: buildEqualTree(ids.slice(1), dir) };
         }
 
-        // Tear down all panels and rebuild a 1×N dashboard of the available
-        // biogeochemical presets.
+        // Drop all plot panels and stash non-(globe/3D) singletons, but KEEP the
+        // globe + 3D panels mounted exactly where they are. Re-parenting an iframe
+        // reloads it (new WebGL context + lost tile cache → sluggish globe), so the
+        // layout builders below reuse these in place and only reposition them.
+        // Returns the surviving {map, td} (either may be null if not currently open).
+        function keepGlobeAnd3D() {
+            const map = Object.values(panels).find(p => p.type === 'map') || null;
+            const td  = Object.values(panels).find(p => p.type === '3d')  || null;
+            Object.values(panels).forEach(p => {
+                if (p === map || p === td) return;
+                if (p.hostedEl) unmountHosted(p);
+                p.el.remove();
+                delete panels[p.id];
+            });
+            return { map, td };
+        }
+
+        // Re-fit a reused (already-loaded) globe: whole-globe for Map view, else the
+        // normal track fit. Fresh globes auto-fit on load, so nothing to do there.
+        function refitReusedGlobe(mapPanel, whole) {
+            if (mapPanel && mapPanel.iframe && mapPanel.iframe.contentWindow) {
+                mapPanel.iframe.contentWindow.postMessage(whole ? { type: 'fitView', whole: true } : { type: 'fitView' }, '*');
+            }
+        }
+
+        // Rebuild a 1×N dashboard of the available biogeochemical presets.
         function applyDashboard() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const candidates = ['preset_temp', 'preset_chla', 'preset_doxy'];
@@ -2825,12 +2883,13 @@
             });
             if (avail.length === 0) return;
 
-            tearDownPanels();   // unmounts globe/3D back to the stash before re-adding
+            _pendingGlobeFit = false;
+            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
 
             // Globe + 3D as a 1×2 side column, then the biogeochemical plots as a
             // 1×N stack (landscape rows) filling the rest.
-            const map = createPanel('map', { datasetId: datasetSelect.value || '' });
-            const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
+            const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
             const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
 
             layoutTree = {
@@ -2840,12 +2899,63 @@
             };
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
-            renderPanel(map); renderPanel(td);
+            if (!keepMap) renderPanel(map);
+            if (!keepTd) renderPanel(td);
+            refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
         }
 
+        // "Map" preset: globe + 3D side by side, no plot. The toolbar has nothing
+        // to drive, so the colour rail greys out; the globe pulls back to whole-globe.
+        function applyMapView() {
+            _pendingGlobeFit = false;
+            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
+            layoutTree = {
+                dir: 'row', ratio: 0.5,
+                a: { leaf: true, panelId: map.id },
+                b: { leaf: true, panelId: td.id }
+            };
+            activePlotPanelId = null;
+            plotIframe = null;
+            currentPreset = '__map__';
+            renderLayout();
+            if (!keepMap) { _pendingGlobeFit = true; renderPanel(map); }  // fresh globe fits via mapReady
+            if (!keepTd) renderPanel(td);
+            refitReusedGlobe(keepMap, true);   // reused globe → whole-globe now
+            setActive(map.id);
+            updatePresetUI();
+            setColourRail(false);   // no plot → grey the colour bar
+        }
+
+        // Rebuild the default view (globe + 3D in a narrow left column, one plot on
+        // the right) seeded with a chosen preset. Used when a preset button is
+        // pressed while no plot panel is open — a clean "reset to default + this plot".
+        function applyDefaultView(presetKey) {
+            _pendingGlobeFit = false;
+            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const plot = createPanel('plot', presetKey ? stateFromPreset(presetKey) : captureToolbarState());
+            const map  = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td   = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
+            layoutTree = {
+                dir: 'row', ratio: 0.24,
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
+                b: { leaf: true, panelId: plot.id }
+            };
+            if (presetKey) currentPreset = presetKey;
+            plotIframe = plot.iframe;
+            renderLayout();
+            renderPanel(plot);
+            if (!keepMap) renderPanel(map);
+            if (!keepTd) renderPanel(td);
+            refitReusedGlobe(keepMap, false);   // reused globe → back to track fit
+            setActive(plot.id);
+            updatePresetUI();
+        }
+
         function resetPlotState(fullReset = true) {
-            plotIframe.classList.add('hidden');
+            plotIframe?.classList.add('hidden');
             emptyState.classList.remove('hidden');
             emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables to Plot</p>`;
             downloadBtn.classList.add('hidden');
@@ -3005,9 +3115,9 @@
             }
         });
         document.getElementById('autoColorBtn').addEventListener('click', () => {
-            if (!plotIframe.contentWindow) return;
-            plotIframe.contentWindow.postMessage({ 
-                type: 'autoColour', 
+            if (!plotIframe || !plotIframe.contentWindow) return;
+            plotIframe.contentWindow.postMessage({
+                type: 'autoColour',
                 bounds: currentZoomBounds 
             }, '*');
         });
@@ -3223,8 +3333,8 @@
         // been clicked but isn't ready yet (still downloading / processing).
         function showLivePlaceholder(entry) {
             pendingActivateId = null;          // not a real record id yet
-            plotIframe.src = '';
-            plotIframe.classList.add('hidden');
+            if (plotIframe) plotIframe.src = '';
+            plotIframe?.classList.add('hidden');
             isPlotting = false; plotQueued = false;
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) iframe3D.src = '';
@@ -3639,7 +3749,9 @@
                 }
             });
             
-            if (!currentValid) {
+            // Synthetic views (Map / Dashboard) aren't in OceanPresets — keep them
+            // selected across a dataset change instead of snapping to a real preset.
+            if (!currentValid && !String(currentPreset).startsWith('__')) {
                 currentPreset = firstValid || 'preset_temp';
             }
             applyPreset(currentPreset);
@@ -3698,7 +3810,7 @@
         qcFlagsInput.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
 
         downloadBtn.addEventListener('click', () => {
-            if (plotIframe.contentWindow) {
+            if (plotIframe && plotIframe.contentWindow) {
                 plotIframe.contentWindow.postMessage({ type: 'downloadPlot' }, '*');
             }
         });
@@ -3715,6 +3827,10 @@
             currentDacStatus = { available: false, shown: false };
             gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             currentMapDataset = fileId;
+            // The globe now has a src — clear its "Globe" placeholder veil. Needed on
+            // refresh into Map view, where placeholders were evaluated before the src
+            // was set (the 3D iframe escapes this only because it has a default src).
+            refreshPanelPlaceholders();
         }
 
         const resetInspectorState = () => {
@@ -3894,7 +4010,7 @@
             processingOverlay.classList.remove('hidden');
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
-            plotIframe.classList.add('hidden');
+            plotIframe?.classList.add('hidden');
             downloadBtn.classList.add('hidden');
             processingTitle.textContent = rec.status === 'error'
                 ? 'Failed to process file'
@@ -3953,7 +4069,7 @@
                 demoPrompt.classList.remove('hidden');
                 emptyState.classList.add('hidden');
                 hideProcessingOverlay();
-                plotIframe.classList.add('hidden');
+                plotIframe?.classList.add('hidden');
                 resetBtn.disabled = true;
                 resetBtn.classList.add('opacity-50');
             } else {
@@ -3970,11 +4086,11 @@
                 } else if (active && active.status === 'ready') {
                     hideProcessingOverlay();
                     // emptyState only shows when iframe isn't yet loaded; updatePlot hides it when it kicks off.
-                    if (plotIframe.classList.contains('hidden')) emptyState.classList.remove('hidden');
+                    if (plotIframe && plotIframe.classList.contains('hidden')) emptyState.classList.remove('hidden');
                 } else {
                     // No active selection — invite user to pick one.
                     hideProcessingOverlay();
-                    plotIframe.classList.add('hidden');
+                    plotIframe?.classList.add('hidden');
                     emptyState.classList.remove('hidden');
                 }
             }
@@ -4056,8 +4172,8 @@
                 // covers the plot area, so the side panels would otherwise
                 // keep showing the old file's contents.
                 pendingActivateId = fileId;
-                plotIframe.src = '';
-                plotIframe.classList.add('hidden');
+                if (plotIframe) plotIframe.src = '';
+                plotIframe?.classList.add('hidden');
                 isPlotting = false;
                 plotQueued = false;
                 const iframe3D = document.getElementById('iframe3D');
@@ -4085,7 +4201,7 @@
             // Without this, swapping files while a slow request (e.g. CTD
             // interp) is loading can leave the UI stuck on "Fetching data..."
             // until the old fetch finishes.
-            plotIframe.src = '';
+            if (plotIframe) plotIframe.src = '';
             isPlotting = false;
             plotQueued = false;
 
@@ -4599,7 +4715,7 @@
             if (!_jellyOverlayArmed || isPlotting) {
                 _pendingJellyOverlays.push(overrides);
             } else {
-                plotIframe.contentWindow && plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides }, '*');
+                plotIframe && plotIframe.contentWindow && plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides }, '*');
             }
         }
 
@@ -4727,7 +4843,7 @@
                     if (yMinV !== undefined && yMaxV !== undefined) {
                         limits.yMin = yMinV; limits.yMax = yMaxV;
                     }
-                    if (Object.keys(limits).length && plotIframe.contentWindow) {
+                    if (Object.keys(limits).length && plotIframe && plotIframe.contentWindow) {
                         plotIframe.contentWindow.postMessage({ type: 'updateLimits', limits }, '*');
                         const gl = currentGlobalLimits || {};
                         const zb = currentZoomBounds || {};
@@ -4932,7 +5048,7 @@
             if (plotIframe && event.source !== plotIframe.contentWindow) return;
             if (event.data && event.data.type === 'plotLoaded') {
                 _jellyOverlayArmed = true;
-                if (plotIframe.contentWindow) {
+                if (plotIframe && plotIframe.contentWindow) {
                     if (_pendingJellyOverlays.length) {
                         const queue = _pendingJellyOverlays.slice();
                         _pendingJellyOverlays = [];
