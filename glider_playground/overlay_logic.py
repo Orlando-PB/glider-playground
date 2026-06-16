@@ -1,7 +1,7 @@
 """Copernicus Marine surface overlays — fetch + lightweight session cache.
 
 Generalises the original CHL-a overlay to any registered variable (chlorophyll,
-temperature, salinity, oxygen, pH, phytoplankton biomass). Each overlay maps to
+temperature, salinity, oxygen, pH, phytoplankton biomass, sea surface height). Each overlay maps to
 one or more Copernicus dataset ids and a variable name; the satellite ocean-colour
 product is L4 (2D), the rest are 3D model analysis/forecast products from which we
 take the surface level. The map view draws the returned point grid as coloured
@@ -33,6 +33,7 @@ OVERLAYS: dict[str, dict] = {
     "o2":       {"datasets": ["cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m"],     "variable": "o2",     "surface": True},
     "ph":       {"datasets": ["cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m"],     "variable": "ph",     "surface": True},
     "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"],     "variable": "phyc",   "surface": True},
+    "ssh":      {"datasets": ["cmems_mod_glo_phy_anfc_0.083deg_P1D-m"],        "variable": "zos",    "surface": False},
 }
 
 # Currents is a vector field (uo, vo) rather than a single scalar, so it gets its

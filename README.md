@@ -78,7 +78,7 @@ Presets pick sensible X/Y/Colour variables and skip anything the current file do
 
 - **Globe** — the glider's GPS track on an interactive 3D globe
 - **3D View** — the dive track in 3D with bathymetry
-- **Copernicus overlays** — drape satellite/model surface fields over the globe: **Chlorophyll-a, Temperature, Salinity, O₂, pH, Biomass**
+- **Copernicus overlays** — drape satellite/model surface fields over the globe: **Chlorophyll-a, Temperature, Salinity, O₂, pH, Biomass, Sea Surface Height**
 - **Surface currents** — an animated particle-flow field of Copernicus surface currents
 - **DAC arrows** — per-dive depth-averaged current vectors, shown when the file provides them
 
