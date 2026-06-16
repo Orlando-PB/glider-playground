@@ -2472,8 +2472,13 @@
                 // Panels render when the dataset loads (handleDatasetChange), so
                 // we don't load a possibly-stale dataset here.
                 _pendingRestoreSync = true;
-                // A restored plot-less (Map) layout should also frame the whole globe.
-                if (!Object.values(panels).some(p => p.type === 'plot')) _pendingGlobeFit = true;
+                // A restored plot-less (Map) layout should also frame the whole globe,
+                // and select the Map layout preset — otherwise the preset filter/
+                // detection falls back to a real preset (e.g. Thermal) on reload.
+                if (!Object.values(panels).some(p => p.type === 'plot')) {
+                    _pendingGlobeFit = true;
+                    if (Object.values(panels).some(p => p.type === 'map')) currentPreset = '__map__';
+                }
                 return true;
             } catch (e) { console.error('Layout restore failed:', e); return false; }
         }
@@ -2760,12 +2765,21 @@
         }
 
         function checkAndUpdatePreset() {
+            // Variable-based detection only applies when a plot is open. With no
+            // plot (e.g. the Map view, including after a reload that restores it),
+            // the active selection is a layout preset — otherwise detectCurrentPreset
+            // reads the leftover toolbar defaults and wrongly highlights Thermal.
+            if (!hasPanelType('plot')) {
+                if (hasPanelType('map')) currentPreset = '__map__';
+                updatePresetUI();
+                return;
+            }
             currentPreset = detectCurrentPreset();
             updatePresetUI();
-            
+
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
-            
+
         }
 
         function renderPresetsDropdown() {
