@@ -708,6 +708,7 @@ def get_variables(filepath):
             "units": m.get("units") or "No units",
             "type": "numeric",
             "description": m.get("description") or "No description available",
+            "derived": True,
         })
     return variables
 
@@ -744,6 +745,7 @@ def get_dataset_info(filepath):
             "name": name,
             "description": m.get("description") or "No description available",
             "units": m.get("units") or "",
+            "derived": True,
         })
 
     variables.sort(key=lambda x: x["name"].lower())

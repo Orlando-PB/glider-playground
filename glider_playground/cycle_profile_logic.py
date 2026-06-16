@@ -3,9 +3,8 @@ import os
 import functools
 import numpy as np
 import pandas as pd
-import xarray as xr
 
-from . import plot_logic   # shared NETCDF_LOCK (HDF5 is not thread-safe)
+from . import plot_logic
 
 CYCLE_VAR_NAMES = ["CYCLE_NUMBER", "CYCLE"]
 
@@ -16,11 +15,11 @@ def get_cycles(filepath):
     if not os.path.exists(filepath):
         return {"error": "File not found"}
 
-    try:
-        with plot_logic.NETCDF_LOCK, xr.open_dataset(filepath) as ds:
-            var_names = list(ds.variables.keys())
-    except Exception as e:
-        return {"error": f"Failed to read dataset: {e}"}
+    # Use the derived-aware name list so CYCLE / SCI_PHASE / PROFILE_DIRECTION
+    # computed post-preload (see derive_logic) are detected like native vars.
+    var_names = plot_logic._get_var_names(filepath)
+    if not var_names:
+        return {"error": "Failed to read dataset"}
 
     cycle_var = next((v for v in CYCLE_VAR_NAMES if v in var_names), None)
     has_sci_phase = "SCI_PHASE" in var_names
@@ -39,10 +38,16 @@ def get_cycles(filepath):
         if time_vars:
             time_var = time_vars[0]
 
+    # Read via the cache layer so derived arrays are folded in (open_dataset
+    # alone only sees the on-disk file, which lacks the derived CYCLE).
+    read_names = tuple(sorted({cycle_var} | ({time_var} if time_var else set())))
+    data = plot_logic._read_vars_cached(filepath, read_names)
+    if not data or cycle_var not in data:
+        return {**base, "error": "Failed to read cycle data"}
+
     try:
-        with plot_logic.NETCDF_LOCK, xr.open_dataset(filepath) as ds:
-            cycle_nums = ds[cycle_var].values.ravel().astype(float)
-            time_vals = ds[time_var].values.ravel() if time_var else None
+        cycle_nums = np.asarray(data[cycle_var]).ravel().astype(float)
+        time_vals = np.asarray(data[time_var]).ravel() if (time_var and time_var in data) else None
     except Exception as e:
         return {**base, "error": f"Failed to read cycle data: {e}"}
 

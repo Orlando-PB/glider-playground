@@ -198,8 +198,16 @@ const CycleProfile = (() => {
 
     function _setArrowState(prevBtn, nextBtn, idx, total) {
         if (!prevBtn || !nextBtn) return;
-        prevBtn.disabled = idx <= 0;
-        nextBtn.disabled = idx >= total - 1;
+        if (total <= 0) {
+            prevBtn.disabled = nextBtn.disabled = true;
+        } else if (idx < 0) {
+            // Nothing selected yet: next (→) picks the first, prev (←) the last,
+            // so both arrows must stay enabled.
+            prevBtn.disabled = nextBtn.disabled = false;
+        } else {
+            prevBtn.disabled = idx <= 0;
+            nextBtn.disabled = idx >= total - 1;
+        }
         [prevBtn, nextBtn].forEach(btn => {
             btn.classList.toggle('opacity-30', btn.disabled);
             btn.style.cursor = btn.disabled ? 'not-allowed' : '';

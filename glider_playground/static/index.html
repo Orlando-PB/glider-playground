@@ -820,6 +820,8 @@
         .var-row .var-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .var-row .var-name { font-size: 11px; font-weight: 500; color: var(--text-primary); font-family: 'SF Mono','Menlo','Monaco', ui-monospace, monospace; letter-spacing: -0.01em; }
         .var-row .var-units { font-size: 9.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+        .var-row .var-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+        .var-row .var-derived { font-size: 9px; font-weight: 600; color: #fff; background: var(--googleRed, #ea4335); padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
         .var-row .var-desc { font-size: 10px; color: var(--text-muted); line-height: 1.35; overflow: hidden; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .var-row.is-qc .var-name { color: var(--text-muted); font-style: italic; }
 
@@ -1120,6 +1122,57 @@
                     <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
                 </div>
 
+                <!-- Profiles navigation (JS-conditional) — kept high in the bar so it
+                     flows onto the first toolbar row after Presets when there's room,
+                     rather than dropping to a row of its own. Direction rides alongside. -->
+                <div id="navigateDivider" class="group-divider" style="display: none;"></div>
+                <div id="navigateContainer" class="toolbar-group" style="display: none;">
+                    <span class="group-label">
+                        Profiles
+                        <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
+                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
+                        <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
+                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                        </button>
+                        <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
+                        <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
+                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                        </button>
+                        <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
+                        <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                            <span class="material-symbols-outlined text-[13px]">close</span>
+                        </button>
+                    </div>
+                    <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
+                    <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
+                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
+                        <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
+                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                        </button>
+                        <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
+                        <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
+                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                        </button>
+                        <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
+                            <span class="material-symbols-outlined text-[13px]">close</span>
+                        </button>
+                    </div>
+                    <!-- Direction buttons: icon-only (JS-conditional) -->
+                    <div id="dirContainer" class="flex gap-0.5 items-center ml-1" style="display: none;">
+                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
+                            <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+                        </button>
+                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
+                            <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+                        </button>
+                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
+                            <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
+                        </button>
+                    </div>
+                </div>
+
                 <div class="group-divider adv-only"></div>
 
                 <!-- Axes group (advanced only — presets drive variables by default) -->
@@ -1181,43 +1234,6 @@
                     </span>
                 </div>
 
-                <!-- Profiles navigation (JS-conditional) -->
-                <div id="navigateDivider" class="group-divider" style="display: none;"></div>
-                <div id="navigateContainer" class="toolbar-group" style="display: none;">
-                    <span class="group-label">
-                        Profiles
-                        <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
-                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
-                        <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
-                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                        </button>
-                        <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
-                        <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
-                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                        </button>
-                        <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
-                        <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
-                            <span class="material-symbols-outlined text-[13px]">close</span>
-                        </button>
-                    </div>
-                    <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
-                    <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
-                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
-                        <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
-                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                        </button>
-                        <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
-                        <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
-                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                        </button>
-                        <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
-                            <span class="material-symbols-outlined text-[13px]">close</span>
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Advanced only: Phases (also JS-conditional) -->
                 <div id="phaseDivider" class="group-divider adv-only" style="display: none;"></div>
                 <div id="phaseContainer" class="toolbar-group adv-only" style="display: none;">
@@ -1227,19 +1243,6 @@
                     </span>
                     <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
                     <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
-                </div>
-
-                <!-- Direction buttons: icon-only (JS-conditional) -->
-                <div id="dirContainer" class="flex gap-0.5 items-center" style="display: none;">
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
-                        <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
-                        <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
-                        <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
-                    </button>
                 </div>
 
             </div>
@@ -1599,7 +1602,7 @@
             phaseChipsContainer:document.getElementById('phaseChipsContainer'),
             phaseAllBtn:        document.getElementById('phaseAllBtn'),
             dirContainer:       document.getElementById('dirContainer'),
-        }, () => { resetPlotState(true); updatePlot(); });
+        }, () => { resetPlotState(true); updatePlot(); propagateCycleProfileToSynced(); });
 
         const cTrimContainer = document.getElementById('cTrimContainer');
         const cTrimTrack = document.getElementById('cTrimTrack');
@@ -1723,6 +1726,24 @@
         function panelXRange(p) {
             const zb = (p.id === activePlotPanelId) ? currentZoomBounds : (p.state && p.state.zoomBounds);
             return (zb && zb.xMin !== undefined && zb.xMin !== null) ? { xMin: zb.xMin, xMax: zb.xMax } : null;
+        }
+
+        // When time-axis sync is on, a profile / cycle / phase / direction change
+        // should apply to every timeseries plot — not just the active one — so
+        // stepping a profile shows the same profile across all synced plots. The
+        // active plot is already re-rendered by updatePlot(); here we push the same
+        // cycle/profile params onto the rest (each keeps its own x/y/c variables).
+        function propagateCycleProfileToSynced() {
+            if (_suspendToolbar || !alignTimeAxes) return;
+            const cp = (CycleProfile.getParams && CycleProfile.getParams()) || {};
+            const active = activePlotPanel();
+            timeseriesPanels().forEach(p => {
+                if (active && p.id === active.id) return;
+                p.state.cycleProfile = { ...cp };
+                p.state.zoomBounds = null;   // a profile change supersedes any prior zoom
+                renderPlotPanel(p);
+            });
+            scheduleSaveLayout();
         }
 
         // Drive a set of timeseries plots to an explicit x (time) range. Only the
@@ -3968,7 +3989,10 @@
                     row.innerHTML = `
                         <div class="var-head">
                             <span class="var-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
-                            ${units && units.toLowerCase() !== 'no units' ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
+                            <div class="var-tags">
+                                ${units && units.toLowerCase() !== 'no units' ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
+                                ${v.derived ? `<span class="var-derived" title="Calculated by Glider Playground — not present in the original file">derived</span>` : ''}
+                            </div>
                         </div>
                         ${desc && desc.toLowerCase() !== 'no description available' ? `<div class="var-desc">${escapeHtml(desc)}</div>` : ''}
                     `;
@@ -3976,7 +4000,7 @@
                         row.setAttribute('data-tip', desc + (units ? `  ·  ${units}` : ''));
                     }
                     // Searchable haystack: name, units and description.
-                    row.dataset.search = `${v.name} ${units} ${desc}`.toLowerCase();
+                    row.dataset.search = `${v.name} ${units} ${desc} ${v.derived ? 'derived' : ''}`.toLowerCase();
                     row.dataset.name = v.name;
                     varRows.appendChild(row);
                 });

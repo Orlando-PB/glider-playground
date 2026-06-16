@@ -45,8 +45,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-# v7: derive CTD variables (salinity / density) from conductivity via GSW.
-CACHE_VERSION = "7"
+# v8: Phases
+CACHE_VERSION = "8"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -596,7 +596,7 @@ def _process(file_id: str):
                     with plot_logic._PRELOADED_LOCK:
                         plot_logic._PRELOADED[p] = True
                 else:
-                    # Disk preload was wiped between runs — redo it.
+                    # Disk preload was wiped between runs - redo it.
                     done_steps.discard(STEP_PRELOAD)
                     rec["_done_steps"] = [s for s in (rec.get("_done_steps") or []) if s != STEP_PRELOAD]
                     plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
@@ -607,24 +607,21 @@ def _process(file_id: str):
         if is_server:
             time.sleep(THROTTLE_PI_STAGES)
 
-        # 1b. Derive CTD variables (salinity / density) from conductivity, with a
-        # CTD cleanup first. Best-effort: if it fails or doesn't apply, the rest
-        # of processing carries on. Runs before the variable index so derived
-        # vars are listed alongside the file's own.
+        # 1b. Derive extra variables.
         if _is_removed(rec):
             return
         if not _is_done(STEP_DERIVE):
-            _set(rec, progress=28, stage="deriving CTD variables")
+            _set(rec, progress=28, stage="deriving variables")
 
             def _derive_cb(stage_msg: str):
                 if not _is_removed(rec):
                     _set(rec, stage=stage_msg)
 
             try:
-                derive_logic.derive_ctd_variables(p, log_cb=_derive_cb)
+                derive_logic.derive_all_extra_variables(p, log_cb=_derive_cb)
             except Exception as e:
-                # Never let a derivation failure abort the file.
-                print(f"CTD derivation failed for {p}: {e}")
+                print(f"Derivation failed for {p}: {e}")
+
             _release_memory()
             _mark_step_done(rec, STEP_DERIVE)
             done_steps.add(STEP_DERIVE)
@@ -692,7 +689,7 @@ def _process(file_id: str):
             _mark_step_done(rec, STEP_3D)
             done_steps.add(STEP_3D)
 
-        # 6. Pre-warm CTD overlays — each combo is its own resumable step.
+        # 6. Pre-warm CTD overlays - each combo is its own resumable step.
         # The overlay arrays themselves are cached to disk by plot_logic in
         # low-memory mode, so re-calling _ctd_processed_arrays after a
         # successful run is a cheap disk read.

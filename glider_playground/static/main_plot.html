@@ -277,7 +277,7 @@
                 layoutUpdate['margin.l'] = 50;
             } else {
                 layoutUpdate.title = null;
-                layoutUpdate['margin.t'] = 20;
+                layoutUpdate['margin.t'] = 8;   // keep in sync with buildLayout's tight top margin
                 layoutUpdate['margin.l'] = 60;
             }
             const { shapes, annotations } = buildJellyShapesAndAnnotations(TC);
@@ -379,7 +379,10 @@
             const GRID_COLOR = TC.grid;
             const LINE_COLOR = TC.line;
             const layout = {
-                margin: { l: 60, r: 20, t: 20, b: xLabel ? 55 : 50 },
+                // Tight margins so stacked plots pack close in multiview. Top is
+                // mostly empty space; bottom only needs to fit the x tick labels
+                // (plus the axis title when there is one, i.e. non-datetime x).
+                margin: { l: 60, r: 20, t: 8, b: xLabel ? 46 : 38 },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false,
@@ -396,7 +399,10 @@
                 paper_bgcolor: 'transparent',
                 dragmode: 'zoom',
                 showlegend: (urlParams.get('cmap') || 'thermal') === 'discrete_09',
-                legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: 'rgba(0,0,0,0)', borderwidth: 0, x: 1.01, xanchor: 'left', y: 1, yanchor: 'top' },
+                // Overlay the phase legend inside the plot (top-left) rather than
+                // outside to the right — keeps the plotting area full width so the
+                // x axis lines up with other (colorbar/no-legend) plots in multiview.
+                legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: TC.anno, bordercolor: GRID_COLOR, borderwidth: 1, x: 0.01, xanchor: 'left', y: 0.99, yanchor: 'top' },
             };
 
             if (_jellyOverrides.title) {
@@ -783,7 +789,6 @@
             if (!plotData) return;
 
             if (msg.type === 'updateLimits') {
-                const update = {};
                 // A datetime x-axis reports its range as date strings (e.g.
                 // '2026-04-25 10:08:25.6638'), which Plotly accepts directly — so
                 // only number-type bounds are validated with isNaN. (This path is
@@ -793,32 +798,92 @@
                 const hasX = isValidBound(msg.limits.xMin) && isValidBound(msg.limits.xMax);
                 const hasY = isValidBound(msg.limits.yMin) && isValidBound(msg.limits.yMax);
                 const invY = urlParams.get('invert_y') === 'true';
-                if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
-                if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
-                if (Object.keys(update).length === 0) return;
+                if (!hasX && !hasY) return;
+
+                // Parse an axis bound to a comparable number (ms for date axes).
+                const toNumX = (v) => {
+                    if (typeof v === 'number') return v;
+                    const t = Date.parse(String(v).replace(' ', 'T') + 'Z');
+                    return isNaN(t) ? Date.parse(v) : t;
+                };
+                const gl = _globalExtent || {};
+
+                // Numeric incoming x-range, for "is this a zoom-out?" comparisons.
+                let reqXMin, reqXMax;
+                if (hasX) {
+                    reqXMin = plotData.is_x_dt ? toNumX(msg.limits.xMin) : Number(msg.limits.xMin);
+                    reqXMax = plotData.is_x_dt ? toNumX(msg.limits.xMax) : Number(msg.limits.xMax);
+                    if (reqXMin > reqXMax) { const t = reqXMin; reqXMin = reqXMax; reqXMax = t; }
+                }
+
+                // Decide whether the full downsampled record (_originalPlotData,
+                // already in memory) should be shown right now instead of the
+                // currently-displayed high-res chunk:
+                //   coversFull — the incoming x-range spans our whole data extent
+                //     (a synced double-click reset / "show all"). The base record
+                //     IS the zoomed-out data, so no server fetch is needed at all.
+                //   needBase   — we're showing a narrower zoom chunk that doesn't
+                //     cover the new (wider) range, so relayouting it alone would
+                //     leave a stale partial slice stretched across the axis until
+                //     a fetch trickles in. Drop back to the full record instantly
+                //     as a stopgap; the high-res fetch below still upgrades it.
+                let coversFull = false, needBase = false;
+                if (hasX && _originalPlotData && gl.xMin !== undefined && gl.xMax !== undefined) {
+                    const span = Math.abs(gl.xMax - gl.xMin) || 1;
+                    const tol = span * 0.01;
+                    if (!hasY && reqXMin <= gl.xMin + tol && reqXMax >= gl.xMax - tol) coversFull = true;
+                    const c = plotData._zoomFetchedFor;
+                    if (c) {
+                        const cMin = plotData.is_x_dt ? toNumX(c.xMin) : Number(c.xMin);
+                        const cMax = plotData.is_x_dt ? toNumX(c.xMax) : Number(c.xMax);
+                        if (reqXMin < cMin || reqXMax > cMax) needBase = true;
+                    }
+                }
+
+                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+                clearTimeout(_pendingBounds);
+
+                const showBase = coversFull || needBase;
+                if (showBase && plotData !== _originalPlotData) plotData = _originalPlotData;
 
                 _suppressRelayout = true;
-                Plotly.relayout('plotDiv', update).then(() => { _suppressRelayout = false; });
+                if (showBase) {
+                    // Rebuild traces from the full record, clipped to the requested
+                    // axis range (y left autoranged when no y bounds were supplied).
+                    Plotly.react('plotDiv', createTraces(plotData),
+                        buildLayout(hasX ? [msg.limits.xMin, msg.limits.xMax] : null,
+                                    hasY ? [msg.limits.yMin, msg.limits.yMax] : null))
+                        .then(() => { _suppressRelayout = false; });
+                } else {
+                    const update = {};
+                    if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
+                    if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
+                    Plotly.relayout('plotDiv', update).then(() => { _suppressRelayout = false; });
+                }
 
-                // Programmatic relayout doesn't always fire plotly_relayout with the flat-indexed
-                // keys (xaxis.range[0], xaxis.range[1]) that the drag handler expects, so we
-                // directly drive the same zoom flow here: record the new zoom bounds, notify
-                // the parent, and schedule a bgFetch for high-res data.
-                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
-
-                const gl = _globalExtent || {};
                 const xMin = hasX ? msg.limits.xMin : gl.xMin;
                 const xMax = hasX ? msg.limits.xMax : gl.xMax;
                 const yMin = hasY ? msg.limits.yMin : gl.yMin;
                 const yMax = hasY ? msg.limits.yMax : gl.yMax;
                 if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
 
-                // An x-only update (no y bounds supplied — e.g. a synced time axis)
-                // must leave the y axis autoranged on the eventual bgFetch re-render.
+                // At full extent the base record already is the data — re-render is
+                // done, skip the high-res fetch entirely (this is what makes a synced
+                // zoom-out snap rather than reload the full data a second later).
+                if (coversFull) {
+                    _currentZoom = { xMin, xMax, yMin, yMax, yAuto: true };
+                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+                    window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
+                    return;
+                }
+
+                // Programmatic relayout doesn't always fire plotly_relayout with the flat-indexed
+                // keys (xaxis.range[0], xaxis.range[1]) that the drag handler expects, so we
+                // directly drive the same zoom flow here: record the new zoom bounds, notify
+                // the parent, and schedule a bgFetch for high-res data. An x-only update (no y
+                // bounds — e.g. a synced time axis) leaves the y axis autoranged on re-render.
                 _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
-
-                clearTimeout(_pendingBounds);
                 _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
             }
             
