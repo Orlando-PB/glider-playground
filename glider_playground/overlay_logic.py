@@ -45,10 +45,12 @@ CURRENTS: dict = {"dataset": _DS_CUR, "variables": ["uo", "vo"]}
 _CACHE: dict = {}
 _MAX_CACHE = 24
 
-# Keep the cell grid under this per side so the globe stays responsive. High
-# enough that the model products (≤0.25°) and most of the satellite grid render
-# at their native resolution; the merged-mesh overlay handles this easily.
-_MAX_CELLS_PER_SIDE = 400
+# Keep the cell grid under this per side so the globe stays responsive. The
+# satellite CHL-a grid is 1/24° (≈4 km), so 800 keeps a box of up to ~33° per
+# side at full native resolution — in particular a cos(lat)-widened box at high
+# latitude (see _fetch_cached) stays native instead of being subsampled. The
+# merged-mesh overlay handles this cell count easily; the payload gzips ~5x.
+_MAX_CELLS_PER_SIDE = 800
 
 # Currents are subsampled harder: the field is smooth, the payload carries two
 # components per cell, and the frontend interpolates a continuous flow from it —
@@ -125,11 +127,30 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
             "hint": "Run: pip install copernicusmarine",
         }
 
-    pad = 4.0  # degrees of context around the glider bbox (~doubles the area vs 2°)
-    min_lat = max(-90.0, lat_min - pad)
-    max_lat = min(90.0, lat_max + pad)
-    min_lon = max(-180.0, lon_min - pad)
-    max_lon = min(180.0, lon_max + pad)
+    # Fetch a ~12° (TARGET) box of latitude centred on the deployment, and a
+    # longitude span widened by 1/cos(lat) so the box covers a *physically* square
+    # area rather than a square-in-degrees one. A degree of longitude shrinks
+    # toward the poles, so without this a high-latitude box looks tall and narrow
+    # on the globe (more coverage N-S than E-W). At 1/24° (≈4 km native) a box this
+    # size stays at full resolution thanks to _MAX_CELLS_PER_SIDE=800; the payload
+    # is ~0.7 MB gzipped and the fetch is sub-second beyond the open handshake —
+    # see the overlay size audit. A larger deployment expands the box to cover
+    # itself plus a small margin; a point/small deployment still gets the full box.
+    TARGET = 12.0   # degrees of latitude per side for a typical deployment
+    MARGIN = 2.0    # extra context when the deployment already exceeds TARGET
+    lat_c = (lat_min + lat_max) / 2.0
+    lon_c = (lon_min + lon_max) / 2.0
+    half_lat = max(TARGET / 2.0, (lat_max - lat_min) / 2.0 + MARGIN)
+    # Clamp cos(lat) so the longitude widening can't blow up near the poles
+    # (cos 0.3 ≈ 72.5° lat); also cap the half-span at 16° so even the widened
+    # box stays within the native-resolution limit of the 800-cell cap.
+    cos_lat = max(float(np.cos(np.radians(lat_c))), 0.3)
+    half_lon = max(half_lat / cos_lat, (lon_max - lon_min) / 2.0 + MARGIN)
+    half_lon = min(half_lon, 16.0)
+    min_lat = max(-90.0, lat_c - half_lat)
+    max_lat = min(90.0, lat_c + half_lat)
+    min_lon = max(-180.0, lon_c - half_lon)
+    max_lon = min(180.0, lon_c + half_lon)
 
     if target_date:
         date_str = target_date[:10]

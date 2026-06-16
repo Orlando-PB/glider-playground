@@ -128,6 +128,31 @@
         #chla-err-cmd button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
         #chla-err-cmd button.copied { color: #34d399; }
         #chla-err-cmd .material-symbols-outlined { font-size: 14px; }
+
+        /* Clicked-coordinate bubble — top-centre, for piloting hand-off. */
+        #coord-bubble {
+            display: none; position: absolute; top: 10px; left: 50%;
+            transform: translateX(-50%); z-index: 70;
+            align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
+            border-radius: 8px; font-size: 11px; color: var(--text-primary);
+            background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+            max-width: calc(100vw - 20px); box-sizing: border-box;
+        }
+        #coord-bubble.visible { display: flex; }
+        #coord-bubble .coord-pin { font-size: 15px; color: var(--accent); }
+        #coord-text {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px; white-space: nowrap; user-select: text;
+        }
+        #coord-bubble button {
+            flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+            width: 24px; height: 24px; border: none; border-radius: 5px;
+            cursor: pointer; background: transparent; color: var(--text-muted);
+        }
+        #coord-bubble button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+        #coord-bubble button.copied { color: #34d399; }
+        #coord-bubble .material-symbols-outlined { font-size: 15px; }
     </style>
     <script>
         (function() {
@@ -173,6 +198,14 @@
         <div id="chla-bar-grad"></div>
         <span id="chla-bar-hi">–</span>
         <span id="chla-bar-date"></span>
+    </div>
+
+    <!-- Clicked-coordinate readout (top-centre). Populated on globe click. -->
+    <div id="coord-bubble">
+        <span class="material-symbols-outlined coord-pin">location_on</span>
+        <span id="coord-text">–</span>
+        <button id="coord-copy" type="button" title="Copy lat, lon"><span class="material-symbols-outlined">content_copy</span></button>
+        <button id="coord-close" type="button" title="Close"><span class="material-symbols-outlined">close</span></button>
     </div>
 
     <!-- CHL-a error toast -->
@@ -337,7 +370,7 @@
         let myGlobe = null;
         let trackSegments = [];
         let dacArrows = [];
-        let showDac = true;
+        let showDac = false;   // DAC arrows default to off, even when available; user toggles them on
         let _trackView = null;   // {centreLat, centreLng, maxSpan} for re-fitting the camera
 
         // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass / ssh) ──
@@ -560,6 +593,8 @@
                         controls.maxDistance = radius * (1 + CONFIG.maxAltitude);
                     } catch (_) {}
 
+                    attachCoordPicker();
+
                     myGlobe.onGlobeReady(() => {
                         document.getElementById('globe-container').style.visibility = 'visible';
                         document.getElementById('overlay').style.display = 'none';
@@ -667,7 +702,13 @@
                 vertexColors: true, transparent: true, opacity,
                 side: THREE.DoubleSide, depthWrite: false,
             });
-            return new THREE.Mesh(geom, mat);
+            const mesh = new THREE.Mesh(geom, mat);
+            // Draw the overlay backdrop before the transparent track/DAC arrows/flow
+            // particles so those always paint on top of it. Without this the mesh
+            // can sort in front and visually bury the arrows (depthWrite is off, so
+            // altitude alone doesn't decide the order for transparent layers).
+            mesh.renderOrder = -10;
+            return mesh;
         }
 
         function disposeOverlayMesh() {
@@ -771,6 +812,138 @@
             // Give a bit longer to read/copy when there's a command to act on.
             showOverlayError._t = setTimeout(() => box.classList.remove('visible'), cmd ? 15000 : 7000);
         }
+
+        // ── Click-to-pick coordinates (for piloting hand-off) ──────────
+        // globe.gl gives {lat, lng} for the clicked point on the globe. Show it
+        // top-centre with copy + close. High precision (6 dp ≈ 0.1 m) so the
+        // value is usable as a waypoint in piloting software.
+        let _lastCoord = null;
+
+        // Normalise longitude into (-180, 180] for a canonical readout.
+        function _wrapLon(lon) {
+            let x = ((lon + 180) % 360 + 360) % 360 - 180;
+            if (x === -180) x = 180;
+            return x;
+        }
+
+        // globe.gl's built-in onGlobeClick uses a very tight move tolerance, so a
+        // click with the faintest drift — common right after rotating, before the
+        // hand fully settles — gets treated as a drag and swallowed. We track
+        // pointer down/up ourselves with a forgiving threshold and raycast the
+        // pointer onto the globe sphere, which is far more reliable.
+        let _coordDown = null;   // {x, y} at pointerdown, screen px
+        const _COORD_MOVE_TOL = 6;   // px; a release within this of the press = a click
+
+        // Once the user has picked a point, switch the globe to a crosshair so the
+        // next point is easier to aim. Any drag (rotate) or closing the bubble
+        // drops back to the grab hand (clearing the inline cursor lets the CSS
+        // grab/grabbing rules take over again).
+        function setCoordAim(on) {
+            const el = document.getElementById('globe-container');
+            if (el) el.style.cursor = on ? 'crosshair' : '';
+        }
+
+        function attachCoordPicker() {
+            const el = document.getElementById('globe-container');
+            if (!el || el._coordPickerWired) return;
+            el._coordPickerWired = true;
+            el.addEventListener('pointerdown', (e) => {
+                _coordDown = { x: e.clientX, y: e.clientY };
+            });
+            el.addEventListener('pointermove', (e) => {
+                // A press that turns into a drag means the user is rotating —
+                // leave aim mode right away so the cursor reads as a grab.
+                if (_coordDown && Math.hypot(e.clientX - _coordDown.x, e.clientY - _coordDown.y) > _COORD_MOVE_TOL) {
+                    setCoordAim(false);
+                }
+            });
+            el.addEventListener('pointerup', (e) => {
+                const start = _coordDown;
+                _coordDown = null;
+                if (!start) return;
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _COORD_MOVE_TOL) return; // a drag/rotate
+                const geo = pickGlobeCoords(e.clientX, e.clientY);
+                if (geo) { showCoordBubble(geo); setCoordAim(true); }
+            });
+        }
+
+        // Screen pixel → {lat, lng} by raycasting the pointer onto the globe
+        // sphere (centred at the scene origin, radius = globe radius). Returns
+        // null when the click misses the globe (i.e. lands on empty space).
+        function pickGlobeCoords(clientX, clientY) {
+            if (!myGlobe) return null;
+            try {
+                const el = document.getElementById('globe-container');
+                const rect = el.getBoundingClientRect();
+                const ndc = new THREE.Vector2(
+                    ((clientX - rect.left) / rect.width) * 2 - 1,
+                    -(((clientY - rect.top) / rect.height) * 2 - 1)
+                );
+                const ray = new THREE.Raycaster();
+                ray.setFromCamera(ndc, myGlobe.camera());
+                const sphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), myGlobe.getGlobeRadius());
+                const hit = new THREE.Vector3();
+                if (!ray.ray.intersectSphere(sphere, hit)) return null;
+                const geo = myGlobe.toGeoCoords({ x: hit.x, y: hit.y, z: hit.z });
+                return { lat: geo.lat, lng: geo.lng };
+            } catch (_) { return null; }
+        }
+
+        function showCoordBubble({ lat, lng }) {
+            if (typeof lat !== 'number' || typeof lng !== 'number') return;
+            const la = lat, lo = _wrapLon(lng);
+            _lastCoord = { lat: la, lng: lo };
+            const hemiLat = la >= 0 ? 'N' : 'S';
+            const hemiLon = lo >= 0 ? 'E' : 'W';
+            document.getElementById('coord-text').textContent =
+                `${Math.abs(la).toFixed(6)}° ${hemiLat}, ${Math.abs(lo).toFixed(6)}° ${hemiLon}`;
+            const copyBtn = document.getElementById('coord-copy');
+            copyBtn.classList.remove('copied');
+            copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+            document.getElementById('coord-bubble').classList.add('visible');
+        }
+
+        // The string handed to the clipboard — plain signed decimal "lat, lon",
+        // a format most piloting/GIS tools accept. Tweak once we know the target.
+        function _coordCopyText() {
+            if (!_lastCoord) return '';
+            return `${_lastCoord.lat.toFixed(6)}, ${_lastCoord.lng.toFixed(6)}`;
+        }
+
+        (function wireCoordBubble() {
+            const bubble = document.getElementById('coord-bubble');
+            if (!bubble) return;
+            document.getElementById('coord-close').addEventListener('click', () => {
+                bubble.classList.remove('visible');
+                _lastCoord = null;
+                setCoordAim(false);
+            });
+            const copyBtn = document.getElementById('coord-copy');
+            copyBtn.addEventListener('click', async () => {
+                const text = _coordCopyText();
+                if (!text) return;
+                let ok = false;
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text); ok = true;
+                    }
+                } catch (_) {}
+                if (!ok) {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                        document.body.appendChild(ta); ta.focus(); ta.select();
+                        ok = document.execCommand('copy'); ta.remove();
+                    } catch (_) {}
+                }
+                copyBtn.classList.toggle('copied', ok);
+                copyBtn.innerHTML = `<span class="material-symbols-outlined">${ok ? 'check' : 'error'}</span>`;
+                setTimeout(() => {
+                    copyBtn.classList.remove('copied');
+                    copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+                }, 1500);
+            });
+        })();
 
         // Build the overlay rows in the sidebar (above Currents). Mutually
         // exclusive: clicking one replaces the active field. Styling is in CSS.
@@ -918,14 +1091,15 @@
             [0,[255,253,205]],[0.12,[235,219,143]],[0.25,[214,195,91]],[0.38,[187,179,50]],
             [0.50,[150,165,16]],[0.62,[104,149,9]],[0.74,[57,131,28]],[0.85,[24,115,40]],
             [0.93,[18,84,44]],[1,[23,35,19]] ] };
-        const CUR_MESH_OPACITY = 0.25;     // faint speed backdrop under the flow
+        const CUR_MESH_OPACITY = 0.65;     // speed backdrop under the flow (only a little ocean shows through)
         const CUR_PARTICLES = 4000;        // particles advected each frame
-        const CUR_TRAIL = 16;              // points kept per particle's fading trail
+        const CUR_TRAIL = 44;              // points kept per particle's fading trail (longer = longer streaks)
+        const CUR_LINE_COLOR = [0, 0, 0];  // streak colour, 0–1 per channel ([1,1,1] = white). Black so the lines stand out against the speed backdrop instead of blending into it.
         const CUR_ALT = 0.00013;           // above the speed mesh, just below the track
         const CUR_LIFE_MIN = 90, CUR_LIFE_MAX = 220;   // particle lifespan (frames)
         const CUR_BASE_OPACITY = 1.0;
         const CUR_DEG_PER_SEC = 0.32;      // arc/sec a p90-strength current sweeps
-        const CUR_ALPHA_FLOOR = 0.45;      // tail opacity floor → keeps lines bold, not wispy
+        const CUR_ALPHA_FLOOR = 0.45;      // tail opacity floor → head stays bold, tail fades off slightly
         const CUR_SPAWN_BIAS = 0.7;        // chance a new particle picks the fastest candidate
 
         let currentsData = null;     // fetched {lat0,lon0,dlat,dlon,nlat,nlon,u,v,...}
@@ -1099,7 +1273,7 @@
                     s.trail[tb + (L - 1) * 3 + 2] = p.z;
                 }
 
-                const c = overlayColor01(CURRENTS_DEF, speed, 0, hi);
+                const c = CUR_LINE_COLOR;   // constant (black) — speed is shown by the backdrop, not the line colour
                 // Whole-life fade: in over the first 12%, out over the last 30%.
                 const lt = s.age[i] / s.life[i];
                 const lifeFade = lt < 0.12 ? lt / 0.12 : (lt > 0.7 ? (1 - lt) / 0.3 : 1);

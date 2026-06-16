@@ -10,6 +10,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +24,12 @@ from . import spatial_logic
 from . import update_logic
 
 app = FastAPI()
+
+# Compress responses over ~1 KB. The overlay/currents JSON (coordinate grids)
+# compresses ~5x, which is the biggest win for the user on home-internet uplink
+# — see the overlay size audit. minimum_size skips tiny payloads where the
+# gzip overhead isn't worth it. Negligible CPU cost on the Pi.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
