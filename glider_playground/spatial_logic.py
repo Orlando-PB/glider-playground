@@ -22,6 +22,22 @@ BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 20.0
 GEO_GROUP_MIN_POINTS = 100
 
+# Position variable names in priority order. Some files lack the OG1 standard
+# LATITUDE/LONGITUDE and instead carry the BODC parameter codes ALATPT01 /
+# ALONPT01, which hold the same fix — use them as direct replacements.
+LAT_NAMES = ("LATITUDE", "ALATPT01")
+LON_NAMES = ("LONGITUDE", "ALONPT01")
+
+
+def _resolve_latlon_names(container):
+    """Pick the lat & lon variable names present in ``container`` (a dict or a
+    netCDF ``variables`` mapping), preferring LATITUDE/LONGITUDE and falling
+    back to the BODC codes ALATPT01/ALONPT01. Returns ``(lat_name, lon_name)``;
+    either may be ``None`` if absent."""
+    lat = next((n for n in LAT_NAMES if n in container), None)
+    lon = next((n for n in LON_NAMES if n in container), None)
+    return lat, lon
+
 # Depth-averaged current (DAC). Gliders log one current estimate per dive
 # (the dead-reckoning correction), so these arrays are sparse along the full
 # record. Source variable pairs are tried in priority order; the third value
@@ -128,20 +144,22 @@ def _read_lat_lon_pres_temp(filepath):
     """Read LAT/LON/PRES/TEMP as plain float arrays, preferring preloaded RAM."""
     pre = plot_logic._get_preloaded(filepath)
     if pre is not None:
-        if 'LATITUDE' not in pre or 'LONGITUDE' not in pre:
+        lat_name, lon_name = _resolve_latlon_names(pre)
+        if lat_name is None or lon_name is None:
             raise ValueError("No LATITUDE/LONGITUDE in this file")
-        lat = pre['LATITUDE']
-        lon = pre['LONGITUDE']
+        lat = pre[lat_name]
+        lon = pre[lon_name]
         pres = pre['PRES'] if 'PRES' in pre else np.zeros_like(lat)
         temp = pre.get('TEMP')
     else:
         if not os.path.exists(filepath):
             raise FileNotFoundError("File not found")
         with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
-            if 'LATITUDE' not in nc.variables or 'LONGITUDE' not in nc.variables:
+            lat_name, lon_name = _resolve_latlon_names(nc.variables)
+            if lat_name is None or lon_name is None:
                 raise ValueError("No LATITUDE/LONGITUDE in this file")
-            lat = nc.variables['LATITUDE'][:]
-            lon = nc.variables['LONGITUDE'][:]
+            lat = nc.variables[lat_name][:]
+            lon = nc.variables[lon_name][:]
             pres = nc.variables['PRES'][:] if 'PRES' in nc.variables else np.zeros_like(lat)
             temp = nc.variables['TEMP'][:] if 'TEMP' in nc.variables else None
 
@@ -232,7 +250,7 @@ def get_dac_vectors(filepath):
     keeping the most recent) so dense records don't pile arrows on top of
     each other.
     """
-    needed = ['LATITUDE', 'LONGITUDE']
+    needed = list(LAT_NAMES) + list(LON_NAMES)
     for u_name, v_name, _ in DAC_VARIABLE_SETS:
         needed += [u_name, v_name, f"{u_name}_QC", f"{v_name}_QC"]
 
@@ -240,10 +258,11 @@ def get_dac_vectors(filepath):
         arrs = _read_named_arrays(filepath, needed)
     except Exception:
         return []
-    if 'LATITUDE' not in arrs or 'LONGITUDE' not in arrs:
+    lat_name, lon_name = _resolve_latlon_names(arrs)
+    if lat_name is None or lon_name is None:
         return []
 
-    lat, lon = arrs['LATITUDE'], arrs['LONGITUDE']
+    lat, lon = arrs[lat_name], arrs[lon_name]
     times = _read_track_times(filepath)
 
     u = v = u_qc = v_qc = None

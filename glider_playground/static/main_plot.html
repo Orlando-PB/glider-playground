@@ -747,7 +747,9 @@
 
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
-                const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
+                // yAuto marks an x-only zoom (e.g. a synced time-axis update): keep
+                // the y axis autoranged rather than pinning it to the full extent.
+                const yRange = (zoom && !zoom.yAuto) ? [zoom.yMin, zoom.yMax] : null;
 
                 _suppressRelayout = true;
                 Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange))
@@ -782,8 +784,14 @@
 
             if (msg.type === 'updateLimits') {
                 const update = {};
-                const hasX = msg.limits.xMin !== undefined && !isNaN(msg.limits.xMin);
-                const hasY = msg.limits.yMin !== undefined && !isNaN(msg.limits.yMin);
+                // A datetime x-axis reports its range as date strings (e.g.
+                // '2026-04-25 10:08:25.6638'), which Plotly accepts directly — so
+                // only number-type bounds are validated with isNaN. (This path is
+                // used by the parent's "align time axes" feature, where x bounds
+                // arrive as date strings copied from another plot's zoom.)
+                const isValidBound = (v) => v !== undefined && v !== null && (typeof v === 'number' ? !isNaN(v) : true);
+                const hasX = isValidBound(msg.limits.xMin) && isValidBound(msg.limits.xMax);
+                const hasY = isValidBound(msg.limits.yMin) && isValidBound(msg.limits.yMax);
                 const invY = urlParams.get('invert_y') === 'true';
                 if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
                 if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
@@ -805,13 +813,34 @@
                 const yMax = hasY ? msg.limits.yMax : gl.yMax;
                 if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
 
-                _currentZoom = { xMin, xMax, yMin, yMax };
+                // An x-only update (no y bounds supplied — e.g. a synced time axis)
+                // must leave the y axis autoranged on the eventual bgFetch re-render.
+                _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
                 _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
             }
             
+            // Driven reset (e.g. the parent's "align time axes" toggle being turned
+            // off) — same effect as a double-click zoom-out, but initiated remotely.
+            if (msg.type === 'resetZoom') {
+                _suppressRelayout = false;
+                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+                clearTimeout(_pendingBounds);
+                _currentZoom = null;
+                if (_originalPlotData) {
+                    plotData = _originalPlotData;
+                    Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+                } else {
+                    const invY = urlParams.get('invert_y') === 'true';
+                    Plotly.relayout('plotDiv', { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true });
+                }
+                window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+                return;
+            }
+
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
                 // If dual trace, update the second trace (Passed QC)
                 const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;

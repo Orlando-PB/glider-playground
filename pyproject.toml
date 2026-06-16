@@ -22,7 +22,8 @@ dependencies = [
     "httpx",
     "requests",
     "h5netcdf",
-    "netcdf4"
+    "netcdf4",
+    "gsw"
 ]
 
 [project.scripts]

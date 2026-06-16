@@ -789,6 +789,24 @@
         }
 
         /* ---------- Variables / Attributes lists ---------- */
+        /* Search bar pinned to the top of each list. The panel's drag-handle /
+           close chrome overlays the top ~22px, so the wrap pads its top to keep
+           the input clear of (and below) that strip. */
+        .ds-search-wrap {
+            position: sticky; top: 0; z-index: 5;
+            display: flex; align-items: center; gap: 6px;
+            padding: 26px 10px 8px; background: var(--bg-panel, #fff);
+            border-bottom: 1px solid var(--border);
+        }
+        .ds-search-icon { font-size: 15px; color: var(--text-muted); }
+        .ds-search {
+            flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 6px;
+            background: var(--bg-panel-2, var(--bg-panel)); color: var(--text-primary);
+            font-size: 11px; padding: 4px 8px; outline: none;
+        }
+        .ds-search:focus { border-color: var(--accent); }
+        .ds-search::placeholder { color: var(--text-muted); }
+        .ds-nomatch { padding: 16px; text-align: center; font-size: 10px; color: var(--text-muted); }
         .var-row {
             display: flex;
             flex-direction: column;
@@ -1013,6 +1031,9 @@
                 </button>
                 <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
                     <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
+                </button>
+                <button id="syncTimeBtn" class="toggle-btn px-2.5 py-1.5 rounded items-center gap-1 hidden" title="Sync the time axis across all open timeseries plots — zooming one zooms them all">
+                    <span class="material-symbols-outlined text-[14px]">sync_alt</span> Sync
                 </button>
                 <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset view, overlays and chat">
                     <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
@@ -1253,8 +1274,22 @@
             <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
             <iframe id="gliderMap" src="" class="w-full h-full border-none"></iframe>
             <iframe id="iframe3D" src="/static/3d_view.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
-            <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
-            <div id="attrList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative"></div>
+            <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
+                <div class="ds-search-wrap">
+                    <span class="material-symbols-outlined ds-search-icon">search</span>
+                    <input id="varSearch" class="ds-search" type="text" placeholder="Search variables…" autocomplete="off" spellcheck="false">
+                </div>
+                <div id="varRows"></div>
+                <div id="varNoMatch" class="ds-nomatch hidden">No matching variables.</div>
+            </div>
+            <div id="attrList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
+                <div class="ds-search-wrap">
+                    <span class="material-symbols-outlined ds-search-icon">search</span>
+                    <input id="attrSearch" class="ds-search" type="text" placeholder="Search attributes…" autocomplete="off" spellcheck="false">
+                </div>
+                <div id="attrRows"></div>
+                <div id="attrNoMatch" class="ds-nomatch hidden">No matching attributes.</div>
+            </div>
         </div>
 
         <div class="flex-grow flex flex-col overflow-hidden relative">
@@ -1651,6 +1686,172 @@
         const activePlotPanel = () => activePlotPanelId ? panels[activePlotPanelId] : null;
         const leafCount = () => Object.values(panels).length;
         const genPanelId = () => 'panel' + (_nextPanelId++);
+
+        // ---- Time-axis alignment ----
+        // When on, zooming/panning the time (x) axis of any timeseries plot drives
+        // the same x-range onto every other open timeseries plot. The "master" is
+        // simply whichever plot was last zoomed, so it follows the active plot.
+        // Defaults on so the dashboard's thermal/chlorophyll/oxygen tiles stay in
+        // step out of the box.
+        const ALIGN_KEY = 'gp_align_time';
+        let alignTimeAxes = (() => { try { return localStorage.getItem(ALIGN_KEY) !== 'false'; } catch (_) { return true; } })();
+        let alignMasterId = null;
+        // True only when a real user zoom is in effect (not an alignment-driven or
+        // union "reset" range). Lets newly-loaded plots tell "follow the active
+        // zoom" apart from "re-fit everything to the union time range".
+        let _userZoomActive = false;
+        // Panel ids we just drove via alignment — their resulting plotZoomed echo
+        // must not be treated as a fresh user zoom (which would swap the master and
+        // re-propagate in a loop). Each is consumed once, with a timeout fallback.
+        const _alignDriven = new Set();
+
+        // A panel whose x axis is time, so aligning its x range to others is meaningful.
+        function isTimeAxisVar(name) {
+            if (!name) return false;
+            const v = variableCache.find(vc => vc.name === name);
+            if (v) return v.type === 'datetime';
+            return /^TIME/i.test(name);
+        }
+        function isTimeseriesPanel(p) {
+            return !!(p && p.type === 'plot' && p.state && p.state.datasetId && isTimeAxisVar(p.state.x));
+        }
+        function timeseriesPanels() {
+            return Object.values(panels).filter(isTimeseriesPanel);
+        }
+        // The live x-range of a panel (the active plot's lives in currentZoomBounds;
+        // background panels keep theirs in state.zoomBounds). null = full / no zoom.
+        function panelXRange(p) {
+            const zb = (p.id === activePlotPanelId) ? currentZoomBounds : (p.state && p.state.zoomBounds);
+            return (zb && zb.xMin !== undefined && zb.xMin !== null) ? { xMin: zb.xMin, xMax: zb.xMax } : null;
+        }
+
+        // Drive a set of timeseries plots to an explicit x (time) range. Only the
+        // x axis is touched — each plot keeps its own y zoom. The targets' echoed
+        // plotZoomed events are flagged so they don't re-trigger alignment.
+        function driveAlignX(targets, xRange) {
+            targets.forEach(p => {
+                if (!p.iframe || !p.iframe.contentWindow) return;
+                _alignDriven.add(p.id);
+                setTimeout(() => _alignDriven.delete(p.id), 2500);  // safety: never get stuck
+                try { p.iframe.contentWindow.postMessage({ type: 'updateLimits', limits: { xMin: xRange.xMin, xMax: xRange.xMax } }, '*'); } catch (_) {}
+            });
+        }
+
+        // Push `xRange` from `master` onto every other timeseries plot. A null
+        // xRange means "reset" — in sync mode the reset target is the union range
+        // (total time across all plots), not each plot's own extent.
+        function propagateAlignment(master, xRange) {
+            if (!xRange) { applyUnionRange(); return; }
+            driveAlignX(timeseriesPanels().filter(p => !master || p.id !== master.id), xRange);
+        }
+
+        // The union of every loaded timeseries plot's full time extent — earliest
+        // start to latest end. Returns null until at least one extent is known.
+        function unionTimeRange() {
+            let lo = Infinity, hi = -Infinity;
+            timeseriesPanels().forEach(p => {
+                const a = p.state.xFullMin, b = p.state.xFullMax;
+                if (typeof a === 'number' && isFinite(a)) lo = Math.min(lo, a);
+                if (typeof b === 'number' && isFinite(b)) hi = Math.max(hi, b);
+            });
+            if (!(isFinite(lo) && isFinite(hi) && hi > lo)) return null;
+            // A little breathing room so the first/last points don't sit on the axes.
+            const pad = (hi - lo) * 0.015;
+            return { xMin: lo - pad, xMax: hi + pad };
+        }
+
+        // Apply the union (total-time) range to every timeseries plot. This is the
+        // synced "reset" / on-load state so a plot covering only part of the record
+        // (e.g. chlorophyll for the first month) lines up under the full timeline.
+        // Debounced so a dashboard's burst of plot loads collapses into one apply.
+        let _unionTimer = null;
+        function applyUnionRange() {
+            clearTimeout(_unionTimer);
+            _unionTimer = setTimeout(() => {
+                const ts = timeseriesPanels();
+                if (ts.length < 2) return;
+                const range = unionTimeRange();
+                if (range) driveAlignX(ts, range);
+            }, 60);
+        }
+
+        // The x range of the current real user zoom, if any — the master's,
+        // falling back to the active plot's. null when in the reset/union state
+        // (union-driven ranges must NOT count, or new plots would lock to them).
+        function activeAlignRange() {
+            if (!_userZoomActive) return null;
+            const cand = [];
+            if (alignMasterId && panels[alignMasterId]) cand.push(panels[alignMasterId]);
+            const ap = activePlotPanel();
+            if (ap && !cand.includes(ap)) cand.push(ap);
+            for (const p of cand) { if (isTimeseriesPanel(p)) { const r = panelXRange(p); if (r) return r; } }
+            return null;
+        }
+
+        // A plot just finished loading. With sync on, fit it to the others: to the
+        // active zoom if one is in effect, otherwise re-apply the union so the new
+        // plot widens/joins the shared timeline.
+        function syncOnPlotLoad(panel) {
+            if (!alignTimeAxes || !isTimeseriesPanel(panel)) return;
+            if (timeseriesPanels().length < 2) return;
+            const m = activeAlignRange();
+            if (m) driveAlignX([panel], m);
+            else applyUnionRange();
+        }
+
+        // A real (user) zoom on a timeseries plot: it becomes the master and drives
+        // the others. Echoes from our own alignment drives are consumed here.
+        function maybeAlign(srcPanel, limits) {
+            if (!alignTimeAxes || !isTimeseriesPanel(srcPanel)) return;
+            if (_alignDriven.has(srcPanel.id)) { _alignDriven.delete(srcPanel.id); return; }
+            alignMasterId = srcPanel.id;
+            const xRange = (limits && limits.xMin !== undefined && limits.xMin !== 'auto' && limits.xMin !== null)
+                ? { xMin: limits.xMin, xMax: limits.xMax } : null;
+            _userZoomActive = !!xRange;   // a real zoom sets it; a real reset clears it
+            propagateAlignment(srcPanel, xRange);
+        }
+
+        // Toggle alignment from the toolbar's Sync button. On → align to the active
+        // zoom if there is one, else snap all plots to the union (total) time range.
+        // Off → reset every plot to span only its own time extent.
+        function toggleAlign() {
+            alignTimeAxes = !alignTimeAxes;
+            try { localStorage.setItem(ALIGN_KEY, alignTimeAxes ? 'true' : 'false'); } catch (_) {}
+            if (alignTimeAxes) {
+                // Turning sync on: honour a real zoom on the active plot if present,
+                // otherwise snap everything to the union (total) time range.
+                const ap = activePlotPanel();
+                const r = isTimeseriesPanel(ap) ? panelXRange(ap) : null;
+                if (r) { alignMasterId = ap.id; _userZoomActive = true; driveAlignX(timeseriesPanels(), r); }
+                else { alignMasterId = null; _userZoomActive = false; applyUnionRange(); }
+            } else {
+                alignMasterId = null;
+                _userZoomActive = false;
+                timeseriesPanels().forEach(p => {
+                    if (p.iframe && p.iframe.contentWindow) {
+                        try { p.iframe.contentWindow.postMessage({ type: 'resetZoom' }, '*'); } catch (_) {}
+                    }
+                    p.state.zoomBounds = null;
+                    if (p.id === activePlotPanelId) currentZoomBounds = null;
+                });
+            }
+            refreshAlignButtons();
+        }
+
+        // Show the toolbar Sync button only when there are at least two timeseries
+        // plots to align; its active state mirrors the global alignment toggle.
+        function refreshAlignButtons() {
+            const btn = document.getElementById('syncTimeBtn');
+            if (!btn) return;
+            if (timeseriesPanels().length >= 2) {
+                btn.classList.remove('hidden');
+                btn.classList.add('flex');
+                btn.classList.toggle('active', alignTimeAxes);
+            } else {
+                btn.classList.add('hidden');
+                btn.classList.remove('flex');
+            }
+        }
         const hasPanelType = (type) => Object.values(panels).some(p => p.type === type);
 
         function panelByWindow(win) {
@@ -1908,6 +2109,7 @@
             if (!hasPanelType('plot')) setColourRail(false);
             updateAddButtons();
             refreshPanelPlaceholders();
+            refreshAlignButtons();
             pokeHighlight();
             scheduleSaveLayout();
         }
@@ -2153,6 +2355,7 @@
             }
             // No plot left anywhere → the toolbar drives nothing; grey the colour bar.
             if (!hasPanelType('plot')) setColourRail(false);
+            refreshAlignButtons();
         }
 
         // Swap the positions of two panels by exchanging their leaf panelIds.
@@ -2498,7 +2701,13 @@
             preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'haline', invert: true },
             preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'dense', invert: true },
             preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'delta', invert: true },
-            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY'], cmap: 'oxy', invert: true },
+            // Oxygen, in rough order of usefulness: calibrated concentration first
+            // (MOLAR_DOXY µmol/L, DOXY µmol/kg, OXYSAT_DOXY % sat), then raw optode
+            // outputs (DPHASE_DOXY phase angle °, FREQUENCY_DOXY Hz) as a last
+            // resort so a file with only raw sensor data still gets *an* oxygen
+            // plot. Raw outputs aren't converted to concentration (that needs the
+            // optode's calibration coefficients) — they're shown in their own units.
+            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
             preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'turbid', invert: true }
         };
 
@@ -2573,6 +2782,8 @@
                     advancedToggle.classList.toggle('active', isOpen);
                 });
             }
+            const syncTimeBtn = document.getElementById('syncTimeBtn');
+            if (syncTimeBtn) syncTimeBtn.addEventListener('click', () => toggleAlign());
         });
 
         window.addEventListener('message', function(event) {
@@ -2621,6 +2832,7 @@
                     const l = msg.limits;
                     srcPanel.state.zoomBounds = (l && l.xMin !== 'auto' && l.xMin !== undefined)
                         ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
+                    maybeAlign(srcPanel, l);
                 } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
                 } else if (msg.type === 'plotLoaded') {
@@ -2634,6 +2846,9 @@
                     } else {
                         srcPanel.state.cMin = null; srcPanel.state.cMax = null;
                     }
+                    if (gl && typeof gl.xMin === 'number') { srcPanel.state.xFullMin = gl.xMin; srcPanel.state.xFullMax = gl.xMax; }
+                    refreshAlignButtons();
+                    syncOnPlotLoad(srcPanel);
                 }
                 return;
             }
@@ -2663,11 +2878,19 @@
                 // Persist the resolved colour range into the active panel so
                 // re-activating it later restores the trim slider correctly.
                 const ap = activePlotPanel();
-                if (ap) { ap.state.cMin = baseCMin; ap.state.cMax = baseCMax; }
+                if (ap) {
+                    ap.state.cMin = baseCMin; ap.state.cMax = baseCMax;
+                    if (msg.globalLimits && typeof msg.globalLimits.xMin === 'number') {
+                        ap.state.xFullMin = msg.globalLimits.xMin; ap.state.xFullMax = msg.globalLimits.xMax;
+                    }
+                }
 
                 if (msg.stats) renderPlotStats(msg.stats);
 
                 if (msg.hasC) updateHandlesFromInputs('c');
+
+                refreshAlignButtons();
+                if (ap) syncOnPlotLoad(ap);
             }
             else if (msg.type === 'plotError') {
                 setLoading(false);
@@ -2707,6 +2930,7 @@
                     currentZoomBounds = null;
                 }
                 CycleProfile.setZoomBounds(currentZoomBounds, isXDateTime);
+                if (srcPanel) maybeAlign(srcPanel, limits);
             }
             else if (msg.type === 'autoColourResult') {
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
@@ -2995,7 +3219,7 @@
         // Rebuild a 1×N dashboard of the available biogeochemical presets.
         function applyDashboard() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const candidates = ['preset_temp', 'preset_chla', 'preset_doxy'];
+            const candidates = ['preset_temp', 'preset_density', 'preset_chla', 'preset_doxy'];
             const avail = candidates.filter(key => {
                 const p = OceanPresets[key];
                 return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
@@ -3675,13 +3899,54 @@
 
         datasetSelect.addEventListener('change', handleDatasetChange);
 
+        // Filter the Variables / Attributes list by its search box. Matches the
+        // combined haystack (name/key + units + description/value) stored on each
+        // row, and shows a "no matches" note when everything is filtered out.
+        function applyListFilter(which) {
+            const input = document.getElementById(which === 'var' ? 'varSearch' : 'attrSearch');
+            const rows = document.getElementById(which === 'var' ? 'varRows' : 'attrRows');
+            const noMatch = document.getElementById(which === 'var' ? 'varNoMatch' : 'attrNoMatch');
+            if (!input || !rows) return;
+            const q = input.value.trim().toLowerCase();
+            let visible = 0, total = 0;
+            rows.querySelectorAll('[data-search]').forEach(row => {
+                total++;
+                const hit = !q || row.dataset.search.includes(q);
+                row.classList.toggle('hidden', !hit);
+                if (hit) visible++;
+            });
+            // A matched (visible) variable always shows its QC partner too, even if
+            // the QC row itself didn't match the query.
+            if (which === 'var' && q) {
+                const shownBases = new Set();
+                rows.querySelectorAll('[data-search]').forEach(row => {
+                    const nm = row.dataset.name || '';
+                    if (!row.classList.contains('hidden') && nm && !nm.endsWith('_QC')) shownBases.add(nm);
+                });
+                rows.querySelectorAll('[data-search]').forEach(row => {
+                    const nm = row.dataset.name || '';
+                    if (nm.endsWith('_QC') && row.classList.contains('hidden') && shownBases.has(nm.slice(0, -3))) {
+                        row.classList.remove('hidden');
+                        visible++;
+                    }
+                });
+            }
+            if (noMatch) noMatch.classList.toggle('hidden', !(q && total > 0 && visible === 0));
+        }
+        ['var', 'attr'].forEach(which => {
+            const input = document.getElementById(which === 'var' ? 'varSearch' : 'attrSearch');
+            if (input) input.addEventListener('input', () => applyListFilter(which));
+        });
+
         async function loadDatasetInfo(fileId) {
             try {
                 const res = await fetch(`/api/dataset_info?id=${encodeURIComponent(fileId)}`);
                 const data = await res.json();
-                
-                varList.innerHTML = '';
-                
+
+                const varRows = document.getElementById('varRows');
+                const attrRows = document.getElementById('attrRows');
+                varRows.innerHTML = '';
+
                 data.variables.sort((a, b) => {
                     const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
                     const baseA = getBase(a.name);
@@ -3710,10 +3975,13 @@
                     if (desc) {
                         row.setAttribute('data-tip', desc + (units ? `  ·  ${units}` : ''));
                     }
-                    varList.appendChild(row);
+                    // Searchable haystack: name, units and description.
+                    row.dataset.search = `${v.name} ${units} ${desc}`.toLowerCase();
+                    row.dataset.name = v.name;
+                    varRows.appendChild(row);
                 });
 
-                attrList.innerHTML = '';
+                attrRows.innerHTML = '';
                 if (data.global_attributes && Object.keys(data.global_attributes).length > 0) {
                     Object.entries(data.global_attributes).forEach(([key, val]) => {
                         const row = document.createElement('div');
@@ -3722,12 +3990,17 @@
                             <span class="attr-key">${escapeHtml(key)}</span>
                             <span class="attr-val">${escapeHtml(val)}</span>
                         `;
-                        attrList.appendChild(row);
+                        row.dataset.search = `${key} ${val}`.toLowerCase();
+                        attrRows.appendChild(row);
                     });
                 } else {
-                    attrList.innerHTML = '<div class="p-4 text-center text-[10px]" style="color: var(--text-muted);">No attributes found.</div>';
+                    attrRows.innerHTML = '<div class="p-4 text-center text-[10px]" style="color: var(--text-muted);">No attributes found.</div>';
                 }
-                
+
+                // Re-apply any active filter to the freshly rendered rows.
+                applyListFilter('var');
+                applyListFilter('attr');
+
                 datasetInfoContainer.classList.remove('hidden');
                 statsEmptyState.classList.add('hidden');
             } catch (e) { console.error("Failed to load dataset info:", e); }

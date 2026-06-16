@@ -30,6 +30,7 @@ import xarray as xr
 
 from . import plot_logic
 from . import spatial_logic
+from . import derive_logic
 
 # --- Configurable Variables ---
 THROTTLE_PI_VARIABLES = 0.05
@@ -44,7 +45,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-CACHE_VERSION = "6"
+# v7: derive CTD variables (salinity / density) from conductivity via GSW.
+CACHE_VERSION = "7"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -89,6 +91,7 @@ _TRANSIENT_KEYS = {"_future", "_done_steps", *_PAYLOAD_KEYS}
 
 # Step identifiers used to skip work already completed before a crash.
 STEP_PRELOAD = "preload"
+STEP_DERIVE = "derive_ctd"
 STEP_DATASET_INFO = "dataset_info"
 STEP_PROFILES = "profiles"
 STEP_SPATIAL = "spatial"
@@ -97,7 +100,7 @@ STEP_CTD_CLEAN = "ctd_clean"
 STEP_CTD_INTERP = "ctd_interp"
 STEP_CTD_BOTH = "ctd_both"
 STEP_CTD_RECS = "ctd_recs"
-ALL_STEPS = (STEP_PRELOAD, STEP_DATASET_INFO, STEP_PROFILES, STEP_SPATIAL,
+ALL_STEPS = (STEP_PRELOAD, STEP_DERIVE, STEP_DATASET_INFO, STEP_PROFILES, STEP_SPATIAL,
              STEP_3D, STEP_CTD_CLEAN, STEP_CTD_INTERP, STEP_CTD_BOTH, STEP_CTD_RECS)
 
 _lock = threading.RLock()
@@ -603,6 +606,30 @@ def _process(file_id: str):
 
         if is_server:
             time.sleep(THROTTLE_PI_STAGES)
+
+        # 1b. Derive CTD variables (salinity / density) from conductivity, with a
+        # CTD cleanup first. Best-effort: if it fails or doesn't apply, the rest
+        # of processing carries on. Runs before the variable index so derived
+        # vars are listed alongside the file's own.
+        if _is_removed(rec):
+            return
+        if not _is_done(STEP_DERIVE):
+            _set(rec, progress=28, stage="deriving CTD variables")
+
+            def _derive_cb(stage_msg: str):
+                if not _is_removed(rec):
+                    _set(rec, stage=stage_msg)
+
+            try:
+                derive_logic.derive_ctd_variables(p, log_cb=_derive_cb)
+            except Exception as e:
+                # Never let a derivation failure abort the file.
+                print(f"CTD derivation failed for {p}: {e}")
+            _release_memory()
+            _mark_step_done(rec, STEP_DERIVE)
+            done_steps.add(STEP_DERIVE)
+            if is_server:
+                time.sleep(THROTTLE_PI_STAGES)
 
         # 2. Dataset info + variables list.
         if _is_removed(rec):

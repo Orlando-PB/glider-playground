@@ -37,6 +37,99 @@ def _ctd_cache_path(filepath: str, interpolate: bool, apply_ctd_qc: bool) -> Pat
     return _CTD_CACHE_DIR / f"{h}_{int(interpolate)}_{int(apply_ctd_qc)}.npz"
 
 
+# --- Derived variable store (e.g. GSW-derived salinity / density) ------------
+# Derived variables are computed once per file during processing (see
+# derive_logic) and persisted to disk in BOTH memory modes — in RAM mode the
+# preload is dropped on restart and plots fall back to the file, which has no
+# derived vars, so we cannot rely on the preload to carry them. They are merged
+# into the file's variable list and read path so they behave like native vars.
+_DERIVED_CACHE_DIR = _DISK_CACHE_ROOT / "derived"
+_DERIVED_META: dict = {}            # filepath -> {name: {"units","description","type"}}
+_DERIVED_META_LOCK = threading.RLock()
+
+
+def _derived_dir(filepath: str) -> Path:
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    return _DERIVED_CACHE_DIR / h
+
+
+def save_derived(filepath: str, arrays: dict, meta: dict):
+    """Persist derived variable arrays + metadata for a file, replacing any
+    previous derivation. `meta` is keyed by variable name."""
+    clear_derived(filepath)
+    d = _derived_dir(filepath)
+    d.mkdir(parents=True, exist_ok=True)
+    saved_meta = {}
+    for name, arr in arrays.items():
+        try:
+            np.save(str(d / f"{name}.npy"), np.asarray(arr))
+            saved_meta[name] = meta.get(name, {})
+        except Exception:
+            pass
+    try:
+        (d / "_meta.json").write_text(json.dumps(saved_meta))
+    except Exception:
+        pass
+    with _DERIVED_META_LOCK:
+        _DERIVED_META[filepath] = saved_meta
+    _bust_caches()
+
+
+def get_derived_meta(filepath: str) -> dict:
+    """Metadata for a file's derived variables ({} if none). Cached in RAM,
+    backed by the on-disk sidecar so it survives a restart."""
+    with _DERIVED_META_LOCK:
+        if filepath in _DERIVED_META:
+            return _DERIVED_META[filepath]
+    meta = {}
+    f = _derived_dir(filepath) / "_meta.json"
+    if f.exists():
+        try:
+            meta = json.loads(f.read_text())
+        except Exception:
+            meta = {}
+    with _DERIVED_META_LOCK:
+        _DERIVED_META[filepath] = meta
+    return meta
+
+
+def get_derived_arrays(filepath: str, names) -> dict:
+    """Load the requested derived arrays from disk (skips any that are absent)."""
+    d = _derived_dir(filepath)
+    out = {}
+    for name in names:
+        f = d / f"{name}.npy"
+        if f.exists():
+            try:
+                out[name] = np.load(str(f), allow_pickle=False)
+            except Exception:
+                pass
+    return out
+
+
+def clear_derived(filepath: str):
+    with _DERIVED_META_LOCK:
+        _DERIVED_META.pop(filepath, None)
+    shutil.rmtree(_derived_dir(filepath), ignore_errors=True)
+
+
+def _merge_derived(filepath: str, names, result):
+    """Fold any requested derived arrays into a read result, without overriding
+    variables the file already supplied."""
+    meta = get_derived_meta(filepath)
+    if not meta:
+        return result
+    want = [n for n in names if n in meta and not (result and n in result)]
+    if not want:
+        return result
+    arrs = get_derived_arrays(filepath, want)
+    if arrs:
+        if result is None:
+            result = {}
+        result.update(arrs)
+    return result
+
+
 # In RAM mode: maps filepath -> {varname: array, ...}
 # In disk mode: maps filepath -> True (sentinel; arrays live on SSD)
 _PRELOADED: dict = {}
@@ -127,6 +220,7 @@ def clear_preloaded(filepath: str):
         h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
         for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
             f.unlink(missing_ok=True)
+    clear_derived(filepath)
     _bust_caches()
 
 
@@ -510,6 +604,7 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
 
 @functools.lru_cache(maxsize=32)
 def _get_var_names(filepath):
+    names = None
     if _LOW_MEMORY:
         with _PRELOADED_LOCK:
             is_preloaded = filepath in _PRELOADED
@@ -517,22 +612,30 @@ def _get_var_names(filepath):
             names_f = _preload_dir(filepath) / "_names.json"
             if names_f.exists():
                 try:
-                    return json.loads(names_f.read_text())
+                    names = json.loads(names_f.read_text())
                 except Exception:
-                    pass
+                    names = None
     else:
         pre = _get_preloaded(filepath)
         if pre is not None:
-            return list(pre.keys())
-    if not os.path.exists(filepath): return []
-    try:
-        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
-            return list(ds.variables.keys())
-    except Exception:
-        return []
+            names = list(pre.keys())
+    if names is None:
+        if not os.path.exists(filepath):
+            names = []
+        else:
+            try:
+                with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
+                    names = list(ds.variables.keys())
+            except Exception:
+                names = []
+    der = list(get_derived_meta(filepath).keys())
+    if der:
+        names = list(dict.fromkeys(list(names) + der))
+    return names
 
 @functools.lru_cache(maxsize=4 if _LOW_MEMORY else 16)
 def _read_vars_cached(filepath, var_names_tuple):
+    result = None
     if _LOW_MEMORY:
         with _PRELOADED_LOCK:
             is_preloaded = filepath in _PRELOADED
@@ -546,26 +649,32 @@ def _read_vars_cached(filepath, var_names_tuple):
                         result[name] = np.load(str(f), allow_pickle=False)
                     except Exception:
                         pass
-            return result or None
     else:
         pre = _get_preloaded(filepath)
         if pre is not None:
-            return {name: pre[name] for name in var_names_tuple if name in pre}
-    if not os.path.exists(filepath): return None
-    try:
-        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
-            return {name: ds.variables[name].values.copy().ravel() for name in var_names_tuple if name in ds.variables}
-    except Exception:
-        return None
+            result = {name: pre[name] for name in var_names_tuple if name in pre}
+    if result is None and os.path.exists(filepath):
+        try:
+            with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
+                result = {name: ds.variables[name].values.copy().ravel() for name in var_names_tuple if name in ds.variables}
+        except Exception:
+            result = None
+    # Fold in any requested variables that were derived post-preload.
+    result = _merge_derived(filepath, var_names_tuple, result)
+    return result or None
 
 @functools.lru_cache(maxsize=32)
 def _get_var_units(filepath):
-    if not os.path.exists(filepath): return {}
-    try:
-        with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
-            return {name: str(var.attrs.get('units', '')) for name, var in ds.variables.items()}
-    except Exception:
-        return {}
+    units = {}
+    if os.path.exists(filepath):
+        try:
+            with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
+                units = {name: str(var.attrs.get('units', '')) for name, var in ds.variables.items()}
+        except Exception:
+            units = {}
+    for name, m in get_derived_meta(filepath).items():
+        units.setdefault(name, m.get("units", ""))
+    return units
 
 @functools.lru_cache(maxsize=32)
 def get_variables(filepath):
@@ -590,6 +699,16 @@ def get_variables(filepath):
     except Exception as e:
         print(f"Error opening {filepath}: {e}")
         return []
+    existing = {v["name"] for v in variables}
+    for name, m in get_derived_meta(filepath).items():
+        if name in existing:
+            continue
+        variables.append({
+            "name": name,
+            "units": m.get("units") or "No units",
+            "type": "numeric",
+            "description": m.get("description") or "No description available",
+        })
     return variables
 
 @functools.lru_cache(maxsize=32)
@@ -616,6 +735,16 @@ def get_dataset_info(filepath):
             global_attrs = {attr: str(getattr(nc, attr)) for attr in nc.ncattrs()}
     except Exception as e:
         return {"error": f"Unable to read file: {e}"}
+
+    existing = {v["name"] for v in variables}
+    for name, m in get_derived_meta(filepath).items():
+        if name in existing:
+            continue
+        variables.append({
+            "name": name,
+            "description": m.get("description") or "No description available",
+            "units": m.get("units") or "",
+        })
 
     variables.sort(key=lambda x: x["name"].lower())
 
