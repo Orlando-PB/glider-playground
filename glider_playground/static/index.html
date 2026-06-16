@@ -1623,6 +1623,13 @@
         let _suspendToolbar = false; // guard: writing widgets from state must not fire updatePlot
         let _highlightTimer = null;
         let _pendingGlobeFit = false; // ask the globe to fit-to-track once it reloads (Map preset)
+        // Which built-in layout is currently shown ('default'|'map'|'dashboard'),
+        // and the orientation it was built for. Cleared to null the moment the
+        // user hand-edits the layout, so the orientation reflow below only ever
+        // re-flows the untouched preset layouts — never a custom dashboard.
+        let _viewKind = null;
+        let _layoutPortrait = null;
+        function markCustomLayout() { _viewKind = null; }
 
         // Panel type catalogue. Singletons host an existing DOM element (kept in
         // #panelStash) so all their population code keeps working by id.
@@ -2032,6 +2039,7 @@
                     document.body.classList.remove('gp-resizing');
                     Object.values(panels).forEach(p => { if (p.iframe) p.iframe.style.pointerEvents = ''; });
                     document.querySelectorAll('.gp-divider.dragging').forEach(x => x.classList.remove('dragging'));
+                    markCustomLayout();     // hand-tuned ratio → don't auto-reflow on rotate
                     scheduleSaveLayout();   // persist the new split ratio
                 };
                 document.addEventListener('mousemove', onMove);
@@ -2106,6 +2114,7 @@
                 split = { dir, ratio: 0.4, a: newLeaf, b: existingLeaf };
             }
             layoutTree = replaceLeaf(layoutTree, panelId, split);
+            markCustomLayout();
 
             renderLayout();
             setActive(np.id);
@@ -2118,6 +2127,7 @@
             const p = panels[panelId];
             if (p && p.hostedEl) unmountHosted(p);   // return singleton to the stash
             layoutTree = removeLeaf(layoutTree, panelId);
+            markCustomLayout();
             if (p) { p.el.remove(); delete panels[panelId]; }
             if (activePlotPanelId === panelId) activePlotPanelId = null;
 
@@ -2170,6 +2180,7 @@
         // target (the same result as pressing that target's edge "+").
         function moveLeafToEdge(srcId, targetId, side) {
             if (srcId === targetId) return;
+            markCustomLayout();
             layoutTree = removeLeaf(layoutTree, srcId);
             const dir = (side === 'left' || side === 'right') ? 'row' : 'col';
             const tgt = { leaf: true, panelId: targetId };
@@ -2255,6 +2266,7 @@
         function arrangeLayout(mode) {
             const ids = Object.keys(panels);
             if (ids.length === 0) return;
+            markCustomLayout();
             if (mode === 'equalize') {
                 const setEqual = (n) => { if (!n || n.leaf) return; n.ratio = 0.5; setEqual(n.a); setEqual(n.b); };
                 setEqual(layoutTree);
@@ -2336,7 +2348,7 @@
                 clearTarget();
                 if (_dropOverlay) _dropOverlay.style.display = 'none';
                 if (targetId && targetId !== srcId) {
-                    if (zone === 'center') { swapLeafPanels(layoutTree, srcId, targetId); renderLayout(); setActive(srcId); }
+                    if (zone === 'center') { markCustomLayout(); swapLeafPanels(layoutTree, srcId, targetId); renderLayout(); setActive(srcId); }
                     else moveLeafToEdge(srcId, targetId, zone);
                 }
             };
@@ -2426,11 +2438,8 @@
             const plot = createPanel('plot', captureToolbarState());
             const map = createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
-            layoutTree = {
-                dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
-                b: { leaf: true, panelId: plot.id }
-            };
+            layoutTree = defaultLayoutTree(plot.id, map.id, td.id);
+            _viewKind = 'default'; _layoutPortrait = isPortrait();
             plotIframe = plot.iframe;
             renderLayout();
             setActive(plot.id);
@@ -2442,6 +2451,7 @@
                 const ids = treeLeafIds(snap.tree, []);
                 if (!ids.length || ids.some(id => !snap.panels[id])) return false;
                 tearDownPanels();
+                _viewKind = null;   // restored layout is the user's own arrangement
                 _nextPanelId = snap.nextId || (ids.length + 1);
                 ids.forEach(id => {
                     const pd = snap.panels[id];
@@ -2857,6 +2867,86 @@
                      b: buildEqualTree(ids.slice(1), dir) };
         }
 
+        // ===== Orientation-aware preset layouts =====
+        // A "vertical" (portrait) screen — phones, or a desktop window taller than
+        // it is wide — re-flows the built-in presets so the plot(s) sit on top and
+        // the globe/3D maps share a row beneath. Landscape (normal desktop) keeps
+        // the original arrangements exactly as they were.
+        function isPortrait() {
+            return window.innerHeight > window.innerWidth;
+        }
+
+        // Globe + 3D + a single plot. Landscape: maps in a narrow left column, plot
+        // on the right. Portrait: plot on top, maps split globe|3D beneath it.
+        function defaultLayoutTree(plotId, mapId, tdId) {
+            if (isPortrait()) {
+                return {
+                    dir: 'col', ratio: 0.5,
+                    a: { leaf: true, panelId: plotId },
+                    b: { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } }
+                };
+            }
+            return {
+                dir: 'row', ratio: 0.24,
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },
+                b: { leaf: true, panelId: plotId }
+            };
+        }
+
+        // Globe + 3D, no plot. Landscape: side by side. Portrait: globe on top, 3D below.
+        function mapViewTree(mapId, tdId) {
+            if (isPortrait()) {
+                return { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } };
+            }
+            return { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } };
+        }
+
+        // Globe + 3D + N stacked plots. Landscape: maps in a narrow left column,
+        // plots stacked on the right. Portrait: plots stacked on top, maps split
+        // globe|3D beneath them.
+        function dashboardLayoutTree(plotIds, mapId, tdId) {
+            if (isPortrait()) {
+                return {
+                    dir: 'col', ratio: 0.6,
+                    a: buildEqualTree(plotIds, 'col'),
+                    b: { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } }
+                };
+            }
+            return {
+                dir: 'row', ratio: 0.24,
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },
+                b: buildEqualTree(plotIds, 'col')
+            };
+        }
+
+        // Re-flow the active preset layout when the screen crosses the
+        // portrait/landscape boundary (e.g. a phone rotating). Only touches the
+        // built-in presets — a hand-edited layout (_viewKind === null) is left as-is.
+        function reflowLayoutForOrientation() {
+            if (!_viewKind) return;
+            if (isPortrait() === _layoutPortrait) return;
+            const mapP = Object.values(panels).find(p => p.type === 'map');
+            const tdP  = Object.values(panels).find(p => p.type === '3d');
+            const plotIds = treeLeafIds(layoutTree, []).filter(id => panels[id] && panels[id].type === 'plot');
+            if (_viewKind === 'map') {
+                if (!mapP || !tdP) return;
+                layoutTree = mapViewTree(mapP.id, tdP.id);
+            } else if (_viewKind === 'dashboard') {
+                if (!mapP || !tdP || !plotIds.length) return;
+                layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
+            } else { // 'default'
+                if (!mapP || !tdP || plotIds.length !== 1) return;
+                layoutTree = defaultLayoutTree(plotIds[0], mapP.id, tdP.id);
+            }
+            _layoutPortrait = isPortrait();
+            renderLayout();
+        }
+        let _reflowTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(_reflowTimer);
+            _reflowTimer = setTimeout(reflowLayoutForOrientation, 150);
+        });
+
         // Drop all plot panels and stash non-(globe/3D) singletons, but KEEP the
         // globe + 3D panels mounted exactly where they are. Re-parenting an iframe
         // reloads it (new WebGL context + lost tile cache → sluggish globe), so the
@@ -2901,11 +2991,8 @@
             const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
             const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
 
-            layoutTree = {
-                dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
-                b: buildEqualTree(plotIds, 'col')
-            };
+            layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
+            _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
@@ -2921,11 +3008,8 @@
             const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
             const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
-            layoutTree = {
-                dir: 'row', ratio: 0.5,
-                a: { leaf: true, panelId: map.id },
-                b: { leaf: true, panelId: td.id }
-            };
+            layoutTree = mapViewTree(map.id, td.id);
+            _viewKind = 'map'; _layoutPortrait = isPortrait();
             activePlotPanelId = null;
             plotIframe = null;
             currentPreset = '__map__';
@@ -2947,11 +3031,8 @@
             const plot = createPanel('plot', presetKey ? stateFromPreset(presetKey) : captureToolbarState());
             const map  = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const td   = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
-            layoutTree = {
-                dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: map.id }, b: { leaf: true, panelId: td.id } },
-                b: { leaf: true, panelId: plot.id }
-            };
+            layoutTree = defaultLayoutTree(plot.id, map.id, td.id);
+            _viewKind = 'default'; _layoutPortrait = isPortrait();
             if (presetKey) currentPreset = presetKey;
             plotIframe = plot.iframe;
             renderLayout();
@@ -4939,7 +5020,7 @@
                 }
                 case 'swap_panels': {
                     const pa = resolvePanelRef(a.a), pb = resolvePanelRef(a.b);
-                    if (pa && pb && pa.id !== pb.id) { swapLeafPanels(layoutTree, pa.id, pb.id); renderLayout(); setActive(pa.id); }
+                    if (pa && pb && pa.id !== pb.id) { markCustomLayout(); swapLeafPanels(layoutTree, pa.id, pb.id); renderLayout(); setActive(pa.id); }
                     break;
                 }
                 case 'select_panel': {
