@@ -773,9 +773,10 @@
             border-radius: var(--radius-md, 8px);
             box-shadow: 0 1px 5px rgba(0,0,0,0.15);
         }
-        /* Always reserve the rail's column (no layout shift). When there's no
-           active colour-mapped plot it stays as a dimmed, non-interactive
-           placeholder rather than collapsing away. */
+        /* While any plot panel exists the rail stays mounted: a dimmed,
+           non-interactive placeholder (cTrim-inactive) when there's no active
+           colour-mapped data, so it never flickers in/out as a plot loads. It's
+           fully removed (.hidden) only in Map view / when no plots remain. */
         #cTrimContainer.cTrim-inactive { opacity: 0.4; pointer-events: none; }
         #cTrimContainer.cTrim-inactive #cTrimMaxInput,
         #cTrimContainer.cTrim-inactive #cTrimMinInput { visibility: hidden; }
@@ -1577,8 +1578,13 @@
         // Show/hide the colour-trim rail. The rail's column is always reserved
         // (so the plot never shifts); `active=false` just dims it to a placeholder.
         function setColourRail(active) {
-            cTrimContainer.classList.remove('hidden');
-            cTrimContainer.classList.add('flex');
+            // Fully hide the rail only when there's nothing to colour at all (Map
+            // view, or every plot closed) — it makes no sense then. Whenever any
+            // plot panel exists we keep it mounted and just grey it out via
+            // cTrim-inactive, so it never flickers in/out while a plot loads.
+            const hasPlot = hasPanelType('plot');
+            cTrimContainer.classList.toggle('hidden', !hasPlot);
+            cTrimContainer.classList.toggle('flex', hasPlot);
             cTrimContainer.classList.toggle('cTrim-inactive', !active);
         }
 

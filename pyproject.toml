@@ -7,7 +7,7 @@ name = "glider-playground"
 version = "0.2.23"
 description = "A fast, web-based NetCDF explorer for glider data."
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "Orlando Prugel-Bennett", email = "orlandopbennett@gmail.com"}
