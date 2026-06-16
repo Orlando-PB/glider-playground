@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Glider Playground</title>
-    <link rel="icon" href="/static/icon.png">
+    <link rel="icon" href="/static/noc_logo_square.svg">
     <script src="/static/console_log.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/static/cycle_profile.js"></script>
@@ -869,13 +869,27 @@
 
         /* ---------- Toolbar row dividers ---------- */
         .toolbar-row {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
+            display: block;
+            position: relative;
+            padding: 8px 14px;
             border-bottom: 1px solid var(--border);
             background: var(--bg-panel);
+        }
+        .toolbar-row::after { content: ""; display: block; clear: both; }
+        /* Left content flows as inline items so wrapped rows can extend full-width
+           under the top-right buttons (which are floated). 2px block margins give a
+           4px gap between wrapped rows; reduced row padding keeps the outer edge at 10px. */
+        .toolbar-main { display: block; }
+        .toolbar-row .toolbar-main > * { display: inline-flex; vertical-align: middle; margin: 2px 8px 2px 0; }
+        .toolbar-row .toolbar-main > *:last-child { margin-right: 0; }
+        .toolbar-actions { margin-top: 2px; }
+        /* Keep JS-shown groups (which set inline display:flex/block) inline so they don't break the row. */
+        .toolbar-row .toolbar-main > [style*="display: flex"]  { display: inline-flex  !important; }
+        .toolbar-row .toolbar-main > [style*="display: block"] { display: inline-block !important; }
+        .toolbar-actions { float: right; margin-left: 8px; }
+        /* When presets sit alone on their own (single) row, centre them. Toggled by JS. */
+        .toolbar-row .toolbar-main > #presetsGroup.presets-solo {
+            display: flex; width: 100%; justify-content: center; margin-right: 0;
         }
         .toolbar-group {
             display: flex;
@@ -990,20 +1004,35 @@
     <div id="customTooltip"></div>
 
     <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
-        <div class="toolbar-row" style="justify-content: space-between; flex-wrap: wrap;">
-            <div class="flex items-center flex-wrap" style="gap: 8px; flex: 1; min-width: 0;">
+        <div class="toolbar-row">
+            <!-- Right-side buttons (floated; declared first so left content wraps under them) -->
+            <div class="toolbar-group toolbar-actions shrink-0">
+                <button id="advancedToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show advanced controls">
+                    Advanced <span class="material-symbols-outlined text-[13px]" id="advancedToggleIcon">expand_more</span>
+                </button>
+                <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
+                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
+                </button>
+                <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset view, overlays and chat">
+                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
+                </button>
+                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download plot as PNG">
+                    <span class="material-symbols-outlined text-[14px]">download</span>
+                </button>
+            </div>
+            <div class="toolbar-main">
                 <!-- Logo -->
-                <div class="font-bold text-sm text-[#1a73e8] flex items-center gap-1.5 pr-3 shrink-0" style="border-right: 1px solid var(--border);"
+                <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
                      title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
-                    <img src="/static/NOC_logo.svg" alt="National Oceanography Centre" class="shrink-0"
-                         style="width:32px;height:32px;margin:-6px -2px -6px -8px;"> Glider Playground
+                    <img src="/static/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
+                         style="height:30px;width:auto;">
                 </div>
 
                 <!-- Files -->
                 <div class="toolbar-group" id="datasetGroup" style="position: relative;">
                     <span class="group-label">
                         Files
-                        <span class="info-dot" data-tip="Each file is processed once. The map, 3D view and plots all read pre-computed arrays in memory after that, so switching files and panning the plot is fast."><span class="material-symbols-outlined">info</span></span>
+                        <span class="info-dot" data-tip="Select OG1 files to display. Each file is processed once on upload. You can also view BODC's live deployments when available."><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <button id="datasetTrigger" class="dataset-trigger" type="button" aria-haspopup="dialog">
                         <span class="material-symbols-outlined text-[16px]" id="datasetTriggerIcon">database</span>
@@ -1052,7 +1081,7 @@
                             </button>
                         </div>
                         <div class="files-panel-credit">
-                            <img src="/static/NOC_logo.svg" alt="National Oceanography Centre" class="w-4 h-4 shrink-0">
+                            <img src="/static/noc_logo_square.svg" alt="National Oceanography Centre" class="w-4 h-4 shrink-0">
                             <span>© National Oceanography Centre · Developed by Orlando Prugel-Bennett</span>
                         </div>
                     </div>
@@ -1061,10 +1090,10 @@
                 <div class="group-divider"></div>
 
                 <!-- Presets -->
-                <div class="toolbar-group" style="min-width: 0;">
+                <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
                     <span class="group-label shrink-0">
                         Presets
-                        <span class="info-dot" data-tip="One-click templates for common ocean plots. Greyed-out presets need variables your file doesn't have."><span class="material-symbols-outlined">info</span></span>
+                        <span class="info-dot" data-tip="Select your view, or make custom plots in the advanced menu."><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
                 </div>
@@ -1075,7 +1104,7 @@
                 <div class="toolbar-group adv-only">
                     <span class="group-label">
                         Axes
-                        <span class="info-dot" data-tip="Pick variables for the X and Y axes. Invert Y flips the axis so depth increases downward."><span class="material-symbols-outlined">info</span></span>
+                        <span class="info-dot" data-tip="Pick variables for the X, Y and colour of your plot. You can invert Y and change the colour palette."><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <div class="flex items-center gap-1">
                         <span class="text-[9px] text-gray-500 font-medium">X</span>
@@ -1085,18 +1114,29 @@
                         <span class="text-[9px] text-gray-500 font-medium">Y</span>
                         <select id="yVar" class="p-1.5 w-28 transition-all"></select>
                     </div>
+                    <div class="flex items-center gap-1">
+                        <span class="text-[9px] text-gray-500 font-medium">Colour</span>
+                        <select id="cVar" class="p-1.5 w-28 transition-all">
+                            <option value="">None</option>
+                        </select>
+                    </div>
                     <!-- Advanced only: Invert Y -->
                     <button id="invertYBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded">Invert Y</button>
+                    <!-- Colour palette picker -->
+                    <div class="relative" id="cmapContainer">
+                        <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                        <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
+                    </div>
+                    <input type="hidden" id="cmap" value="thermal">
                 </div>
 
-                <!-- Advanced only: Filters & QC -->
+                <!-- Advanced only: QC -->
                 <div class="group-divider adv-only"></div>
                 <div class="toolbar-group adv-only">
                     <span class="group-label">
-                        Filters &amp; QC
-                        <span class="info-dot" data-tip="Filter Time drops NaN/out-of-range timestamps. Apply QC uses the file's _QC variables to keep only trusted samples."><span class="material-symbols-outlined">info</span></span>
+                        QC
+                        <span class="info-dot" data-tip="Apply QC uses the file's _QC variables to keep only trusted samples."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
                     <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Keep only samples whose _QC flag is in the allowed list">Apply QC</button>
                     <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;" title="Show bad-QC samples in red instead of hiding them">Highlight</button>
                     <div id="qcFlagsContainer" class="flex items-center gap-0.5" style="display: none;">
@@ -1105,15 +1145,18 @@
                     </div>
                 </div>
 
-                <!-- Advanced only: CTD (also JS-conditional) -->
-                <div id="ctdDivider" class="group-divider adv-only" style="display: none;"></div>
-                <div class="toolbar-group adv-only" id="ctdContainer" style="display: none;">
+                <!-- Advanced only: Filters (Filter Time always; CTD buttons are JS-conditional) -->
+                <div class="group-divider adv-only"></div>
+                <div class="toolbar-group adv-only" id="filtersGroup">
                     <span class="group-label">
-                        CTD
-                        <span class="info-dot" data-tip="Interpolate: time-aligns PRES/TEMP/CNDC with other sensors (filled points get QC=5). Clean: flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
+                        Filters
+                        <span class="info-dot" data-tip="Filter Time removes NaT and out-of-range timestamps. Interpolate fills all N_MEASUREMENTS with PRES, TEMP and CNDC (filled points get QC=5). Clean flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
-                    <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
+                    <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
+                    <span id="ctdContainer" class="flex items-center gap-1.5" style="display: none;">
+                        <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
+                        <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
+                    </span>
                 </div>
 
                 <!-- Profiles navigation (JS-conditional) -->
@@ -1177,39 +1220,6 @@
                     </button>
                 </div>
 
-                <div class="group-divider adv-only"></div>
-
-                <!-- Colour (advanced only — presets set the colour variable by default) -->
-                <div class="toolbar-group adv-only">
-                    <span class="group-label">
-                        Colour
-                        <span class="info-dot" data-tip="Pick a variable to colour-map points. Choose a palette from the swatch to the right."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <select id="cVar" class="p-1.5 w-28 transition-all">
-                        <option value="">None</option>
-                    </select>
-                    <div class="relative" id="cmapContainer">
-                        <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
-                        <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
-                    </div>
-                    <input type="hidden" id="cmap" value="thermal">
-                </div>
-            </div>
-
-            <!-- Right-side buttons -->
-            <div class="toolbar-group shrink-0">
-                <button id="advancedToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show advanced controls">
-                    Advanced <span class="material-symbols-outlined text-[13px]" id="advancedToggleIcon">expand_more</span>
-                </button>
-                <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
-                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
-                </button>
-                <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset view, overlays and chat">
-                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
-                </button>
-                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download plot as PNG">
-                    <span class="material-symbols-outlined text-[14px]">download</span>
-                </button>
             </div>
         </div>
     </nav>
@@ -1455,7 +1465,6 @@
             updatePlot();
         }
         const ctdContainer = document.getElementById('ctdContainer');
-        const ctdDivider = document.getElementById('ctdDivider');
         const ctdInterpBtn = document.getElementById('ctdInterpBtn');
         const ctdQcBtn = document.getElementById('ctdQcBtn');
         const downloadBtn = document.getElementById('downloadBtn');
@@ -3676,10 +3685,9 @@
                 ctdInterpBtn.style.display = interpUseful ? '' : 'none';
                 ctdQcBtn.style.display     = cleanUseful  ? '' : 'none';
 
-                // Hide the whole section if neither button does anything for this file.
+                // Hide the CTD buttons if neither does anything for this file.
                 const anyCtdUseful = interpUseful || cleanUseful;
                 ctdContainer.style.display = anyCtdUseful ? 'flex' : 'none';
-                ctdDivider.style.display   = anyCtdUseful ? 'block' : 'none';
 
                 // First time we activate this file, apply recommended defaults —
                 // but only auto-enable when the file has NO QC variables. If the
@@ -3693,7 +3701,6 @@
                 }
             } else {
                 ctdContainer.style.display = 'none';
-                ctdDivider.style.display = 'none';
                 updateToggleBtn(ctdInterpBtn, false);
                 updateToggleBtn(ctdQcBtn, false);
             }
@@ -5092,6 +5099,53 @@
             if (!t) return;
             customTooltip.style.opacity = '0';
         });
+
+        /* Centre the Presets group when (basic mode) it has wrapped onto its own
+           single row, with no other groups beside it and its chips on one line.
+           Otherwise leave it left-aligned. Safe from observer loops because the
+           class only applies when presets is already alone on one row, so toggling
+           it does not change the toolbar's height. */
+        (function () {
+            const main = document.querySelector('.toolbar-main');
+            const nav = document.getElementById('mainNav');
+            const presets = document.getElementById('presetsGroup');
+            if (!main || !nav || !presets) return;
+            const pc = document.getElementById('presetContainer');
+
+            function update() {
+                presets.classList.remove('presets-solo'); // measure natural layout
+                if (nav.classList.contains('adv-open')) return; // basic mode only
+                if (presets.offsetParent === null) return;      // hidden
+
+                const kids = Array.from(main.children).filter(el => el.offsetParent !== null);
+                const top = presets.offsetTop;
+                const sharesRow = kids.some(el => el !== presets && Math.abs(el.offsetTop - top) < 4);
+                const hasAbove = kids.some(el => el.offsetTop < top - 4);
+
+                let singleLine = true;
+                if (pc) {
+                    const chips = Array.from(pc.children).filter(c => c.offsetParent !== null);
+                    singleLine = chips.length === 0 ||
+                        chips.every(c => Math.abs(c.offsetTop - chips[0].offsetTop) < 4);
+                }
+                if (!sharesRow && hasAbove && singleLine) presets.classList.add('presets-solo');
+            }
+
+            // Debounce: the browser reflows the toolbar itself (cheap, CSS-only);
+            // we only need to re-evaluate centring once movement settles, so we
+            // avoid forcing a layout read/write on every resize frame.
+            let timer = null;
+            function schedule() {
+                clearTimeout(timer);
+                timer = setTimeout(update, 120);
+            }
+
+            if (window.ResizeObserver) new ResizeObserver(schedule).observe(main);
+            window.addEventListener('resize', schedule);
+            // Presets are built/repopulated dynamically; re-check when they change.
+            if (pc) new MutationObserver(schedule).observe(pc, { childList: true });
+            schedule();
+        })();
 
     </script>
 </body>
