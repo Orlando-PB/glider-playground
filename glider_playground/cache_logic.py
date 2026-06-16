@@ -45,8 +45,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
-# v8: Phases
-CACHE_VERSION = "8"
+# v9: Backscatter
+CACHE_VERSION = "9"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

@@ -7,6 +7,7 @@ Results are written to the per-file derived store (plot_logic) so they appear
 and behave like native variables everywhere.
 """
 
+import re
 import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
@@ -509,6 +510,77 @@ def _compute_profiles(filepath, log, names, existing, time_var):
     return wanted, arrays, meta
 
 
+def _compute_backscatter(filepath, log, names, existing, time_var):
+    """Derive a simple, visual-only particulate backscatter (BBP) from raw beta.
+
+    Only runs when no backscatter product is already present (native or from an
+    upstream pipeline). The conversion is deliberately crude — ``bbp = 2*pi*chi*beta``
+    — skipping the seawater-scattering subtraction and temperature/salinity
+    correction of the full science pipeline. That keeps it fast and dependency-free;
+    it's meant for a visual feel of the signal, not science-grade numbers. A
+    rolling-median baseline and the residual "spikes" are also produced, since the
+    despiked view is what makes backscatter features (particle bursts) legible.
+    """
+    # Skip if any backscatter product already exists (don't override real data).
+    if any(n.upper().startswith("BBP") for n in existing):
+        return [], {}, {}
+
+    # Find a raw beta variable (e.g. BETA_BACKSCATTERING700). The wavelength digits
+    # may differ; if there are several, any one is fine — take the first.
+    beta_var = next((n for n in names
+                     if "BETA" in n.upper() and "BACKSCATTER" in n.upper()
+                     and not n.upper().endswith("_QC")), None)
+    if not beta_var:
+        return [], {}, {}
+
+    data = plot_logic._read_vars_cached(filepath, (beta_var,))
+    if not data or beta_var not in data:
+        return [], {}, {}
+
+    beta = np.asarray(data[beta_var], dtype=float)
+    if beta.size == 0 or not np.any(np.isfinite(beta)):
+        return [], {}, {}
+
+    # Name the output after the sensor wavelength when present (else BBP700).
+    m = re.search(r"(\d{3,4})", beta_var)
+    base = f"BBP{m.group(1)}" if m else "BBP700"
+
+    CHI = 1.076                         # chi factor for a ~124° backscatter sensor
+    bbp = 2.0 * np.pi * CHI * beta      # m-1.sr-1 * sr -> m-1
+
+    # Despike: sample-count rolling median baseline, spikes = signal - baseline.
+    s = pd.Series(bbp)
+    baseline = s.rolling(50, center=True, min_periods=1).median().to_numpy()
+    spikes = bbp - baseline
+
+    log(f"Backscatter derive: {beta_var} -> {base} (+ baseline/spikes)")
+
+    outputs = {
+        base: (bbp, f"Particulate backscatter (simple 2πχβ from {beta_var}; visual only, not science-grade)"),
+        f"{base}_BASELINE": (baseline, f"Rolling-median baseline of {base} (window 50 samples)"),
+        f"{base}_SPIKES": (spikes, f"{base} minus its baseline — particulate backscatter spikes"),
+    }
+
+    wanted, arrays, meta = [], {}, {}
+    for name, (arr, desc) in outputs.items():
+        if name in existing:
+            continue
+        arr = np.asarray(arr, dtype=float)
+        arrays[name] = arr
+        meta[name] = {"units": "m-1", "type": "numeric", "description": _CALC + desc}
+        wanted.append(name)
+
+        qc_name = name + "_QC"
+        if qc_name not in existing:
+            arrays[qc_name] = np.where(np.isfinite(arr), 1, 9).astype(np.int8)
+            meta[qc_name] = {
+                "units": "1", "type": "numeric",
+                "description": f"Quality flag for {name} (1=good, 9=missing; derived)",
+            }
+
+    return wanted, arrays, meta
+
+
 # ---------------------------------------------------------------------------
 # Master Entry Point
 # ---------------------------------------------------------------------------
@@ -547,6 +619,14 @@ def derive_all_extra_variables(filepath, log_cb=None):
         all_meta.update(pm)
     except Exception as e:
         log(f"Profile derivation failed ({e})")
+
+    try:
+        bw, ba, bm = _compute_backscatter(filepath, log, names, existing, time_var)
+        all_wanted.extend(bw)
+        all_arrays.update(ba)
+        all_meta.update(bm)
+    except Exception as e:
+        log(f"Backscatter derivation failed ({e})")
 
     if all_arrays:
         plot_logic.save_derived(filepath, all_arrays, all_meta)
