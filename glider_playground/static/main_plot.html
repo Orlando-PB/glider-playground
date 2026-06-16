@@ -32,7 +32,32 @@
             --anno-bg: rgba(255,255,255,0.9);
         }
         body { margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: var(--text-primary); }
-        #plotDiv { width: 100vw; height: 100vh; }
+        #plotDiv { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+        /* Compact, non-interactive colour bar shown only in multiview (>1 plot).
+           Sits in a thin strip on the far left; the plot is shifted right to make
+           room. Vertically pinned to the plot's drawing area via JS (top/bottom). */
+        #cbar {
+            position: absolute; right: 5px; z-index: 6; display: none;
+            flex-direction: row; align-items: stretch; gap: 3px;
+            pointer-events: none;
+        }
+        #cbar.active { display: flex; }
+        #cbarTitle {
+            writing-mode: vertical-rl; transform: rotate(180deg);
+            text-align: center; font-size: 9px; font-weight: 600; letter-spacing: 0.03em;
+            color: var(--text-secondary); white-space: nowrap; overflow: hidden;
+        }
+        #cbarBar {
+            width: 13px; align-self: stretch; border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+        #cbarTicks {
+            display: flex; flex-direction: column; justify-content: space-between;
+            font-size: 8.5px; color: var(--text-secondary); line-height: 1; padding: 1px 0;
+        }
+        #cbarTicks span { white-space: nowrap; }
+        #cbarMid { color: var(--text-muted); }
         #overlay {
             position: absolute; inset: 0;
             display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px;
@@ -79,6 +104,16 @@
 
     <div id="plotDiv"></div>
 
+    <div id="cbar" aria-hidden="true">
+        <div id="cbarBar"></div>
+        <div id="cbarTicks">
+            <span id="cbarMax"></span>
+            <span id="cbarMid"></span>
+            <span id="cbarMin"></span>
+        </div>
+        <div id="cbarTitle"></div>
+    </div>
+
     <script>
         const bgSpinner = document.getElementById('bgSpinner');
 
@@ -98,6 +133,91 @@
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
         let _suppressRelayout = false;  // true while we are driving relayout programmatically
         let _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+
+        // ---- Compact multiview colour bar -------------------------------------
+        // In multiview (more than one plot panel) each plot shows its own small,
+        // non-interactive colour bar on the left. The big interactive colour rail
+        // in the parent is unchanged; this just mirrors the active colour range.
+        const CBAR_W = 58;   // px reserved on the right for the colour bar strip
+        let _multiview = false;   // set from the URL once urlParams is initialised
+        let _cbarMin = null, _cbarMax = null;   // current colour range shown on the bar
+
+        // The CSS gradient stops (low→high) for the current colour map, or null when
+        // there's no data-driven colour bar to show (solid colour, discrete, no c).
+        function cbarStops() {
+            if (!plotData || !plotData.c || !plotData.c.length) return null;
+            if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') return null;
+            if (_jellyOverrides.colorMode === 'solid') return null;
+            if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
+                return [_jellyOverrides.colors[0], _jellyOverrides.colors[1]];
+            }
+            let cmapName = urlParams.get('cmap') || 'thermal';
+            if (cmapName === 'black') return null;
+            const reversed = cmapName.endsWith('_r');
+            const base = reversed ? cmapName.slice(0, -2) : cmapName;
+            const stops = cmoceanPalettes[base];
+            if (!stops) return null;
+            return reversed ? stops.slice().reverse() : stops.slice();
+        }
+
+        function cbarActive() { return _multiview && !!cbarStops(); }
+
+        function fmtCbar(v) {
+            if (v === null || v === undefined || isNaN(v)) return '';
+            const a = Math.abs(v);
+            if (a !== 0 && (a < 0.01 || a >= 100000)) return v.toExponential(1);
+            const decimals = a >= 100 ? 0 : a >= 1 ? 1 : 2;
+            return Number(v.toFixed(decimals)).toString();
+        }
+
+        // Pin the colour bar to the plot's drawing area (the y-axis span) using the
+        // real computed margins, so it lines up regardless of theme/title/resize.
+        function positionCbar() {
+            const cbar = document.getElementById('cbar');
+            const plotDiv = document.getElementById('plotDiv');
+            const m = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.margin;
+            if (m) { cbar.style.top = m.t + 'px'; cbar.style.bottom = m.b + 'px'; }
+        }
+
+        // Show/hide + rebuild the colour bar and shift the plot to make room. Cheap
+        // and idempotent; safe to call after any render, relayout or state change.
+        function applyCbar() {
+            const cbar = document.getElementById('cbar');
+            const plotDiv = document.getElementById('plotDiv');
+            if (!cbar || !plotDiv) return;
+            const active = cbarActive();
+
+            // Reserve a strip on the right for the bar by narrowing the plot; resize
+            // Plotly into the new container width.
+            const wantWidth = active ? `calc(100% - ${CBAR_W}px)` : '100%';
+            if (plotDiv.style.width !== wantWidth) {
+                plotDiv.style.width = wantWidth;
+                if (plotDiv._fullLayout) { try { Plotly.Plots.resize(plotDiv); } catch (_) {} }
+            }
+
+            cbar.classList.toggle('active', active);
+            if (!active) return;
+
+            const stops = cbarStops();
+            document.getElementById('cbarBar').style.background =
+                `linear-gradient(to top, ${stops.join(', ')})`;
+
+            const label = (() => {
+                const name = (plotData.c_var || '').trim();
+                if (!name) return '';
+                const u = (plotData.c_units || '').trim();
+                return (u && u !== 'No units') ? `${name} (${u})` : name;
+            })();
+            document.getElementById('cbarTitle').textContent = label;
+
+            if (_cbarMin === null) _cbarMin = plotData.c_min;
+            if (_cbarMax === null) _cbarMax = plotData.c_max;
+            document.getElementById('cbarMax').textContent = fmtCbar(_cbarMax);
+            document.getElementById('cbarMin').textContent = fmtCbar(_cbarMin);
+            document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
+
+            positionCbar();
+        }
 
         function computeRunningMean(xs, ys, window, isXDate) {
             const pairs = [];
@@ -202,6 +322,7 @@
         };
 
         const urlParams = new URLSearchParams(window.location.search);
+        _multiview = (urlParams.get('multiview') === '1');
         let plotData = null;
 
         function getSafeMin(arr) {
@@ -285,7 +406,7 @@
             layoutUpdate.annotations = annotations;
 
             _suppressRelayout = true;
-            Plotly.relayout('plotDiv', layoutUpdate).then(() => { _suppressRelayout = false; });
+            Plotly.relayout('plotDiv', layoutUpdate).then(() => { _suppressRelayout = false; positionCbar(); });
 
             // Discrete 0-9 mode uses per-value traces with fixed colours; skip restyle.
             if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') {
@@ -382,7 +503,9 @@
                 // Tight margins so stacked plots pack close in multiview. Top is
                 // mostly empty space; bottom only needs to fit the x tick labels
                 // (plus the axis title when there is one, i.e. non-datetime x).
-                margin: { l: 60, r: 20, t: 8, b: xLabel ? 46 : 38 },
+                // With the colour bar active, tighten the right margin so the plot
+                // sits snug against it (the strip itself provides the breathing room).
+                margin: { l: 60, r: cbarActive() ? 5 : 20, t: 8, b: xLabel ? 46 : 38 },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false,
@@ -551,8 +674,10 @@
 
         function renderPlot() {
             _originalPlotData = plotData;
+            _cbarMin = plotData.c_min; _cbarMax = plotData.c_max;
 
             Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
+                applyCbar();
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
@@ -916,7 +1041,17 @@
                     try { window.parent.postMessage({ type: 'colourUpdated' }, '*'); } catch (_) {}
                 });
                 const p = Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [traceIdx]);
+                _cbarMin = msg.limits.cMin; _cbarMax = msg.limits.cMax; applyCbar();
                 if (p && p.then) p.then(ackColour); else ackColour();
+            }
+
+            if (msg.type === 'setMultiview') {
+                const nv = !!msg.multiview;
+                if (nv !== _multiview) {
+                    _multiview = nv;
+                    try { Plotly.relayout('plotDiv', { 'margin.r': cbarActive() ? 5 : 20 }); } catch (_) {}
+                    applyCbar();
+                }
             }
             
             if (msg.type === 'downloadPlot') {
@@ -962,6 +1097,7 @@
                 if (ov.clear) _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
 
                 applyJellyOverrides();
+                applyCbar();
             }
 
             if (msg.type === 'autoColour') {
@@ -996,9 +1132,14 @@
 
                 const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
                 Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [traceIdx]);
+                _cbarMin = newCMin; _cbarMax = newCMax; applyCbar();
                 window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
             }
         });
+
+        // Plotly's responsive resize keeps the plot sized to its (shifted)
+        // container; just re-pin the colour bar to the redrawn drawing area.
+        window.addEventListener('resize', () => { if (cbarActive()) requestAnimationFrame(positionCbar); });
 
         initPlot();
     </script>

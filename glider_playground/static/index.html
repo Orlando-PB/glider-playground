@@ -1875,6 +1875,22 @@
         }
         const hasPanelType = (type) => Object.values(panels).some(p => p.type === type);
 
+        // Count of plot panels currently on screen. Two or more = "multiview", which
+        // is when each plot gets its own compact left-hand colour bar (rendered
+        // inside main_plot.html). A lone plot keeps the single big colour rail only.
+        const plotPanelCount = () => Object.values(panels).filter(p => p.type === 'plot').length;
+
+        // Tell every plot iframe whether it's in multiview, so each can show/hide its
+        // own compact colour bar without a full reload when panels are added/removed.
+        function broadcastMultiview() {
+            const multi = plotPanelCount() > 1;
+            Object.values(panels).forEach(p => {
+                if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
+                    try { p.iframe.contentWindow.postMessage({ type: 'setMultiview', multiview: multi }, '*'); } catch (_) {}
+                }
+            });
+        }
+
         function panelByWindow(win) {
             return Object.values(panels).find(p => p.iframe && p.iframe.contentWindow === win) || null;
         }
@@ -1976,7 +1992,8 @@
                 const s = panel.state;
                 if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; return; }
                 panel.iframe.classList.remove('hidden');
-                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}`;
+                const multiview = plotPanelCount() > 1 ? 1 : 0;
+                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
             } else if (panel.type === 'map') {
                 if (datasetSelect.value) loadMapImage();
             } else if (panel.type === '3d') {
@@ -2235,6 +2252,7 @@
             });
             updateAddButtons();
             refreshPanelPlaceholders();
+            broadcastMultiview();
             scheduleSaveLayout();
         }
 
