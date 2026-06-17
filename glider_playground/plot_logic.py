@@ -860,7 +860,7 @@ def _apply_direction_mask(data_dict, directions):
         return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None):
     if c_var == "None":
         c_var = ""
 
@@ -943,22 +943,32 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     current_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
 
     profile_mask = _apply_profile_mask(data_dict, profile_num)
-    if profile_mask is not None:
-        old_sum = current_mask.sum()
-        current_mask &= profile_mask
-        stats["profile_removed"] = int(old_sum - current_mask.sum())
-
     cycle_mask = _apply_cycle_mask(data_dict, cycle_num, cycle_var)
-    if cycle_mask is not None:
-        current_mask &= cycle_mask
-
     phase_mask = _apply_phase_mask(data_dict, sci_phases)
-    if phase_mask is not None:
-        current_mask &= phase_mask
-
     dir_mask = _apply_direction_mask(data_dict, direction_filter)
-    if dir_mask is not None:
-        current_mask &= dir_mask
+
+    # Combined selection (profile ∧ cycle ∧ phase ∧ direction) — None if no filter.
+    selection_mask = None
+    for m in (profile_mask, cycle_mask, phase_mask, dir_mask):
+        if m is not None:
+            selection_mask = m if selection_mask is None else (selection_mask & m)
+
+    if highlight_profile:
+        # Keep every point; the selection is returned as a per-point flag so the
+        # frontend can grey the context and colour only the selection on top.
+        if profile_mask is not None:
+            stats["profile_removed"] = 0
+    else:
+        if profile_mask is not None:
+            old_sum = current_mask.sum()
+            current_mask &= profile_mask
+            stats["profile_removed"] = int(old_sum - current_mask.sum())
+        if cycle_mask is not None:
+            current_mask &= cycle_mask
+        if phase_mask is not None:
+            current_mask &= phase_mask
+        if dir_mask is not None:
+            current_mask &= dir_mask
 
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
@@ -1009,18 +1019,22 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     plot_y = y_vals[current_mask]
     plot_c = c_vals[current_mask] if c_vals is not None else None
     plot_qc = qc_pass_mask[current_mask]
+    # Per-point "is in the active selection" flag (highlight mode only).
+    plot_sel = selection_mask[current_mask] if (highlight_profile and selection_mask is not None) else None
 
     if stats["valid"] == 0:
         return {"error": "No valid data points remain.", "stats": stats}
 
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
-    if stats["valid"] > MAX_RENDER_POINTS:
-        step = stats["valid"] // MAX_RENDER_POINTS
+    render_cap = max_points if (max_points and max_points > 0) else MAX_RENDER_POINTS
+    if stats["valid"] > render_cap:
+        step = stats["valid"] // render_cap
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
         plot_qc = plot_qc[::step]
         if plot_c is not None: plot_c = plot_c[::step]
+        if plot_sel is not None: plot_sel = plot_sel[::step]
 
     if is_x_dt:
         x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist()
@@ -1048,6 +1062,8 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "c_max": c_max,
         "qc_applied": apply_qc,
         "qc_pass": plot_qc.tolist() if apply_qc else [],
+        "profile_highlight": bool(highlight_profile and selection_mask is not None),
+        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
         "stats": stats,
         "x_var": x_var,
         "y_var": y_var,
@@ -1062,7 +1078,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
                           view_x_min=None, view_x_max=None, view_y_min=None, view_y_max=None,
                           profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
-                          ctd_interpolate=False, ctd_qc=False):
+                          ctd_interpolate=False, ctd_qc=False, highlight_profile=False):
     if c_var == "None":
         c_var = ""
 
@@ -1130,20 +1146,19 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     qc_pass_mask = np.ones(len(x_vals), dtype=bool)
 
     profile_mask = _apply_profile_mask(data_dict, profile_num)
-    if profile_mask is not None:
-        valid_mask &= profile_mask
-
     cycle_mask = _apply_cycle_mask(data_dict, cycle_num, cycle_var)
-    if cycle_mask is not None:
-        valid_mask &= cycle_mask
-
     phase_mask = _apply_phase_mask(data_dict, sci_phases)
-    if phase_mask is not None:
-        valid_mask &= phase_mask
-
     dir_mask = _apply_direction_mask(data_dict, direction_filter)
-    if dir_mask is not None:
-        valid_mask &= dir_mask
+
+    selection_mask = None
+    for m in (profile_mask, cycle_mask, phase_mask, dir_mask):
+        if m is not None:
+            selection_mask = m if selection_mask is None else (selection_mask & m)
+
+    # In highlight mode keep all points (the selection is returned per-point);
+    # otherwise subset to the selection as normal.
+    if not highlight_profile and selection_mask is not None:
+        valid_mask &= selection_mask
 
     if apply_qc:
         try:
@@ -1177,6 +1192,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     plot_y = y_vals[valid_mask].astype(float)
     plot_c = c_vals[valid_mask] if c_vals is not None else None
     plot_qc = qc_pass_mask[valid_mask]
+    plot_sel = selection_mask[valid_mask] if (highlight_profile and selection_mask is not None) else None
 
     if x_min is not None and x_max is not None:
         is_dt = np.issubdtype(plot_x.dtype, np.datetime64)
@@ -1195,6 +1211,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         plot_qc = plot_qc[bounds_mask]
         if plot_c is not None:
             plot_c = plot_c[bounds_mask]
+        if plot_sel is not None:
+            plot_sel = plot_sel[bounds_mask]
 
     total = len(plot_x)
     if total == 0:
@@ -1225,6 +1243,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         plot_qc = plot_qc[::step]
         if plot_c is not None:
             plot_c = plot_c[::step]
+        if plot_sel is not None:
+            plot_sel = plot_sel[::step]
 
     x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else [None if np.isnan(v) else float(v) for v in plot_x]
     y_out = [None if np.isnan(v) else float(v) for v in plot_y]
@@ -1242,6 +1262,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
         "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,
         "qc_pass": plot_qc.tolist() if apply_qc else [],
+        "profile_highlight": bool(highlight_profile and selection_mask is not None),
+        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
         "x_var": x_var, "y_var": y_var, "c_var": c_var,
         "x_units": units_map.get(x_var, ""),
         "y_units": units_map.get(y_var, ""),

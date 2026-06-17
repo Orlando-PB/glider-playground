@@ -313,7 +313,8 @@ def api_plot_data(
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
-    ctd_interpolate: bool = False, ctd_qc: bool = False,
+    ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
+    max_points: int = None,
 ):
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
@@ -322,7 +323,8 @@ def api_plot_data(
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
         filter_time=filter_time, profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
-        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
+        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc, highlight_profile=highlight_profile,
+        max_points=max_points,
     )
 
 
@@ -334,7 +336,7 @@ def api_plot_data_bounds(
     view_x_min: float = None, view_x_max: float = None, view_y_min: float = None, view_y_max: float = None,
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
-    ctd_interpolate: bool = False, ctd_qc: bool = False,
+    ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
 ):
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
@@ -346,7 +348,7 @@ def api_plot_data_bounds(
         view_x_min=view_x_min, view_x_max=view_x_max, view_y_min=view_y_min, view_y_max=view_y_max,
         profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
-        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
+        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc, highlight_profile=highlight_profile,
     )
 
 

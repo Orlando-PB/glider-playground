@@ -1173,6 +1173,15 @@
                     </div>
                 </div>
 
+                <!-- Always-visible: depth-profile sidebar toggle for the active plot
+                     (an SVG value-vs-depth marginal on the plot's left). -->
+                <div class="group-divider"></div>
+                <div class="toolbar-group">
+                    <button id="profileSidebarBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Add a depth-profile plot (value vs depth) to the left of this plot">
+                        <span class="material-symbols-outlined text-[14px]">vertical_split</span> Profile
+                    </button>
+                </div>
+
                 <div class="group-divider adv-only"></div>
 
                 <!-- Axes group (advanced only — presets drive variables by default) -->
@@ -1437,6 +1446,7 @@
         }
 
         const invertYBtn = document.getElementById('invertYBtn');
+        const profileSidebarBtn = document.getElementById('profileSidebarBtn');
         const applyQcBtn = document.getElementById('applyQcBtn');
         const highlightQcBtn = document.getElementById('highlightQcBtn');
         const filterTimeBtn = document.getElementById('filterTimeBtn');
@@ -1708,6 +1718,13 @@
         // re-propagate in a loop). Each is consumed once, with a timeout fallback.
         const _alignDriven = new Set();
 
+        // True while a multi-plot view (e.g. Dashboard) is loading its panels in a
+        // staggered queue. Alignment drives are suppressed until it clears, so the
+        // dozen plots don't re-render each other into a refresh cascade (which also
+        // spikes the browser's WebGL-context count past its cap).
+        let _bulkLoading = false;
+        let _bulkLoadTimer = null;
+
         // A panel whose x axis is time, so aligning its x range to others is meaningful.
         function isTimeAxisVar(name) {
             if (!name) return false;
@@ -1813,6 +1830,7 @@
         // active zoom if one is in effect, otherwise re-apply the union so the new
         // plot widens/joins the shared timeline.
         function syncOnPlotLoad(panel) {
+            if (_bulkLoading) return;   // wait until the staggered batch has settled
             if (!alignTimeAxes || !isTimeseriesPanel(panel)) return;
             if (timeseriesPanels().length < 2) return;
             const m = activeAlignRange();
@@ -1823,6 +1841,7 @@
         // A real (user) zoom on a timeseries plot: it becomes the master and drives
         // the others. Echoes from our own alignment drives are consumed here.
         function maybeAlign(srcPanel, limits) {
+            if (_bulkLoading) return;   // ignore load-time zoom echoes during a staggered batch
             if (!alignTimeAxes || !isTimeseriesPanel(srcPanel)) return;
             if (_alignDriven.has(srcPanel.id)) { _alignDriven.delete(srcPanel.id); return; }
             alignMasterId = srcPanel.id;
@@ -1909,6 +1928,7 @@
                 filterTime: filterTimeBtn.classList.contains('active'),
                 ctdInterp: ctdInterpBtn.classList.contains('active'),
                 ctdQc: ctdQcBtn.classList.contains('active'),
+                profileSidebar: profileSidebarBtn.classList.contains('active'),
                 cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
                 zoomBounds: currentZoomBounds,
                 preset: currentPreset,
@@ -1937,6 +1957,7 @@
                 updateToggleBtn(filterTimeBtn, !!s.filterTime);
                 updateToggleBtn(ctdInterpBtn, !!s.ctdInterp);
                 updateToggleBtn(ctdQcBtn, !!s.ctdQc);
+                updateToggleBtn(profileSidebarBtn, !!s.profileSidebar);
                 currentZoomBounds = s.zoomBounds || null;
                 currentPreset = s.preset || '';
                 updatePresetUI();
@@ -1976,6 +1997,7 @@
                 apply_qc: !!s.applyQc, qc_flags: s.qcFlags || '',
                 highlight_qc: !!s.highlightQc, filter_time: !!s.filterTime,
                 ctd_interpolate: !!s.ctdInterp, ctd_qc: !!s.ctdQc,
+                profile_sidebar: !!s.profileSidebar,
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
             if (s.zoomBounds) {
@@ -3057,13 +3079,23 @@
             mapBtn.addEventListener('click', () => { if (!mapBtn.disabled) applyMapView(); });
             presetContainer.appendChild(mapBtn);
 
-            // Dashboard: one click builds a row of thermal / chlorophyll / oxygen
-            // panels (skipping any the current file lacks).
+            // Overview: globe + 3D alongside a stack of the headline biogeochemical
+            // plots (thermal, density, chlorophyll, oxygen — skipping any the file lacks).
+            const overviewBtn = document.createElement('button');
+            overviewBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-blue-100 text-blue-800';
+            overviewBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">grid_view</span> <span class="preset-text">Overview</span>';
+            overviewBtn.dataset.preset = '__overview__';
+            overviewBtn.title = 'Globe + 3D alongside the headline plots (thermal, density, chlorophyll, oxygen)';
+            overviewBtn.addEventListener('click', () => { if (!overviewBtn.disabled) applyOverview(); });
+            presetContainer.appendChild(overviewBtn);
+
+            // Dashboard: a single stacked column of the six core profile plots
+            // (temp, salinity, density, oxygen, chlorophyll, backscatter).
             const dashBtn = document.createElement('button');
             dashBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-blue-100 text-blue-800';
             dashBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">dashboard</span> <span class="preset-text">Dashboard</span>';
             dashBtn.dataset.preset = '__dashboard__';
-            dashBtn.title = 'Build a multi-panel dashboard (thermal, chlorophyll, oxygen)';
+            dashBtn.title = 'Stacked dashboard: temperature, salinity, density, oxygen, chlorophyll, backscatter';
             dashBtn.addEventListener('click', () => { if (!dashBtn.disabled) applyDashboard(); });
             presetContainer.appendChild(dashBtn);
 
@@ -3214,6 +3246,9 @@
             if (_viewKind === 'map') {
                 if (!mapP || !tdP) return;
                 layoutTree = mapViewTree(mapP.id, tdP.id);
+            } else if (_viewKind === 'overview') {
+                if (!mapP || !tdP || !plotIds.length) return;
+                layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
             } else if (_viewKind === 'dashboard') {
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
@@ -3255,8 +3290,8 @@
             }
         }
 
-        // Rebuild a 1×N dashboard of the available biogeochemical presets.
-        function applyDashboard() {
+        // Overview: globe + 3D + a 1×N stack of the headline biogeochemical presets.
+        function applyOverview() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const candidates = ['preset_temp', 'preset_density', 'preset_chla', 'preset_doxy'];
             const avail = candidates.filter(key => {
@@ -3275,13 +3310,57 @@
             const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
 
             layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
-            _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
+            _viewKind = 'overview'; _layoutPortrait = isPortrait();
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
             if (!keepTd) renderPanel(td);
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
+        }
+
+        // Dashboard: globe + 3D on the left, then a stacked column of the six core
+        // time-series plots (temp → salinity → density → oxygen → chlorophyll →
+        // backscatter, skipping any the file lacks), each with its depth-profile
+        // sidebar (the in-plot SVG marginal) switched on.
+        function applyDashboard() {
+            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
+            const order = ['preset_temp', 'preset_sal', 'preset_density', 'preset_doxy', 'preset_chla', 'preset_bbp'];
+            const avail = order.filter(key => {
+                const p = OceanPresets[key];
+                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
+            });
+            if (avail.length === 0) return;
+
+            _pendingGlobeFit = false;
+            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
+
+            // One time-series plot per variable, each with the depth-profile sidebar
+            // (an in-plot SVG marginal — see main_plot.html) switched on.
+            const plotIds = avail.map(key => {
+                const s = stateFromPreset(key);
+                s.profileSidebar = true;
+                return createPanel('plot', s).id;
+            });
+
+            layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
+            _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
+            plotIframe = panels[plotIds[0]].iframe;
+            renderLayout();
+            if (!keepMap) renderPanel(map);
+            if (!keepTd) renderPanel(td);
+            refitReusedGlobe(keepMap, false);
+            setActive(plotIds[0]);
+
+            // Stagger the plot loads and hold off alignment until they settle, so the
+            // batch doesn't spike WebGL contexts or cascade re-renders on load.
+            _bulkLoading = true;
+            clearTimeout(_bulkLoadTimer);
+            const STAGGER = 280;
+            plotIds.forEach((id, i) => setTimeout(() => { const p = panels[id]; if (p) renderPanel(p); }, i * STAGGER));
+            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, plotIds.length * STAGGER + 1000);
         }
 
         // "Map" preset: globe + 3D side by side, no plot. The toolbar has nothing
@@ -4192,6 +4271,7 @@
         };
 
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
+        profileSidebarBtn.addEventListener('click', () => handleToggle(profileSidebarBtn, false));
         filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
         
         applyQcBtn.addEventListener('click', () => {

@@ -33,6 +33,10 @@
         }
         body { margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: var(--text-primary); }
         #plotDiv { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        /* Depth-profile marginal: an SVG (no WebGL) value-vs-depth mini-plot on the
+           far left. Hidden until the Profile sidebar is enabled; the main plot is
+           shifted right to make room (see layoutPlotArea). */
+        #profileDiv { position: absolute; top: 0; left: 0; height: 100%; display: none; }
 
         /* Compact, non-interactive colour bar shown only in multiview (>1 plot).
            Sits in a thin strip on the far left; the plot is shifted right to make
@@ -114,6 +118,10 @@
         <div id="cbarTitle"></div>
     </div>
 
+    <!-- Optional depth-profile marginal (value vs depth), an SVG mini-plot pinned to
+         the left. Toggled by the Advanced "Profile" control (profile_sidebar param). -->
+    <div id="profileDiv"></div>
+
     <script>
         const bgSpinner = document.getElementById('bgSpinner');
 
@@ -142,6 +150,12 @@
         let _multiview = false;   // set from the URL once urlParams is initialised
         let _cbarMin = null, _cbarMax = null;   // current colour range shown on the bar
 
+        // Depth-profile marginal (left side). SIDEBAR_W is the reserved strip width;
+        // the marginal matches the main plot's top/bottom margins so their depth axes
+        // line up, and puts its value ticks on the bottom (no title).
+        const SIDEBAR_W = 158;
+        let _profileSidebar = false;   // set from the URL once urlParams is initialised
+
         // The CSS gradient stops (low→high) for the current colour map, or null when
         // there's no data-driven colour bar to show (solid colour, discrete, no c).
         function cbarStops() {
@@ -161,6 +175,13 @@
         }
 
         function cbarActive() { return _multiview && !!cbarStops(); }
+
+        // Index of the coloured scatter trace (the one the colour slider/auto-colour
+        // restyle). Highlight-QC draws a grey backdrop first, colour on top (idx 1).
+        function colouredTraceIdx() {
+            if (plotData && plotData.qc_applied && urlParams.get('highlight_qc') === 'true') return 1;
+            return 0;
+        }
 
         function fmtCbar(v) {
             if (v === null || v === undefined || isNaN(v)) return '';
@@ -187,14 +208,7 @@
             if (!cbar || !plotDiv) return;
             const active = cbarActive();
 
-            // Reserve a strip on the right for the bar by narrowing the plot; resize
-            // Plotly into the new container width.
-            const wantWidth = active ? `calc(100% - ${CBAR_W}px)` : '100%';
-            if (plotDiv.style.width !== wantWidth) {
-                plotDiv.style.width = wantWidth;
-                if (plotDiv._fullLayout) { try { Plotly.Plots.resize(plotDiv); } catch (_) {} }
-            }
-
+            layoutPlotArea();   // colour bar (right) shares the plot's sizing with the sidebar (left)
             cbar.classList.toggle('active', active);
             if (!active) return;
 
@@ -217,6 +231,111 @@
             document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
 
             positionCbar();
+        }
+
+        // Size the main plot to leave room for the left profile sidebar and/or the
+        // right colour bar, then resize Plotly into the new box.
+        function layoutPlotArea() {
+            const plotDiv = document.getElementById('plotDiv');
+            if (!plotDiv) return;
+            const left = _profileSidebar ? SIDEBAR_W : 0;
+            const right = cbarActive() ? CBAR_W : 0;
+            const wantLeft = left + 'px';
+            const wantWidth = `calc(100% - ${left + right}px)`;
+            let changed = false;
+            if (plotDiv.style.left !== wantLeft) { plotDiv.style.left = wantLeft; changed = true; }
+            if (plotDiv.style.width !== wantWidth) { plotDiv.style.width = wantWidth; changed = true; }
+            if (changed && plotDiv._fullLayout) { try { Plotly.Plots.resize(plotDiv); } catch (_) {} }
+        }
+
+        // ---- Depth-profile marginal (SVG) -------------------------------------
+        function buildProfileTraces(pdata) {
+            const cmapName = urlParams.get('cmap') || 'thermal';
+            const scale = customColorscales[cmapName] || cmapName;
+            const SZ = 4;
+            const colourMarker = (c) => ({
+                size: SZ, opacity: 0.9,
+                color: (c && c.length && pdata.c && pdata.c.length) ? c : plotConfig.defaultColour,
+                colorscale: (c && c.length && pdata.c && pdata.c.length) ? scale : undefined,
+                cmin: pdata.c_min, cmax: pdata.c_max, cauto: false
+            });
+            // Grey the full column, colour the selected profile/cycle/direction on
+            // top, when a filter is active; otherwise a single coloured gradient.
+            if (pdata.profile_highlight && pdata.in_selection && pdata.in_selection.length === pdata.x.length) {
+                const sx=[], sy=[], sc=[], gx=[], gy=[];
+                for (let i = 0; i < pdata.x.length; i++) {
+                    if (pdata.in_selection[i]) { sx.push(pdata.x[i]); sy.push(pdata.y[i]); sc.push(pdata.c ? pdata.c[i] : null); }
+                    else { gx.push(pdata.x[i]); gy.push(pdata.y[i]); }
+                }
+                return [
+                    { x: gx, y: gy, mode: 'markers', type: 'scatter', marker: { size: SZ, color: '#9ca3af', opacity: 0.3 }, hoverinfo: 'none' },
+                    { x: sx, y: sy, mode: 'markers', type: 'scatter', marker: colourMarker(sc), hoverinfo: 'none' },
+                ];
+            }
+            return [{ x: pdata.x, y: pdata.y, mode: 'markers', type: 'scatter', marker: colourMarker(pdata.c), hoverinfo: 'none' }];
+        }
+
+        function buildProfileLayout(pdata) {
+            const TC = readThemeColors();
+            const isInverted = urlParams.get('invert_y') === 'true';
+            const plotDiv = document.getElementById('plotDiv');
+            // Match the main plot's top/bottom margins so the two depth axes line up.
+            const m = (plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.margin) || { t: 8, b: 26 };
+            return {
+                margin: { l: 44, r: 6, t: m.t, b: m.b },
+                font: { color: TC.axis, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
+                xaxis: {
+                    // Ticks on the bottom (aligned with the main plot's x-axis) and no
+                    // title — the variable is obvious from the connected main plot, and
+                    // dropping it lets the profile run the full height of the plot.
+                    side: 'bottom', showgrid: true, zeroline: false, nticks: 4,
+                    gridcolor: TC.grid, linecolor: TC.line, tickcolor: TC.line, tickfont: { color: TC.axis, size: 9 },
+                },
+                yaxis: {
+                    autorange: isInverted ? 'reversed' : true, showgrid: true, zeroline: false,
+                    gridcolor: TC.grid, linecolor: TC.line, tickcolor: TC.line, tickfont: { color: TC.axis, size: 9 },
+                },
+                hovermode: false, plot_bgcolor: 'transparent', paper_bgcolor: 'transparent', showlegend: false,
+            };
+        }
+
+        // Fetch the value-vs-depth data (all points + selection flag, light point
+        // budget) and draw the SVG marginal. Re-runs whenever the iframe reloads
+        // (toggle / colour map / profile-filter changes all reload it).
+        let _profileFetchSeq = 0;
+        async function renderProfileSidebar() {
+            const profileDiv = document.getElementById('profileDiv');
+            if (!profileDiv) return;
+            const cVar = urlParams.get('c_var');
+            if (!_profileSidebar || !plotData || !cVar || cVar === 'black') {
+                profileDiv.style.display = 'none';
+                try { Plotly.purge('profileDiv'); } catch (_) {}
+                layoutPlotArea();
+                return;
+            }
+            profileDiv.style.display = 'block';
+            profileDiv.style.width = SIDEBAR_W + 'px';
+            layoutPlotArea();   // reserve the left strip on the main plot
+
+            // Value on X, depth on Y, with the selection highlighted; capped to a
+            // light point budget since SVG (not WebGL) draws these.
+            const p = new URLSearchParams(window.location.search);
+            p.set('x_var', cVar);
+            p.set('highlight_profile', 'true');
+            p.set('max_points', '2500');
+            ['multiview', 'theme', 'profile_sidebar', 'zXmin', 'zXmax', 'zYmin', 'zYmax'].forEach(k => p.delete(k));
+
+            const seq = ++_profileFetchSeq;
+            try {
+                const resp = await fetch('/api/plot_data?' + p.toString());
+                const pdata = await resp.json();
+                if (seq !== _profileFetchSeq) return;   // a newer render superseded this one
+                if (pdata.error || !pdata.x || !pdata.x.length) { profileDiv.style.display = 'none'; layoutPlotArea(); return; }
+                Plotly.react('profileDiv', buildProfileTraces(pdata), buildProfileLayout(pdata),
+                    { displayModeBar: false, responsive: true, staticPlot: true });
+            } catch (_) {
+                if (seq === _profileFetchSeq) { profileDiv.style.display = 'none'; layoutPlotArea(); }
+            }
         }
 
         function computeRunningMean(xs, ys, window, isXDate) {
@@ -323,6 +442,7 @@
 
         const urlParams = new URLSearchParams(window.location.search);
         _multiview = (urlParams.get('multiview') === '1');
+        _profileSidebar = (urlParams.get('profile_sidebar') === 'true');
         let plotData = null;
 
         function getSafeMin(arr) {
@@ -424,8 +544,7 @@
             } else if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
                 effectiveColorscale = [[0, _jellyOverrides.colors[0]], [1, _jellyOverrides.colors[1]]];
             }
-            const isQc = plotData.qc_applied && urlParams.get('highlight_qc') === 'true';
-            const passIdx = isQc ? 1 : 0;
+            const passIdx = colouredTraceIdx();
             let newColor, newScale;
             if (forceSolidColor) {
                 newColor = forceSolidColor;
@@ -505,12 +624,24 @@
                 // (plus the axis title when there is one, i.e. non-datetime x).
                 // With the colour bar active, tighten the right margin so the plot
                 // sits snug against it (the strip itself provides the breathing room).
-                margin: { l: 60, r: cbarActive() ? 5 : 20, t: 8, b: xLabel ? 46 : 38 },
+                // A date x-axis needs only one row of ticks (see tickformatstops), so
+                // its bottom margin is tighter than a labelled value axis.
+                margin: { l: 60, r: cbarActive() ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false,
                     gridcolor: GRID_COLOR, linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
-                    title: xLabel ? { text: xLabel, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined
+                    title: xLabel ? { text: xLabel, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined,
+                    // Keep each date tick on a single line (Plotly's default splits the
+                    // year onto a wasteful second row); the year rides inline instead.
+                    tickformatstops: isXDate ? [
+                        { dtickrange: [null, 60000], value: '%H:%M:%S' },
+                        { dtickrange: [60000, 3600000], value: '%H:%M' },
+                        { dtickrange: [3600000, 86400000], value: '%H:%M' },
+                        { dtickrange: [86400000, 'M1'], value: "%d %b %Y" },
+                        { dtickrange: ['M1', 'M12'], value: "%b %Y" },
+                        { dtickrange: ['M12', null], value: '%Y' },
+                    ] : undefined,
                 },
                 yaxis: {
                     showgrid: true, zeroline: false,
@@ -541,7 +672,11 @@
                 layout.xaxis.range = xRange;
                 layout.xaxis.autorange = false;
             } else if (urlParams.has('zXmin') && urlParams.has('zXmax')) {
-                layout.xaxis.range = [urlParams.get('zXmin'), urlParams.get('zXmax')];
+                // Saved zoom bounds for a date axis come through as epoch-ms strings;
+                // Plotly's date axis wants numbers (a numeric string is read as a
+                // date string and rejected). Coerce for dates, leave linear as-is.
+                const zx0 = urlParams.get('zXmin'), zx1 = urlParams.get('zXmax');
+                layout.xaxis.range = isXDate ? [Number(zx0), Number(zx1)] : [zx0, zx1];
                 layout.xaxis.autorange = false;
             }
 
@@ -678,6 +813,7 @@
 
             Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
                 applyCbar();
+                renderProfileSidebar();
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
@@ -1032,8 +1168,8 @@
             }
 
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
-                // If dual trace, update the second trace (Passed QC)
-                const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
+                // If dual trace, update the coloured trace (Passed QC / Selection)
+                const traceIdx = colouredTraceIdx();
                 // Ack once the restyle has actually been applied and painted, so the
                 // parent paces the next slider value to this plot's real redraw cost
                 // (keeps the slider smooth instead of flooding it with restyles).
@@ -1130,7 +1266,7 @@
                 const newCMin = calcCMin !== Infinity ? calcCMin : plotData.c_min;
                 const newCMax = calcCMax !== -Infinity ? calcCMax : plotData.c_max;
 
-                const traceIdx = (plotData.qc_applied && urlParams.get('highlight_qc') === 'true') ? 1 : 0;
+                const traceIdx = colouredTraceIdx();
                 Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [traceIdx]);
                 _cbarMin = newCMin; _cbarMax = newCMax; applyCbar();
                 window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
