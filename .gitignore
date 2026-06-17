@@ -7,5 +7,7 @@
 /data/
 *.nc
 /dist/
+/build/
+/packaging/app_icon.ico
 .env
 /testing/

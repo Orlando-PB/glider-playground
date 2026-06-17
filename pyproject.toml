@@ -26,8 +26,12 @@ dependencies = [
     "gsw"
 ]
 
+[project.optional-dependencies]
+desktop = ["pywebview"]
+
 [project.scripts]
 glider-playground = "glider_playground.cli:main"
+glider-playground-app = "glider_playground.desktop:main"
 
 [tool.setuptools.packages.find]
 include = ["glider_playground*"]
