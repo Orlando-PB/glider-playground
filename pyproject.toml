@@ -23,7 +23,8 @@ dependencies = [
     "requests",
     "h5netcdf",
     "netcdf4",
-    "gsw"
+    "gsw",
+    "scipy"
 ]
 
 [project.optional-dependencies]
