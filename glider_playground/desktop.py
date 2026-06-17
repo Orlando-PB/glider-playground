@@ -11,6 +11,7 @@ import os
 import socket
 import threading
 import time
+import webbrowser
 from pathlib import Path
 
 import uvicorn
@@ -19,6 +20,8 @@ from .cli import LOG_LEVEL, PORT
 
 HOST = "127.0.0.1"
 WINDOW_TITLE = "Glider Playground"
+WEBSITE_URL = "https://glider-playground.co.uk"
+GITHUB_URL = "https://github.com/Orlando-PB/glider-playground"
 STARTUP_TIMEOUT = 30  # seconds to wait for the server before giving up
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -49,6 +52,64 @@ def _run_server():
     from .app import app
 
     uvicorn.run(app, host=HOST, port=PORT, log_level=LOG_LEVEL, reload=False)
+
+
+def _patch_macos_window_drag():
+    """Fix cross-monitor window dragging on macOS.
+
+    Dragging blank toolbar areas works because pywebview's injected JS sends the
+    window's target position (derived from the DOM ``screenX``/``screenY`` of the
+    cursor) to its native ``move`` handler. That handler converts those DOM
+    coordinates — which are *always* relative to the primary display — into
+    AppKit's bottom-left origin using ``self.screen``, the display the window was
+    *created* on. The moment the window sits on a differently-sized external
+    monitor the Y-flip is computed against the wrong height, so the window snaps
+    far below the cursor. Recompute against the primary display instead, which is
+    the coordinate space the JS actually reports in.
+    """
+    try:
+        import AppKit
+        from webview.platforms.cocoa import BrowserView
+    except ImportError:
+        return  # not macOS — nothing to patch
+
+    def move(self, x, y):
+        primary_height = AppKit.NSScreen.screens()[0].frame().size.height
+        self.window.setFrameTopLeftPoint_(AppKit.NSPoint(x, primary_height - y))
+
+    BrowserView.move = move
+
+
+def _set_macos_app_name():
+    """Make the macOS menu bar say "Glider Playground" instead of "Python".
+
+    The app menu title and its About/Hide/Quit items come from the main bundle's
+    ``CFBundleName``. Running unbundled (from source) that is "Python"; the
+    packaged .app sets it via the PyInstaller spec. Override the in-memory value
+    so the menu reads correctly in both cases before pywebview builds the menu.
+    """
+    try:
+        from webview.platforms import cocoa
+    except ImportError:
+        return  # not macOS
+    cocoa.info["CFBundleName"] = WINDOW_TITLE
+
+
+def _build_macos_menu():
+    """A small Help menu (alongside the default Edit/View menus) with links."""
+    try:
+        from webview.menu import Menu, MenuAction
+    except ImportError:
+        return []
+    return [
+        Menu(
+            "Help",
+            [
+                MenuAction("Glider Playground Website", lambda: webbrowser.open(WEBSITE_URL)),
+                MenuAction("View on GitHub", lambda: webbrowser.open(GITHUB_URL)),
+            ],
+        ),
+    ]
 
 
 def _integrate_titlebar(window):
@@ -108,6 +169,11 @@ def main():
     # buttons/dropdowns inside it still behave normally.
     webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
 
+    # macOS niceties: correct cross-monitor dragging and a sensible app/menu name
+    # (both no-ops off macOS).
+    _patch_macos_window_drag()
+    _set_macos_app_name()
+
     print("Starting Glider Playground (desktop)...")
     threading.Thread(target=_run_server, daemon=True).start()
 
@@ -131,7 +197,11 @@ def main():
     # Element) for diagnosing rendering issues. Off for normal/packaged use.
     debug = os.getenv("GP_DESKTOP_DEBUG") == "1"
     # Blocks until the window is closed; the daemon server thread exits with it.
-    webview.start(icon=str(icon) if icon.exists() else None, debug=debug)
+    webview.start(
+        icon=str(icon) if icon.exists() else None,
+        debug=debug,
+        menu=_build_macos_menu(),
+    )
 
 
 if __name__ == "__main__":

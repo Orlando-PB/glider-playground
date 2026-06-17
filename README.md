@@ -12,6 +12,28 @@ A fast, web-based explorer for ocean glider data. Load OG1 NetCDF files — or p
 
 ## Install & Run
 
+### Download the app (easiest)
+
+Grab the latest prebuilt desktop app — no Python or setup required:
+
+**➡️ [Download from the latest release](https://github.com/Orlando-PB/glider-playground/releases/latest)**
+
+| Platform | File |
+|---|---|
+| **macOS** (Apple Silicon) | `GliderPlayground-macOS-arm64.zip` |
+| **Windows** (x64) | `GliderPlayground-Windows-x64.zip` |
+| **Linux** (x64) | `GliderPlayground-Linux-x64.tar.gz` |
+
+Unzip and run it like any other app.
+
+> **Unsigned builds.** macOS and Windows builds aren't code-signed yet, so the OS will warn the first time you open them:
+> - **macOS** — right-click the app → **Open** → **Open** (only needed once). If it's still blocked, run `xattr -dr com.apple.quarantine /path/to/GliderPlayground.app`.
+> - **Windows** — on the SmartScreen prompt click **More info** → **Run anyway**.
+
+---
+
+### Or run with pip
+
 ```bash
 pip install glider-playground
 glider-playground

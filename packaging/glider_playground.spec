@@ -89,6 +89,10 @@ if sys.platform == "darwin":
         bundle_identifier="org.noc.gliderplayground",
         info_plist={
             "NSHighResolutionCapable": True,
+            # Drives the bold app-menu title and the About/Hide/Quit items.
+            # Without this the menu bar shows the executable name ("GliderPlayground").
+            "CFBundleName": "Glider Playground",
+            "CFBundleDisplayName": "Glider Playground",
             "CFBundleShortVersionString": os.environ.get("GP_VERSION", "0.0.0"),
             "CFBundleVersion": os.environ.get("GP_VERSION", "0.0.0"),
         },
