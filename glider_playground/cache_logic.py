@@ -18,8 +18,8 @@ import gc
 import hashlib
 import json
 import os
+import sys
 import threading
-import os
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -41,7 +41,33 @@ CACHE_ROOT = Path.home() / ".glider_playground"
 UPLOADS_DIR = CACHE_ROOT / "uploads"
 PAYLOADS_DIR = CACHE_ROOT / "payloads"
 REGISTRY_FILE = CACHE_ROOT / "registry.json"
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def _resolve_data_dir() -> Path:
+    """Where managed live-deployment downloads live and get auto-scanned.
+
+    Picking this relative to the package only works for a source checkout — in
+    the frozen desktop build the package lives *inside* the .app bundle, so the
+    old default tried to write downloads into a read-only bundle. Resolution:
+
+      1. ``GP_DATA_DIR`` env var, if set, always wins.
+      2. A source checkout (``.git`` beside the package, not frozen) keeps using
+         the repo's ``data/`` folder, so the dev workflow is unchanged.
+      3. Everything else — a pip install or the frozen desktop app — uses a
+         user-writable folder alongside our other state (``~/.glider_playground/data``).
+    """
+    env = os.environ.get("GP_DATA_DIR")
+    if env:
+        return Path(env).expanduser()
+
+    repo_root = Path(__file__).resolve().parent.parent
+    if not getattr(sys, "frozen", False) and (repo_root / ".git").is_dir():
+        return repo_root / "data"
+
+    return CACHE_ROOT / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).

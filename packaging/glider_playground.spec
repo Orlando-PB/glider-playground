@@ -10,7 +10,7 @@ NetCDF/HDF5 stack). On macOS it is additionally wrapped into a .app.
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 PKG = os.path.join(ROOT, "glider_playground")
@@ -20,6 +20,10 @@ APP_NAME = "GliderPlayground"
 # --- Bundle the static web assets (HTML/JS/CSS/icons) ---------------------
 datas = [(os.path.join(PKG, "static"), "glider_playground/static")]
 binaries = []
+
+# Bundle the package's dist metadata so importlib.metadata.version() works in
+# the frozen build — the update check relies on it to know the app's version.
+datas += copy_metadata("glider-playground")
 
 # uvicorn loads its protocol/loop implementations dynamically; the FastAPI app
 # is imported directly in desktop.py so its graph is followed automatically,

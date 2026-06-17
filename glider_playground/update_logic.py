@@ -3,15 +3,17 @@
 Compares the installed `glider-playground` version against the latest on PyPI
 and, when out of date, works out the most relevant upgrade instructions for
 *this* install: a git checkout gets `git pull`, a pip install gets
-`pip install --upgrade`, and if we can see the active virtualenv/conda env we
-prefix the command with how to activate it. The PyPI lookup is cached so a busy
-page doesn't hammer the index.
+`pip install --upgrade`, a frozen desktop build gets a direct download link to
+the latest release asset for its OS/arch, and if we can see the active
+virtualenv/conda env we prefix the command with how to activate it. The PyPI
+lookup is cached so a busy page doesn't hammer the index.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import platform
 import sys
 import threading
 import time
@@ -22,6 +24,12 @@ PYPI_JSON_URL = "https://pypi.org/pypi/glider-playground/json"
 PACKAGE_NAME = "glider-playground"
 CACHE_TTL = 3600  # seconds — re-check PyPI at most once an hour per process
 HTTP_TIMEOUT = 5
+
+# Desktop builds are published to a single rolling "latest" GitHub release with
+# stable per-platform asset names (see .github/workflows/build-desktop.yml), so
+# these download URLs never change between versions.
+RELEASES_PAGE = "https://github.com/Orlando-PB/glider-playground/releases/latest"
+DOWNLOAD_BASE = "https://github.com/Orlando-PB/glider-playground/releases/download/latest"
 
 _lock = threading.Lock()
 _cache: dict = {"at": 0.0, "data": None}
@@ -68,12 +76,18 @@ def _is_outdated(current: str | None, latest: str | None) -> bool:
 
 
 def _detect_install() -> tuple[str, str | None]:
-    """Return ("git" | "pip" | "unknown", repo_dir_or_None).
+    """Return ("desktop" | "git" | "pip" | "unknown", repo_dir_or_None).
 
-    A `.git` directory beside the package (the repo root of a clone or an
-    editable `pip install -e .`) means git; living under site/dist-packages
-    means a normal pip install; anything else is unknown.
+    A frozen PyInstaller build (the downloadable desktop app) is "desktop" and
+    upgrades by downloading a new release, not by pip/git — so it's checked
+    first. Otherwise: a `.git` directory beside the package (the repo root of a
+    clone or an editable `pip install -e .`) means git; living under
+    site/dist-packages means a normal pip install; anything else is unknown.
     """
+    # PyInstaller sets sys.frozen (and sys._MEIPASS) on the frozen executable.
+    if getattr(sys, "frozen", False):
+        return "desktop", None
+
     pkg_dir = Path(__file__).resolve().parent       # .../glider_playground
     repo_root = pkg_dir.parent                       # repo root for a checkout
     try:
@@ -105,6 +119,40 @@ def _detect_env() -> dict:
         return {"kind": "venv", "name": name, "activate": activate}
 
     return {"kind": None, "name": None, "activate": None}
+
+
+def _desktop_asset() -> tuple[str | None, str]:
+    """Return (asset_filename_or_None, human_label) for the current platform.
+
+    Mirrors the asset names produced by the desktop build workflow. None means
+    no prebuilt asset exists for this OS/arch (e.g. Intel macOS) — callers fall
+    back to the releases page so the user can pick manually.
+    """
+    machine = platform.machine().lower()
+    if sys.platform == "darwin":
+        if machine in ("arm64", "aarch64"):
+            return "GliderPlayground-macOS-arm64.zip", "macOS (Apple Silicon)"
+        return None, "macOS (Intel)"
+    if sys.platform.startswith("win"):
+        return "GliderPlayground-Windows-x64.zip", "Windows (x64)"
+    if sys.platform.startswith("linux"):
+        return "GliderPlayground-Linux-x64.tar.gz", "Linux (x64)"
+    return None, sys.platform
+
+
+def _fill_actions(info: dict, method: str, repo_dir: str | None, env: dict) -> None:
+    """Populate the method-specific "how to upgrade" fields on ``info``.
+
+    Command-based installs (git/pip/unknown) get ``steps``; the frozen desktop
+    build gets a ``download_url`` + ``download_label`` instead.
+    """
+    if method == "desktop":
+        asset, label = _desktop_asset()
+        info["download_label"] = label
+        info["download_url"] = f"{DOWNLOAD_BASE}/{asset}" if asset else RELEASES_PAGE
+        info["steps"] = []
+    else:
+        info["steps"] = _build_steps(method, repo_dir, env)
 
 
 def _build_steps(method: str, repo_dir: str | None, env: dict) -> list[str]:
@@ -145,7 +193,7 @@ def _compute() -> dict:
     env = _detect_env()
     info["method"] = method
     info["env"] = env
-    info["steps"] = _build_steps(method, repo_dir, env)
+    _fill_actions(info, method, repo_dir, env)
     return info
 
 
@@ -155,20 +203,27 @@ def check(force: bool = False) -> dict:
     # Set GP_FAKE_UPDATE to force an "outdated" response without a real PyPI bump:
     #   GP_FAKE_UPDATE=1        -> pretend latest is 99.0.0
     #   GP_FAKE_UPDATE=0.3.0    -> pretend latest is 0.3.0
+    # Set GP_FAKE_DESKTOP=1 alongside it to preview the desktop download banner
+    # even when running from source (forces method="desktop").
     _fake = os.getenv("GP_FAKE_UPDATE")
     if _fake:
         current = _installed_version() or "0.0.0"
         latest = _fake if _fake[:1].isdigit() and _fake != "1" else "99.0.0"
-        method, repo_dir = _detect_install()
+        if os.getenv("GP_FAKE_DESKTOP") == "1":
+            method, repo_dir = "desktop", None
+        else:
+            method, repo_dir = _detect_install()
         env = _detect_env()
-        return {
+        info = {
             "current": current,
             "latest": latest,
             "outdated": True,
             "method": method,
             "env": env,
-            "steps": _build_steps(method, repo_dir, env),
+            "steps": [],
         }
+        _fill_actions(info, method, repo_dir, env)
+        return info
     # --- end TEMP block ---
 
     now = time.time()
