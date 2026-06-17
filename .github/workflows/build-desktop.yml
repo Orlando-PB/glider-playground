@@ -46,15 +46,18 @@ jobs:
           sudo apt-get install -y \
             libgtk-3-0 libgirepository-1.0-1 gir1.2-gtk-3.0 \
             libwebkit2gtk-4.1-0 gir1.2-webkit2-4.1 \
-            libgirepository1.0-dev libcairo2-dev pkg-config python3-dev
+            libgirepository1.0-dev libcairo2-dev libglib2.0-dev \
+            gobject-introspection pkg-config python3-dev
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install ".[desktop]" pyinstaller pillow
-          # Platform-specific webview backend
+          # Linux GTK backend for pywebview. Pin to the last PyGObject that
+          # builds against girepository-1.0 (the runner's GLib); 3.52+ requires
+          # girepository-2.0 which Ubuntu 24.04 doesn't ship.
           if [ "$RUNNER_OS" = "Linux" ]; then
-            pip install pygobject
+            pip install pycairo "pygobject<3.52"
           fi
         shell: bash
 
@@ -102,6 +105,10 @@ jobs:
   release:
     name: Publish rolling release
     needs: build
+    # Publish whatever built successfully, even if one platform failed — so a
+    # single broken target doesn't block shipping the others. Only skips if the
+    # whole run was cancelled.
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
