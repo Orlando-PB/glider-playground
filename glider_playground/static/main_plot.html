@@ -407,7 +407,12 @@
             delta:   ['#112f46','#164872','#275a8f','#3d7ea0','#5aa294','#97c07d','#e0d18a','#dba04b','#bd4e40','#7d2f38','#3b152f'],
             curl:    ['#150b2e','#2a245d','#3a3f85','#56659f','#8596b5','#c9c9c3','#d4c58b','#bfa05a','#a76b3e','#6d2e3e','#371032'],
             diff:    ['#241c2f','#2c3d6a','#38689e','#6098b8','#a3bfc5','#e2e2e2','#d0b6a9','#b37773','#874441','#51252b','#241414'],
-            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35']
+            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35'],
+            bbp:     ['#cccccc','#737373','#000000','#1335f5','#3f8df7','#67dffb','#a1fc4e','#f8d748','#ef8733','#ea3323'],
+            temp:    ['#1b1c6e','#365292','#5286b7','#8db4c4','#dbe5cd','#f1d8b4','#d9997e','#c05e4c','#a0372b','#811910'],
+            sal:     ['#f9e8b1','#f1c38f','#e8a074','#db7c5f','#cb5c58','#b2425c','#943061','#732460','#511c53','#321340'],
+            sunset:  ['#ecf472','#f1c85b','#eea052','#db7e61','#ba6b78','#935c86','#714c8e','#4d3a99','#1f3479','#0f263b'],
+            chla:    ['#182548','#2c5398','#4a88a4','#87b8b5','#dae4da','#e6d992','#a8ab3e','#56872e','#285932','#1b2617']
         };
 
         const customColorscales = (() => {
@@ -472,6 +477,24 @@
                 if (plotData.error) throw new Error(plotData.error);
 
                 renderPlot();
+
+                // Reloaded straight into a saved zoom (e.g. the user changed cmap or
+                // draw order while zoomed in)? /api/plot_data returns the full,
+                // downsampled record clipped to the zoom window, which can look sparse
+                // or empty in a tight window. A live zoom-drag normally pulls the
+                // high-res in-bounds chunk via triggerBgFetch, but a fresh load never
+                // fires plotly_relayout — so drive that same fetch explicitly here.
+                if (urlParams.has('zXmin') && urlParams.has('zXmax') &&
+                    urlParams.has('zYmin') && urlParams.has('zYmax')) {
+                    let zx0 = Number(urlParams.get('zXmin')), zx1 = Number(urlParams.get('zXmax'));
+                    let zy0 = Number(urlParams.get('zYmin')), zy1 = Number(urlParams.get('zYmax'));
+                    if (!isNaN(zx0) && !isNaN(zx1) && !isNaN(zy0) && !isNaN(zy1)) {
+                        if (zx0 > zx1) { const t = zx0; zx0 = zx1; zx1 = t; }
+                        if (zy0 > zy1) { const t = zy0; zy0 = zy1; zy1 = t; }
+                        _currentZoom = { xMin: zx0, xMax: zx1, yMin: zy0, yMax: zy1 };
+                        triggerBgFetch(zx0, zx1, zy0, zy1);
+                    }
+                }
 
                 window.logRender('WebGL Plot', performance.now() - startTime);
                 
@@ -698,6 +721,12 @@
         function createTraces(data) {
             let cmapName = urlParams.get('cmap') || 'thermal';
             const isDiscrete09 = cmapName === 'discrete_09';
+            // Point draw order: 'normal' = file/measurement order (as before),
+            // 'largest' = high colour values drawn last (on top), 'smallest' = low
+            // values on top. The two "on top" modes also use a smaller marker so the
+            // surfaced points sit cleanly over the rest.
+            const drawOrder = urlParams.get('draw_order') || 'normal';
+            const orderActive = drawOrder === 'largest' || drawOrder === 'smallest';
 
             // --- Discrete 0-9 mode: one trace per integer value, legend instead of colorbar ---
             if (isDiscrete09 && data.c && data.c.length) {
@@ -766,16 +795,35 @@
                     hoverinfo: 'none', customdata: gc, name: 'Passed QC'
                 });
             } else {
+                let px = data.x, py = data.y, pc = (data.c && data.c.length) ? data.c : null;
+                // Reorder so the chosen extreme draws last (on top) — keeps outliers
+                // (e.g. backscatter spikes) from hiding behind other points. Markers-
+                // only, so reordering doesn't affect WebGL render speed, and we leave
+                // data.x/data.c untouched for the running-mean trace below.
+                if (pc && orderActive) {
+                    const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
+                    const order = pc.map((_, i) => i).sort((a, b) => {
+                        const va = pc[a], vb = pc[b];
+                        const na = va === null || va === undefined, nb = vb === null || vb === undefined;
+                        if (na && nb) return 0;
+                        if (na) return -1;   // nulls to the bottom
+                        if (nb) return 1;
+                        return sign * (va - vb);
+                    });
+                    px = order.map(i => data.x[i]);
+                    py = order.map(i => data.y[i]);
+                    pc = order.map(i => data.c[i]);
+                }
                 traces.push({
-                    x: data.x, y: data.y, mode: 'markers', type: 'scattergl',
+                    x: px, y: py, mode: 'markers', type: 'scattergl',
                     marker: {
-                        size: plotConfig.defaultMarkerSize,
-                        color: forceSolidColor ? forceSolidColor : (data.c && data.c.length ? data.c : (cmapName === 'black' ? 'black' : plotConfig.defaultColour)),
+                        size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
+                        color: forceSolidColor ? forceSolidColor : (pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour)),
                         opacity: 0.8,
-                        colorscale: forceSolidColor ? undefined : (data.c && data.c.length ? effectiveColorscale : undefined),
+                        colorscale: forceSolidColor ? undefined : (pc ? effectiveColorscale : undefined),
                         cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
-                    hoverinfo: 'none', customdata: data.c || []
+                    hoverinfo: 'none', customdata: pc || []
                 });
             }
             
@@ -1134,7 +1182,9 @@
                 if (coversFull) {
                     _currentZoom = { xMin, xMax, yMin, yMax, yAuto: true };
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
-                    window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
+                    // `driven` marks this as an alignment-driven echo (not a fresh user
+                    // zoom) so the parent doesn't re-propagate it into a feedback loop.
+                    window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
                     return;
                 }
 
@@ -1144,7 +1194,7 @@
                 // the parent, and schedule a bgFetch for high-res data. An x-only update (no y
                 // bounds — e.g. a synced time axis) leaves the y axis autoranged on re-render.
                 _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
-                window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
+                window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
                 _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
             }
             
@@ -1163,7 +1213,7 @@
                     const invY = urlParams.get('invert_y') === 'true';
                     Plotly.relayout('plotDiv', { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true });
                 }
-                window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+                window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: {} }, '*');
                 return;
             }
 

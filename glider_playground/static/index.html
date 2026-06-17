@@ -244,6 +244,29 @@
             cursor: not-allowed;
         }
 
+        /* Segmented "view layout" selector (Classic / Map / Overview / Dashboard):
+           a rounded pill rail with a sliding accent for the active option. */
+        .view-seg {
+            display: inline-flex; gap: 2px; padding: 3px;
+            border-radius: 9999px;
+            background-color: var(--bg-panel-3);
+            border: 1px solid var(--border);
+        }
+        :root[data-theme="light"] .view-seg { background-color: #dde3ec; border-color: #c3ccd9; }
+        .view-seg-btn {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 12px; font-size: 11px; font-weight: 600; white-space: nowrap;
+            color: var(--text-secondary); background: transparent; border: none; cursor: pointer;
+            border-radius: 9999px; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+        .view-seg-btn .material-symbols-outlined { font-size: 14px; }
+        .view-seg-btn:hover:not(:disabled):not(.active) { color: var(--text-primary); background-color: var(--bg-hover); }
+        .view-seg-btn:disabled { cursor: not-allowed; }
+        .view-seg-btn.active {
+            background-color: #41658a;
+            color: #ffffff;
+        }
+
         /* Generic rounded corners: lift default radius on UI chrome */
         .toggle-btn, button.rounded, button[class*="rounded"], .rounded { border-radius: var(--radius-sm); }
         .rounded-md { border-radius: var(--radius-md); }
@@ -1037,9 +1060,6 @@
                 <button id="syncTimeBtn" class="toggle-btn px-2.5 py-1.5 rounded items-center gap-1 hidden" title="Sync the time axis across all open timeseries plots — zooming one zooms them all">
                     <span class="material-symbols-outlined text-[14px]">sync_alt</span> Sync
                 </button>
-                <button id="resetBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Reset view, overlays and chat">
-                    <span class="material-symbols-outlined text-[14px]">restart_alt</span> Reset
-                </button>
                 <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download plot as PNG">
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
@@ -1113,6 +1133,24 @@
 
                 <div class="group-divider"></div>
 
+                <!-- View layout selector: each is a fresh start (clears filters, zoom,
+                     overlays, chat) that swaps the whole-page layout. Distinct from the
+                     plot presets below. "Classic" is the default single-plot view. -->
+                <div class="toolbar-group">
+                    <span class="group-label">
+                        View
+                        <span class="info-dot" data-tip="Switch the layout."><span class="material-symbols-outlined">info</span></span>
+                    </span>
+                    <div id="viewSelector" class="view-seg">
+                        <button class="view-seg-btn" data-view="classic" title="Single plot + globe + 3D (the default)"><span class="material-symbols-outlined text-[14px]">show_chart</span>Classic</button>
+                        <button class="view-seg-btn" data-view="map" title="Globe + 3D side by side (no plot)"><span class="material-symbols-outlined text-[14px]">map</span>Map</button>
+                        <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
+                        <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
+                    </div>
+                </div>
+
+                <div class="group-divider"></div>
+
                 <!-- Presets -->
                 <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
                     <span class="group-label shrink-0">
@@ -1173,15 +1211,6 @@
                     </div>
                 </div>
 
-                <!-- Always-visible: depth-profile sidebar toggle for the active plot
-                     (an SVG value-vs-depth marginal on the plot's left). -->
-                <div class="group-divider"></div>
-                <div class="toolbar-group">
-                    <button id="profileSidebarBtn" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Add a depth-profile plot (value vs depth) to the left of this plot">
-                        <span class="material-symbols-outlined text-[14px]">vertical_split</span> Profile
-                    </button>
-                </div>
-
                 <div class="group-divider adv-only"></div>
 
                 <!-- Axes group (advanced only — presets drive variables by default) -->
@@ -1206,6 +1235,17 @@
                     </div>
                     <!-- Advanced only: Invert Y -->
                     <button id="invertYBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded">Invert Y</button>
+                    <!-- Advanced only: depth-profile sidebar (an SVG value-vs-depth marginal on the plot's left) -->
+                    <button id="profileSidebarBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded" title="Add a depth-profile plot (value vs depth) to the left of this plot">Profile</button>
+                    <!-- Advanced only: point draw order (which colour extreme renders on top) -->
+                    <div class="flex items-center gap-1 adv-only">
+                        <span class="text-[9px] text-gray-500 font-medium">Order</span>
+                        <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top. 'Largest/Smallest on top' surface outliers and use a smaller marker.">
+                            <option value="normal">Normal</option>
+                            <option value="largest">Largest on top</option>
+                            <option value="smallest">Smallest on top</option>
+                        </select>
+                    </div>
                     <!-- Colour palette picker -->
                     <div class="relative" id="cmapContainer">
                         <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
@@ -1447,6 +1487,7 @@
 
         const invertYBtn = document.getElementById('invertYBtn');
         const profileSidebarBtn = document.getElementById('profileSidebarBtn');
+        const drawOrderSelect = document.getElementById('drawOrder');
         const applyQcBtn = document.getElementById('applyQcBtn');
         const highlightQcBtn = document.getElementById('highlightQcBtn');
         const filterTimeBtn = document.getElementById('filterTimeBtn');
@@ -1518,7 +1559,8 @@
         const ctdQcBtn = document.getElementById('ctdQcBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         
-        const datasetSelect = document.getElementById('dataset'), resetBtn = document.getElementById('resetBtn');
+        const datasetSelect = document.getElementById('dataset');
+        const viewSelector = document.getElementById('viewSelector');
         // `plotIframe` always points at the ACTIVE panel's plot iframe. It is
         // reassigned by setActive() so the large body of existing single-plot
         // logic (colour trim, jelly, download, zoom relay) transparently acts
@@ -1564,7 +1606,12 @@
             delta:   ['#112f46','#164872','#275a8f','#3d7ea0','#5aa294','#97c07d','#e0d18a','#dba04b','#bd4e40','#7d2f38','#3b152f'],
             curl:    ['#150b2e','#2a245d','#3a3f85','#56659f','#8596b5','#c9c9c3','#d4c58b','#bfa05a','#a76b3e','#6d2e3e','#371032'],
             diff:    ['#241c2f','#2c3d6a','#38689e','#6098b8','#a3bfc5','#e2e2e2','#d0b6a9','#b37773','#874441','#51252b','#241414'],
-            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35']
+            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35'],
+            bbp:     ['#cccccc','#737373','#000000','#1335f5','#3f8df7','#67dffb','#a1fc4e','#f8d748','#ef8733','#ea3323'],
+            temp:    ['#1b1c6e','#365292','#5286b7','#8db4c4','#dbe5cd','#f1d8b4','#d9997e','#c05e4c','#a0372b','#811910'],
+            sal:     ['#f9e8b1','#f1c38f','#e8a074','#db7c5f','#cb5c58','#b2425c','#943061','#732460','#511c53','#321340'],
+            sunset:  ['#ecf472','#f1c85b','#eea052','#db7e61','#ba6b78','#935c86','#714c8e','#4d3a99','#1f3479','#0f263b'],
+            chla:    ['#182548','#2c5398','#4a88a4','#87b8b5','#dae4da','#e6d992','#a8ab3e','#56872e','#285932','#1b2617']
         };
 
         (function buildCmapMenu() {
@@ -1929,6 +1976,7 @@
                 ctdInterp: ctdInterpBtn.classList.contains('active'),
                 ctdQc: ctdQcBtn.classList.contains('active'),
                 profileSidebar: profileSidebarBtn.classList.contains('active'),
+                drawOrder: drawOrderSelect.value || 'normal',
                 cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
                 zoomBounds: currentZoomBounds,
                 preset: currentPreset,
@@ -1958,6 +2006,7 @@
                 updateToggleBtn(ctdInterpBtn, !!s.ctdInterp);
                 updateToggleBtn(ctdQcBtn, !!s.ctdQc);
                 updateToggleBtn(profileSidebarBtn, !!s.profileSidebar);
+                drawOrderSelect.value = s.drawOrder || 'normal';
                 currentZoomBounds = s.zoomBounds || null;
                 currentPreset = s.preset || '';
                 updatePresetUI();
@@ -1998,6 +2047,7 @@
                 highlight_qc: !!s.highlightQc, filter_time: !!s.filterTime,
                 ctd_interpolate: !!s.ctdInterp, ctd_qc: !!s.ctdQc,
                 profile_sidebar: !!s.profileSidebar,
+                draw_order: s.drawOrder || 'normal',
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
             if (s.zoomBounds) {
@@ -2671,11 +2721,15 @@
         let _pendingRestoreSync = false;   // re-sync toolbar to restored active plot once
 
         function serializeLayout() {
-            const out = { tree: layoutTree, activePanelId, activePlotPanelId, nextId: _nextPanelId, panels: {} };
+            const out = { tree: layoutTree, activePanelId, activePlotPanelId, nextId: _nextPanelId,
+                          viewKind: _viewKind, viewSnapshot: _viewSnapshot, panels: {} };
             Object.values(panels).forEach(p => { out.panels[p.id] = { type: p.type, state: p.state }; });
             return out;
         }
         function scheduleSaveLayout() {
+            // Re-evaluate which View button (if any) matches the live state. Cheap, and
+            // this fires on essentially every state change (layout, preset, filter).
+            if (typeof refreshViewSelector === 'function') refreshViewSelector();
             clearTimeout(_saveTimer);
             _saveTimer = setTimeout(() => {
                 try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(serializeLayout())); } catch (_) {}
@@ -2713,6 +2767,7 @@
             plotIframe = plot.iframe;
             renderLayout();
             setActive(plot.id);
+            markViewApplied();
         }
 
         function buildFromSnapshot(snap) {
@@ -2721,7 +2776,12 @@
                 const ids = treeLeafIds(snap.tree, []);
                 if (!ids.length || ids.some(id => !snap.panels[id])) return false;
                 tearDownPanels();
-                _viewKind = null;   // restored layout is the user's own arrangement
+                // Restore which canonical view this layout was (or null if the user had
+                // hand-edited it), plus the snapshot, so the View selector re-highlights
+                // the right option after a reload.
+                _viewKind = snap.viewKind || null;
+                _viewSnapshot = (snap.viewSnapshot !== undefined ? snap.viewSnapshot : null);
+                _layoutPortrait = isPortrait();   // baseline so orientation reflow doesn't fire on first resize
                 _nextPanelId = snap.nextId || (ids.length + 1);
                 ids.forEach(id => {
                     const pd = snap.panels[id];
@@ -2757,11 +2817,11 @@
 
         const OceanPresets = {
             preset_phases: { text: 'Phases', icon: 'lens_blur', bg: 'bg-gray-100', textCol: 'text-gray-700', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['SCI_PHASE'], cmap: 'discrete_09', invert: true },
-            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'thermal', invert: true },
+            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'temp', invert: true },
             preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'deep', invert: false },
-            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'haline', invert: true },
+            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'sal', invert: true },
             preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'dense', invert: true },
-            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'delta', invert: true },
+            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'chla', invert: true },
             // Oxygen, in rough order of usefulness: calibrated concentration first
             // (MOLAR_DOXY µmol/L, DOXY µmol/kg, OXYSAT_DOXY % sat), then raw optode
             // outputs (DPHASE_DOXY phase angle °, FREQUENCY_DOXY Hz) as a last
@@ -2769,7 +2829,7 @@
             // plot. Raw outputs aren't converted to concentration (that needs the
             // optode's calibration coefficients) — they're shown in their own units.
             preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'turbid', invert: true }
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'bbp', invert: true, drawOrder: 'largest' }
         };
 
         const COOKIE_FILE = 'gp_file_id';
@@ -2893,7 +2953,9 @@
                     const l = msg.limits;
                     srcPanel.state.zoomBounds = (l && l.xMin !== 'auto' && l.xMin !== undefined)
                         ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
-                    maybeAlign(srcPanel, l);
+                    // Alignment-driven echoes must not re-enter the propagation logic,
+                    // or synced plots ping-pong zoom in/out forever.
+                    if (!msg.driven) maybeAlign(srcPanel, l);
                 } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
                 } else if (msg.type === 'plotLoaded') {
@@ -2909,6 +2971,7 @@
                     }
                     if (gl && typeof gl.xMin === 'number') { srcPanel.state.xFullMin = gl.xMin; srcPanel.state.xFullMax = gl.xMax; }
                     refreshAlignButtons();
+                    refreshPanelPlaceholders();   // clear this background plot's placeholder veil
                     syncOnPlotLoad(srcPanel);
                 }
                 return;
@@ -2991,7 +3054,8 @@
                     currentZoomBounds = null;
                 }
                 CycleProfile.setZoomBounds(currentZoomBounds, isXDateTime);
-                if (srcPanel) maybeAlign(srcPanel, limits);
+                // Skip alignment re-propagation for alignment-driven echoes (see above).
+                if (srcPanel && !msg.driven) maybeAlign(srcPanel, limits);
             }
             else if (msg.type === 'autoColourResult') {
                 if (baseCMin !== null && msg.cMin !== undefined && !isNaN(msg.cMin)) {
@@ -3070,35 +3134,6 @@
         function renderPresetsDropdown() {
             presetContainer.innerHTML = '';
 
-            // Map: globe + 3D side by side, no plot panel.
-            const mapBtn = document.createElement('button');
-            mapBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-sky-100 text-sky-800';
-            mapBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">map</span> <span class="preset-text">Map</span>';
-            mapBtn.dataset.preset = '__map__';
-            mapBtn.title = 'Globe + 3D view side by side (no plot)';
-            mapBtn.addEventListener('click', () => { if (!mapBtn.disabled) applyMapView(); });
-            presetContainer.appendChild(mapBtn);
-
-            // Overview: globe + 3D alongside a stack of the headline biogeochemical
-            // plots (thermal, density, chlorophyll, oxygen — skipping any the file lacks).
-            const overviewBtn = document.createElement('button');
-            overviewBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-blue-100 text-blue-800';
-            overviewBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">grid_view</span> <span class="preset-text">Overview</span>';
-            overviewBtn.dataset.preset = '__overview__';
-            overviewBtn.title = 'Globe + 3D alongside the headline plots (thermal, density, chlorophyll, oxygen)';
-            overviewBtn.addEventListener('click', () => { if (!overviewBtn.disabled) applyOverview(); });
-            presetContainer.appendChild(overviewBtn);
-
-            // Dashboard: a single stacked column of the six core profile plots
-            // (temp, salinity, density, oxygen, chlorophyll, backscatter).
-            const dashBtn = document.createElement('button');
-            dashBtn.className = 'preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap bg-blue-100 text-blue-800';
-            dashBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">dashboard</span> <span class="preset-text">Dashboard</span>';
-            dashBtn.dataset.preset = '__dashboard__';
-            dashBtn.title = 'Stacked dashboard: temperature, salinity, density, oxygen, chlorophyll, backscatter';
-            dashBtn.addEventListener('click', () => { if (!dashBtn.disabled) applyDashboard(); });
-            presetContainer.appendChild(dashBtn);
-
             Object.entries(OceanPresets).forEach(([key, p]) => {
                 const btn = document.createElement('button');
                 btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap ${p.bg} ${p.textCol}`;
@@ -3162,6 +3197,7 @@
             };
             s.x = findBest(p.x); s.y = findBest(p.y); s.c = findBest(p.c);
             s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
+            s.drawOrder = p.drawOrder || 'normal';
             s.zoomBounds = null; s.cMin = null; s.cMax = null;
             // A fresh preset plot (dashboard tile, new panel, Jelly) should honour
             // the dataset's recommended CTD processing rather than inheriting
@@ -3317,6 +3353,7 @@
             if (!keepTd) renderPanel(td);
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
+            markViewApplied();
         }
 
         // Dashboard: globe + 3D on the left, then a stacked column of the six core
@@ -3348,19 +3385,19 @@
             layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
             _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
+
+            // Suppress time-axis alignment while the batch loads so the six plots don't
+            // cascade re-renders into each other; cleared once they've settled.
+            _bulkLoading = true;
+            clearTimeout(_bulkLoadTimer);
             renderLayout();
+            plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
             if (!keepTd) renderPanel(td);
             refitReusedGlobe(keepMap, false);
-            setActive(plotIds[0]);
-
-            // Stagger the plot loads and hold off alignment until they settle, so the
-            // batch doesn't spike WebGL contexts or cascade re-renders on load.
-            _bulkLoading = true;
-            clearTimeout(_bulkLoadTimer);
-            const STAGGER = 280;
-            plotIds.forEach((id, i) => setTimeout(() => { const p = panels[id]; if (p) renderPanel(p); }, i * STAGGER));
-            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, plotIds.length * STAGGER + 1000);
+            setActive(plotIds[0]);   // runs after the iframes have a src, so placeholders clear
+            markViewApplied();
+            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
         // "Map" preset: globe + 3D side by side, no plot. The toolbar has nothing
@@ -3382,6 +3419,7 @@
             setActive(map.id);
             updatePresetUI();
             setColourRail(false);   // no plot → grey the colour bar
+            markViewApplied();
         }
 
         // Rebuild the default view (globe + 3D in a narrow left column, one plot on
@@ -3404,6 +3442,7 @@
             refitReusedGlobe(keepMap, false);   // reused globe → back to track fit
             setActive(plot.id);
             updatePresetUI();
+            markViewApplied();
         }
 
         function resetPlotState(fullReset = true) {
@@ -3600,7 +3639,13 @@
 
         cmapTrigger.addEventListener('click', (e) => {
             e.stopPropagation(); cmapMenu.classList.toggle('hidden');
-            if (!cmapMenu.classList.contains('hidden')) cmapOptions[0].focus();
+            if (!cmapMenu.classList.contains('hidden')) {
+                // Focus the currently-active colourmap so it's highlighted on open,
+                // not whatever happens to be first in the list.
+                const active = cmapOptions.find(b => b.dataset.val === cmapInput.value) || cmapOptions[0];
+                active.focus();
+                active.scrollIntoView({ block: 'nearest' });
+            }
         });
 
         document.addEventListener('click', () => cmapMenu.classList.add('hidden'));
@@ -4150,6 +4195,7 @@
             updateCmapGradient(p.cmap);
             
             updateToggleBtn(invertYBtn, p.invert);
+            drawOrderSelect.value = p.drawOrder || 'normal';
 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
@@ -4272,6 +4318,7 @@
 
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
         profileSidebarBtn.addEventListener('click', () => handleToggle(profileSidebarBtn, false));
+        drawOrderSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
         filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
         
         applyQcBtn.addEventListener('click', () => {
@@ -4573,12 +4620,10 @@
                 emptyState.classList.add('hidden');
                 hideProcessingOverlay();
                 plotIframe?.classList.add('hidden');
-                resetBtn.disabled = true;
-                resetBtn.classList.add('opacity-50');
+                setViewSelectorEnabled(false);
             } else {
                 demoPrompt.classList.add('hidden');
-                resetBtn.disabled = false;
-                resetBtn.classList.remove('opacity-50');
+                setViewSelectorEnabled(true);
 
                 if (active && active.status === 'ready' && active.id === pendingActivateId) {
                     pendingActivateId = null;
@@ -4732,6 +4777,11 @@
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot') {
                     p.state.datasetId = fileId;
+                    // A profile/cycle/phase filter is tied to the OLD file's profile
+                    // list — carrying it over makes the new file render a single
+                    // profile instead of full data. Clear it for every panel (the
+                    // active one is re-captured fresh by updatePlot below).
+                    p.state.cycleProfile = {};
                     if (p.id !== activePlotPanelId) { p.state.zoomBounds = null; renderPlotPanel(p); }
                 }
             });
@@ -4926,7 +4976,6 @@
 
         function setLoading(isLoading) {
             isPlotting = isLoading;
-            resetBtn.disabled = isLoading;
             datasetTrigger.disabled = isLoading;
             if (isLoading) {
                 presetContainer.classList.add('opacity-50', 'pointer-events-none');
@@ -4960,29 +5009,92 @@
         });
 
 
-        resetBtn.addEventListener('click', () => {
+        // A fresh start: clear filters, zoom, colour trim, Jelly overlays + chat, and
+        // the saved layout — back to the default thermal preset. Used by every View
+        // selector button before it lays out its panels.
+        function fullResetState() {
             currentPreset = 'preset_temp';
             applyPreset(currentPreset);
+            // Profiles default OFF — only the Dashboard view turns them on (per-plot).
+            updateToggleBtn(profileSidebarBtn, false);
             CycleProfile.resetState();
             currentZoomBounds = null;
-            // Clear all Jelly overlays on the current active plot
             parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
             _pendingJellyOverlays = [];
             if (_jellyOverlayArmed && plotIframe && plotIframe.contentWindow) {
                 plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: { clear: true } }, '*');
             }
             updateCmapGradient(cmapInput.value);
-            // Clear Jelly chat history and messages
             jellyHistory = [];
             jellyMessages.innerHTML = '';
             resetPlotState(true);
-
-            // Reset discards the saved/custom dashboard and restores the default
-            // layout (globe top-left, 3D below, main plot right).
             clearSavedLayout();
-            buildDefaultLayout();
-            Object.values(panels).forEach(p => { if (p.type !== 'plot') renderPanel(p); });
-            updatePlot();
+        }
+
+        // A view's identity = its plots' presets/cmaps/profile-sidebar + the active
+        // filters. Deliberately dataset- and zoom-independent, so loading a file or
+        // panning doesn't count as "customised" — only preset/filter/layout changes do.
+        function viewSettingsSignature() {
+            const plots = Object.values(panels)
+                .filter(p => p.type === 'plot')
+                .map(p => {
+                    const s = p.state || {};
+                    // Per-plot filters (not the live CycleProfile module) so a reloaded
+                    // filtered plot reads as customised, matching what's on screen.
+                    return [s.preset || '', s.cmap || '', !!s.profileSidebar, JSON.stringify(s.cycleProfile || {})].join('|');
+                })
+                .sort();
+            return JSON.stringify(plots);
+        }
+
+        // The signature captured at the moment a canonical view was last built; the
+        // selector highlights that view only while the live state still matches it.
+        let _viewSnapshot = null;
+
+        function markViewApplied() {
+            _viewSnapshot = viewSettingsSignature();
+            refreshViewSelector();
+        }
+
+        // Which view button (if any) reflects the current state: the layout must be an
+        // un-edited canonical kind (_viewKind set) AND the settings must still match
+        // the snapshot taken when it was built. 'default' layout shows as "classic".
+        function currentViewSelection() {
+            if (!_viewKind || _viewSnapshot === null) return null;
+            if (viewSettingsSignature() !== _viewSnapshot) return null;
+            return _viewKind === 'default' ? 'classic' : _viewKind;
+        }
+
+        function refreshViewSelector() {
+            if (!viewSelector) return;
+            const sel = currentViewSelection();
+            viewSelector.querySelectorAll('.view-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.view === sel));
+        }
+
+        function setViewSelectorEnabled(on) {
+            if (!viewSelector) return;
+            viewSelector.classList.toggle('opacity-50', !on);
+            viewSelector.querySelectorAll('.view-seg-btn').forEach(b => { b.disabled = !on; });
+        }
+
+        // Click a View button: full reset, then build that layout.
+        function selectView(kind) {
+            fullResetState();
+            if (kind === 'map') {
+                applyMapView();
+            } else if (kind === 'overview') {
+                applyOverview();
+            } else if (kind === 'dashboard') {
+                applyDashboard();
+            } else { // 'classic'
+                buildDefaultLayout();
+                Object.values(panels).forEach(p => { if (p.type !== 'plot') renderPanel(p); });
+                updatePlot();
+            }
+        }
+
+        viewSelector.querySelectorAll('.view-seg-btn').forEach(btn => {
+            btn.addEventListener('click', () => { if (!btn.disabled) selectView(btn.dataset.view); });
         });
 
         // ===== Jelly 🪼 =====

@@ -1028,7 +1028,21 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
     render_cap = max_points if (max_points and max_points > 0) else MAX_RENDER_POINTS
-    if stats["valid"] > render_cap:
+    if plot_sel is not None and plot_sel.any() and not plot_sel.all():
+        # Highlight mode with an active selection: keep the selected points (e.g. the
+        # chosen profile/cycle) at full detail and only thin the grey context, so the
+        # highlighted cast is rich rather than decimated to a few survivors.
+        sel_idx = np.nonzero(plot_sel)[0]
+        ctx_idx = np.nonzero(~plot_sel)[0]
+        SEL_CAP = 20000
+        if len(sel_idx) > SEL_CAP:
+            sel_idx = sel_idx[:: int(np.ceil(len(sel_idx) / SEL_CAP))]
+        if len(ctx_idx) > render_cap:
+            ctx_idx = ctx_idx[:: int(np.ceil(len(ctx_idx) / render_cap))]
+        keep = np.sort(np.concatenate([sel_idx, ctx_idx]))
+        plot_x = plot_x[keep]; plot_y = plot_y[keep]; plot_qc = plot_qc[keep]; plot_sel = plot_sel[keep]
+        if plot_c is not None: plot_c = plot_c[keep]
+    elif stats["valid"] > render_cap:
         step = stats["valid"] // render_cap
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
