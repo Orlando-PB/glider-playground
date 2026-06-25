@@ -18,13 +18,6 @@
             } catch (_) {
                 document.documentElement.setAttribute('data-theme', 'light');
             }
-            // Desktop app (pywebview window): integrate the top toolbar into the
-            // native title bar and leave room for the macOS traffic-light buttons.
-            try {
-                if (new URLSearchParams(location.search).get('desktop')) {
-                    document.documentElement.classList.add('desktop-app');
-                }
-            } catch (_) {}
         })();
 
         const uiConfig = {
@@ -927,10 +920,6 @@
             background: var(--bg-panel);
         }
         .toolbar-row::after { content: ""; display: block; clear: both; }
-        /* Desktop app: the first toolbar row sits under the native (transparent)
-           title bar, so leave room on the left for the macOS traffic-light
-           buttons. The thin title-bar strip stays a native window-drag region. */
-        .desktop-app .toolbar-row:first-child { padding-left: 84px; }
         /* Left content flows as inline items so wrapped rows can extend full-width
            under the top-right buttons (which are floated). 2px block margins give a
            4px gap between wrapped rows; reduced row padding keeps the outer edge at 10px. */
@@ -1066,7 +1055,7 @@
     <div id="customTooltip"></div>
 
     <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
-        <div class="toolbar-row pywebview-drag-region">
+        <div class="toolbar-row">
             <!-- Right-side buttons (floated; declared first so left content wraps under them) -->
             <div class="toolbar-group toolbar-actions shrink-0">
                 <button id="advancedToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show advanced controls">
@@ -1082,11 +1071,11 @@
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
             </div>
-            <div class="toolbar-main pywebview-drag-region">
+            <div class="toolbar-main">
                 <!-- Logo -->
-                <div class="flex items-center pr-3 shrink-0 pywebview-drag-region" style="border-right: 1px solid var(--border);"
+                <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
                      title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
-                    <img src="/static/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0 pywebview-drag-region"
+                    <img src="/static/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
                          style="height:30px;width:auto;">
                 </div>
 

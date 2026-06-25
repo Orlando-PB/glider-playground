@@ -1,11 +1,11 @@
 """Copernicus Marine surface overlays — fetch + lightweight session cache.
 
 Generalises the original CHL-a overlay to any registered variable (chlorophyll,
-temperature, salinity, oxygen, pH, phytoplankton biomass, sea surface height). Each overlay maps to
+temperature, salinity, oxygen, pH, phytoplankton biomass, sea level anomaly). Each overlay maps to
 one or more Copernicus dataset ids and a variable name; the satellite ocean-colour
-product is L4 (2D), the rest are 3D model analysis/forecast products from which we
-take the surface level. The map view draws the returned point grid as coloured
-cells on the globe.
+and altimetry SLA products are L4 (2D), the rest are 3D model analysis/forecast
+products from which we take the surface level. The map view draws the returned
+point grid as coloured cells on the globe.
 """
 
 import logging
@@ -24,6 +24,12 @@ _DS_CHL_MY = "cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D"
 # Surface currents: eastward (uo) + northward (vo) velocity, analysis/forecast.
 _DS_CUR = "cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m"
 
+# Sea level anomaly (DUACS L4 altimetry): near-real-time then reprocessed multi-year.
+# `sla` is the height anomaly relative to the 20-year mean — this is the quantity
+# Copernicus users plot, not the model `zos` (height above geoid) we showed before.
+_DS_SLA_NRT = "cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.25deg_P1D"
+_DS_SLA_MY = "cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.25deg_P1D"
+
 # Registry of available overlays. `surface` marks the 3D model products whose
 # top depth level we extract. Order here is the order shown in the map legend.
 OVERLAYS: dict[str, dict] = {
@@ -33,7 +39,7 @@ OVERLAYS: dict[str, dict] = {
     "o2":       {"datasets": ["cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m"],     "variable": "o2",     "surface": True},
     "ph":       {"datasets": ["cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m"],     "variable": "ph",     "surface": True},
     "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"],     "variable": "phyc",   "surface": True},
-    "ssh":      {"datasets": ["cmems_mod_glo_phy_anfc_0.083deg_P1D-m"],        "variable": "zos",    "surface": False},
+    "ssh":      {"datasets": [_DS_SLA_NRT, _DS_SLA_MY], "variable": "sla",   "surface": False, "demean": True},
 }
 
 # Currents is a vector field (uo, vo) rather than a single scalar, so it gets its
@@ -258,7 +264,7 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
         kwargs["maximum_depth"] = 1.0
     ds = cm.open_dataset(**kwargs)
     print(f"[{spec['variable']}] open_dataset done in {time.time()-t0:.1f}s", flush=True)
-    return _extract(ds, spec["variable"], date_str)
+    return _extract(ds, spec["variable"], date_str, demean=spec.get("demean", False))
 
 
 def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str):
@@ -299,11 +305,16 @@ def _parse_max_date(msg: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _extract(ds, variable: str, date_str: str) -> dict:
+def _extract(ds, variable: str, date_str: str, demean: bool = False) -> dict:
     """Flatten the (surface) field into a list of [lat, lng, value] cells.
 
     Subsamples by an adaptive stride so the payload stays small and the globe's
     overlay mesh is fast to build — at most _MAX_CELLS_PER_SIDE cells per axis.
+
+    `demean` subtracts the box spatial mean from every cell (used for SLA): the
+    altimetry anomaly carries a basin-scale offset, so removing the regional mean
+    centres the diverging ramp on zero and surfaces the local mesoscale structure
+    (eddies, fronts) — matching how Copernicus users plot `sla - sla.mean(...)`.
     """
     var_key = next((k for k in ds.data_vars if k.lower() == variable.lower()), None)
     if var_key is None:
@@ -344,6 +355,8 @@ def _extract(ds, variable: str, date_str: str) -> dict:
         }
 
     flat = vals[mask]
+    if demean:
+        flat = flat - float(np.mean(flat))
     p10 = float(np.percentile(flat, 10))
     p90 = float(np.percentile(flat, 90))
 

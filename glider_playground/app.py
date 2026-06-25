@@ -6,6 +6,7 @@ import platform
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -360,13 +361,39 @@ def api_overlays():
     return {"overlays": list(overlay_logic.OVERLAYS.keys())}
 
 
+# A glider whose last fix is within this many days is treated as "live": its
+# overlay uses the most recent available Copernicus field rather than the exact
+# last-fix date, so an active deployment always sees the freshest ocean state.
+_LIVE_WINDOW_DAYS = 7
+
+
+def _overlay_target_date(rec) -> str | None:
+    """Pick the overlay date for a file: the glider's last data point for a past
+    deployment, or None (→ most recent available) when the glider is still live.
+
+    overlay_logic caps a future/last date to the dataset's latest day anyway, so
+    this mainly matters for a glider whose last fix is a few days old but still
+    within the live window — we want the latest field, not that slightly-stale day.
+    """
+    if not rec or not rec.get("last_time"):
+        return None
+    last_str = str(rec["last_time"])[:10]
+    try:
+        last = datetime.strptime(last_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return last_str  # unparseable — fall back to the contemporaneous date
+    age_days = (datetime.now(timezone.utc) - last).days
+    return None if age_days <= _LIVE_WINDOW_DAYS else last_str
+
+
 @app.get("/api/overlay")
 def api_overlay(id: str, var: str):
-    """Surface overlay (chla/temp/salinity/o2/ph/biomass) for a file's bbox.
+    """Surface overlay (chla/temp/salinity/o2/ph/biomass/sla) for a file's bbox.
 
-    The date is tied to the glider's last GPS fix so the field is contemporaneous
-    with the deployment; overlay_logic caps it to the dataset's latest available
-    day when the deployment is more recent than the product.
+    For a past deployment the date is tied to the glider's last GPS fix so the
+    field is contemporaneous with the track; for a still-live glider (last fix
+    within the live window) it uses the most recent available field instead. See
+    _overlay_target_date.
     """
     if var not in overlay_logic.OVERLAYS:
         raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
@@ -376,9 +403,7 @@ def api_overlay(id: str, var: str):
         raise HTTPException(status_code=404, detail="No spatial data for this file")
 
     rec = cache_logic.get_record(id)
-    target_date = None
-    if rec and rec.get("last_time"):
-        target_date = str(rec["last_time"])[:10]
+    target_date = _overlay_target_date(rec)
 
     return overlay_logic.fetch_overlay(
         var,
@@ -394,17 +419,15 @@ def api_overlay(id: str, var: str):
 def api_currents(id: str):
     """Surface current (uo/vo) grid for a file's bbox, for the animated flow layer.
 
-    Like /api/overlay, the date is tied to the glider's last fix and capped to the
-    product's latest available day when the deployment is more recent.
+    Like /api/overlay, the date follows the glider's last fix for a past
+    deployment and the most recent available field for a still-live glider.
     """
     loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
     if not loc or "error" in loc:
         raise HTTPException(status_code=404, detail="No spatial data for this file")
 
     rec = cache_logic.get_record(id)
-    target_date = None
-    if rec and rec.get("last_time"):
-        target_date = str(rec["last_time"])[:10]
+    target_date = _overlay_target_date(rec)
 
     return overlay_logic.fetch_currents(
         lat_min=loc["lat_min"],

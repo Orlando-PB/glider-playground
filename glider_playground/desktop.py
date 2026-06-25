@@ -28,9 +28,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 ICON_ICNS = STATIC_DIR / "app_icon.icns"
 ICON_PNG = STATIC_DIR / "app_icon.png"
 
-# The web app reads ?desktop=1 to clear room for the macOS traffic-light buttons
-# and to treat the title bar area as part of its top toolbar.
-APP_URL = f"http://{HOST}:{PORT}/?desktop=1"
+APP_URL = f"http://{HOST}:{PORT}/"
 
 
 def _wait_for_server(host: str, port: int, timeout: int) -> bool:
@@ -52,32 +50,6 @@ def _run_server():
     from .app import app
 
     uvicorn.run(app, host=HOST, port=PORT, log_level=LOG_LEVEL, reload=False)
-
-
-def _patch_macos_window_drag():
-    """Fix cross-monitor window dragging on macOS.
-
-    Dragging blank toolbar areas works because pywebview's injected JS sends the
-    window's target position (derived from the DOM ``screenX``/``screenY`` of the
-    cursor) to its native ``move`` handler. That handler converts those DOM
-    coordinates — which are *always* relative to the primary display — into
-    AppKit's bottom-left origin using ``self.screen``, the display the window was
-    *created* on. The moment the window sits on a differently-sized external
-    monitor the Y-flip is computed against the wrong height, so the window snaps
-    far below the cursor. Recompute against the primary display instead, which is
-    the coordinate space the JS actually reports in.
-    """
-    try:
-        import AppKit
-        from webview.platforms.cocoa import BrowserView
-    except ImportError:
-        return  # not macOS — nothing to patch
-
-    def move(self, x, y):
-        primary_height = AppKit.NSScreen.screens()[0].frame().size.height
-        self.window.setFrameTopLeftPoint_(AppKit.NSPoint(x, primary_height - y))
-
-    BrowserView.move = move
 
 
 def _set_macos_app_name():
@@ -112,48 +84,6 @@ def _build_macos_menu():
     ]
 
 
-def _integrate_titlebar(window):
-    """Merge the title bar into the content area, keeping the traffic lights.
-
-    pywebview only offers this via ``frameless=True``, which also hides the
-    close/minimise/zoom buttons. We want the unified look *with* those buttons,
-    so we reach the underlying NSWindow (exposed as ``window.native``) and set
-    the transparent / full-size-content style ourselves. macOS only.
-    """
-    try:
-        import AppKit
-        from PyObjCTools import AppHelper
-    except ImportError:
-        return  # not macOS — leave the standard frame in place
-
-    ns_window = window.native
-    if ns_window is None:
-        return
-
-    def _apply():
-        ns_window.setTitlebarAppearsTransparent_(True)
-        ns_window.setTitleVisibility_(1)  # NSWindowTitleHidden
-        style = ns_window.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView
-        ns_window.setStyleMask_(style)
-        # The title bar draws its own opaque backing view on top of the content;
-        # transparency alone leaves it as a solid bar over our toolbar. Clear it
-        # so the web toolbar shows through. (Same view handle pywebview uses for
-        # its frameless titlebar colouring.) Traffic-light buttons stay visible.
-        try:
-            titlebar = ns_window.contentView().superview().subviews().lastObject()
-            titlebar.setBackgroundColor_(AppKit.NSColor.clearColor())
-        except Exception:
-            pass
-        try:
-            ns_window.setTitlebarSeparatorStyle_(0)  # NSTitlebarSeparatorStyleNone
-        except Exception:
-            pass
-
-    # NSWindow geometry can only be touched on the main thread; the `shown`
-    # event fires on a worker thread, so hop over via the AppKit run loop.
-    AppHelper.callAfter(_apply)
-
-
 def main():
     try:
         import webview
@@ -163,15 +93,12 @@ def main():
             "    pip install 'glider-playground[desktop]'"
         )
 
-    # Let blank areas of the top toolbar drag the window. pywebview drags when a
-    # mousedown lands on a `.pywebview-drag-region` element; DIRECT_TARGET_ONLY
-    # means only the container itself (the blank gaps) drags — clicks on the
-    # buttons/dropdowns inside it still behave normally.
-    webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+    # Use the OS's standard title bar (traffic lights + native drag, double-click
+    # to zoom, multi-monitor handling — all for free). We deliberately don't merge
+    # the title bar into the web content: doing so means faking window dragging in
+    # JavaScript, whose cross-monitor coordinate handling is unreliable.
 
-    # macOS niceties: correct cross-monitor dragging and a sensible app/menu name
-    # (both no-ops off macOS).
-    _patch_macos_window_drag()
+    # macOS nicety: a sensible app/menu name (no-op off macOS).
     _set_macos_app_name()
 
     print("Starting Glider Playground (desktop)...")
@@ -182,14 +109,13 @@ def main():
             f"Server did not start within {STARTUP_TIMEOUT}s on {HOST}:{PORT}."
         )
 
-    window = webview.create_window(
+    webview.create_window(
         WINDOW_TITLE,
         APP_URL,
         width=1400,
         height=900,
         min_size=(900, 600),
     )
-    window.events.shown += lambda: _integrate_titlebar(window)
 
     # Dock/app icon. .icns is preferred; fall back to the PNG.
     icon = ICON_ICNS if ICON_ICNS.exists() else ICON_PNG
