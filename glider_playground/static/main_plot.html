@@ -679,15 +679,21 @@
                 let yMax = getSafeMax(plotData.y);
 
                 if (plotData.is_x_dt) {
-                    let minTime = Infinity, maxTime = -Infinity;
-                    for (let i = 0; i < plotData.x.length; i++) {
-                        if (plotData.x[i] !== null) {
-                            let t = new Date(plotData.x[i]).getTime();
-                            if (t < minTime) minTime = t;
-                            if (t > maxTime) maxTime = t;
-                        }
+                    // TIME is monotonic, so the extent is just the first and last
+                    // non-null points. Parsing those two instead of calling
+                    // new Date() on all ~200k points removes the single biggest
+                    // chunk of render time on the time-axis path. min/max of the
+                    // endpoints also covers a reversed (descending) array.
+                    const xs = plotData.x;
+                    let first = null, last = null;
+                    for (let i = 0; i < xs.length; i++) { if (xs[i] !== null) { first = xs[i]; break; } }
+                    for (let i = xs.length - 1; i >= 0; i--) { if (xs[i] !== null) { last = xs[i]; break; } }
+                    if (first !== null) {
+                        const a = new Date(first).getTime(), b = new Date(last).getTime();
+                        xMin = Math.min(a, b); xMax = Math.max(a, b);
+                    } else {
+                        xMin = Infinity; xMax = -Infinity;
                     }
-                    xMin = minTime; xMax = maxTime;
                 } else {
                     xMin = getSafeMin(plotData.x);
                     xMax = getSafeMax(plotData.x);
