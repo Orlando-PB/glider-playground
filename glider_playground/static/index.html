@@ -4,10 +4,21 @@
     <meta charset="UTF-8">
     <title>Glider Playground</title>
     <link rel="icon" href="/static/noc_logo_square.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <script src="/static/console_log.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Prebuilt Tailwind (replaces the runtime Play-CDN compiler). Regenerate
+         with the Tailwind CLI when classes change — see scratchpad build. -->
+    <link rel="stylesheet" href="/static/tailwind.css">
     <script src="/static/cycle_profile.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
+    <!-- Icon font: loaded non-render-blocking so it never delays first paint.
+         Flips to a stylesheet on load; <noscript> keeps icons without JS. -->
+    <link rel="preload" as="style"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0"
+          onload="this.onload=null;this.rel='stylesheet'">
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0">
+    </noscript>
     <script>
         // Apply saved theme before any CSS variable is consumed to avoid FOUC.
         (function() {
@@ -19,23 +30,6 @@
                 document.documentElement.setAttribute('data-theme', 'light');
             }
         })();
-
-        const uiConfig = {
-            colours: {
-                googleBlue: '#41658a', googleBlueHover: '#2e4a68', googleRed: '#ea4335',
-                googleYellow: '#fbbc04', googleGreen: '#34a853', bgMain: '#ffffff', panelBg: '#f8f9fa'
-            },
-            borderRadius: '4px'
-        };
-
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: uiConfig.colours,
-                    borderRadius: { DEFAULT: uiConfig.borderRadius }
-                }
-            }
-        }
     </script>
     <style>
         :root, :root[data-theme="dark"] {
@@ -956,17 +950,11 @@
             overflow: hidden;
         }
         #jellyPanel > div:first-child { background: var(--bg-panel-2) !important; border-color: var(--border) !important; }
-        #jellyForm, #jellyKeyPrompt { background: var(--bg-panel-2) !important; border-color: var(--border) !important; }
-        #jellyInput { background: var(--bg-input) !important; border-color: var(--border) !important; color: var(--text-primary); }
 
         @keyframes jellyFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-5px) rotate(-3deg); } }
         @keyframes jellyWiggle { 0%,100% { transform: rotate(-6deg) scale(1.05); } 50% { transform: rotate(6deg) scale(1.05); } }
-        @keyframes jellyPulse { 0%,100% { transform: scale(1) translateY(0); filter: drop-shadow(0 0 0 rgba(65,101,138,0)); } 50% { transform: scale(1.08) translateY(-3px); filter: drop-shadow(0 4px 12px rgba(65,101,138,0.5)); } }
-        @keyframes jellyTyping { 0%,100% { transform: translateY(0) rotate(-2deg); } 25% { transform: translateY(-2px) rotate(2deg); } 50% { transform: translateY(-3px) rotate(-2deg); } 75% { transform: translateY(-1px) rotate(3deg); } }
         .jelly-img { display: block; object-fit: contain; animation: jellyFloat 3s ease-in-out infinite; }
         #jellyToggle:hover .jelly-img { animation: jellyWiggle 0.6s ease-in-out infinite; }
-        #jellyToggle.thinking .jelly-img { animation: jellyPulse 0.9s ease-in-out infinite; }
-        #jellyPanel.thinking .jelly-img-small { animation: jellyTyping 0.6s ease-in-out infinite; }
 
         /* Notification dot on the Jelly bubble when an update is available. */
         #jellyToggle { position: relative; }
@@ -989,13 +977,6 @@
             line-height: 1.5;
             word-wrap: break-word;
         }
-        .jelly-bubble.user {
-            background: #41658a;
-            color: #ffffff;
-            align-self: flex-end;
-            border: 1px solid rgba(65,101,138,0.5);
-            border-bottom-right-radius: 3px;
-        }
         .jelly-bubble.jelly {
             background: var(--bg-panel-3);
             color: var(--text-primary);
@@ -1003,7 +984,6 @@
             border: 1px solid var(--border);
             border-bottom-left-radius: 3px;
         }
-        .jelly-bubble.jelly.thinking { font-style: italic; opacity: 0.6; }
         .jelly-bubble.error {
             background: rgba(248,113,113,0.12);
             color: #fca5a5;
@@ -1411,45 +1391,30 @@
         </div>
     </div>
 
-    <div id="jellyBubble" class="fixed bottom-1 right-2 z-[100]">
-        <button id="jellyToggle" class="rounded-full w-12 h-12 flex items-center justify-center border border-gray-200 cursor-pointer bg-white transition-transform hover:scale-105 overflow-hidden" style="box-shadow: 0 2px 8px rgba(0,0,0,0.12);" title="Ask Jelly">
-            <img src="/static/jelly.png" alt="Jelly" class="jelly-img w-full h-full" />
+    <!-- Jelly is a passive notification bubble: hidden until there's something to
+         show (a new release, or Copernicus setup help). Clicking it opens the
+         notifications panel below. -->
+    <div id="jellyBubble" class="fixed bottom-1 right-2 z-[100] hidden">
+        <button id="jellyToggle" class="rounded-full w-12 h-12 flex items-center justify-center border border-gray-200 cursor-pointer bg-white transition-transform hover:scale-105 overflow-hidden" style="box-shadow: 0 2px 8px rgba(0,0,0,0.12);" title="Notifications">
+            <img src="/static/jelly.webp" alt="Jelly" class="jelly-img w-full h-full" />
         </button>
     </div>
 
-    <div id="jellyPanel" class="fixed bottom-[68px] right-4 z-[100] w-72 max-w-[95vw] bg-white border border-gray-200 rounded-lg flex-col hidden" style="height: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
+    <div id="jellyPanel" class="fixed bottom-[68px] right-4 z-[100] w-72 max-w-[95vw] bg-white border border-gray-200 rounded-lg flex-col hidden" style="max-height: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
         <div class="flex items-center justify-between px-3 py-2 rounded-t-lg border-b border-gray-200 bg-[#f8f9fa]">
             <div class="flex items-center gap-2">
-                <img src="/static/jelly.png" alt="" class="jelly-img jelly-img-small w-12 h-12" />
+                <img src="/static/jelly.webp" alt="" class="jelly-img jelly-img-small w-12 h-12" />
                 <span class="font-semibold text-xs text-gray-700">Jelly</span>
             </div>
             <div class="flex items-center gap-0.5">
-                <button id="jellyKeyBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Manage API key">
-                    <span class="material-symbols-outlined text-[14px]">key</span>
-                </button>
-                <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Clear chat">
+                <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Dismiss notifications">
                     <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
                 </button>
                 <button id="jellyCloseBtn" class="hover:bg-gray-200 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-gray-500 cursor-pointer text-xs" title="Close">&#10005;</button>
             </div>
         </div>
 
-        <div id="jellyKeyPrompt" class="p-3 flex-col gap-2 hidden border-b border-gray-100 bg-[#f8f9fa]">
-            <p class="text-[11px] text-gray-600 leading-snug">Paste your OpenAI API key so Jelly can think. Saved locally in <code class="bg-white px-1 rounded border border-gray-200">.env</code>. Never leaves your machine.</p>
-            <input id="jellyKeyInput" type="password" placeholder="sk-..." class="border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#41658a] w-full" />
-            <div class="flex gap-2">
-                <button id="jellyKeySave" class="bg-[#41658a] hover:bg-[#2e4a68] text-white px-3 py-1.5 rounded text-xs flex-1 border-none cursor-pointer">Save</button>
-                <button id="jellyKeyDelete" class="toggle-btn px-3 py-1.5 rounded text-xs border-none cursor-pointer hidden">Delete</button>
-            </div>
-            <p id="jellyKeyStatus" class="text-[10px] text-gray-500"></p>
-        </div>
-
         <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs"></div>
-
-        <form id="jellyForm" class="p-2 border-t border-gray-100 flex gap-2 shrink-0 bg-[#f8f9fa] rounded-b-lg">
-            <input id="jellyInput" type="text" placeholder="Ask Jelly anything…" class="flex-grow border border-gray-300 p-1.5 text-xs rounded outline-none focus:border-[#41658a] bg-white" autocomplete="off" />
-            <button type="submit" id="jellySend" class="bg-[#41658a] hover:bg-[#2e4a68] text-white px-3 py-1.5 rounded text-xs border-none cursor-pointer">Send</button>
-        </form>
     </div>
 
     <script>
@@ -2520,67 +2485,6 @@
             setActive(srcId);
         }
 
-        // ===== Jelly layout control helpers =====
-        const PANEL_TYPE_SYNONYMS = {
-            plot: 'plot', plots: 'plot',
-            globe: 'map', map: 'map',
-            '3d': '3d', '3dview': '3d', '3d view': '3d', threed: '3d',
-            variables: 'vars', variable: 'vars', vars: 'vars',
-            attributes: 'attrs', attribute: 'attrs', attrs: 'attrs',
-        };
-
-        // Resolve a loose panel reference (id, type word, colour variable, or
-        // preset name/label) to a panel object — so Jelly can say "the globe",
-        // "oxygen", "CHLA", "panel3", etc.
-        function resolvePanelRef(ref) {
-            if (ref == null) return null;
-            if (panels[ref]) return panels[ref];
-            const s = String(ref).trim().toLowerCase();
-            if (!s) return null;
-            for (const p of Object.values(panels)) if (p.id.toLowerCase() === s) return p;
-            const wantType = PANEL_TYPE_SYNONYMS[s];
-            if (wantType) { const hit = Object.values(panels).find(p => p.type === wantType); if (hit) return hit; }
-            // Plot by colour variable / preset key / preset label
-            for (const p of Object.values(panels)) {
-                if (p.type !== 'plot') continue;
-                const c = (p.state.c || '').toLowerCase();
-                const preset = (p.state.preset || '').toLowerCase();
-                const label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text || '').toLowerCase();
-                if (c === s || preset === s || label === s) return p;
-            }
-            for (const p of Object.values(panels)) {
-                if (p.type !== 'plot') continue;
-                const c = (p.state.c || '').toLowerCase();
-                const label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text || '').toLowerCase();
-                if ((c && (c.includes(s) || s.includes(c))) || (label && (label.includes(s) || s.includes(label)))) return p;
-            }
-            return null;
-        }
-
-        // Snapshot of the dashboard for Jelly's context.
-        function gatherLayoutContext() {
-            const rects = {};
-            computeRects(layoutTree, { x: 0, y: 0, w: 100, h: 100 }, rects, []);
-            const list = Object.values(panels).map(p => {
-                const r = rects[p.id] || {};
-                const out = {
-                    id: p.id, type: (p.type === 'map' ? 'globe' : p.type),
-                    active: p.id === activePanelId,
-                    rect: { x: Math.round(r.x || 0), y: Math.round(r.y || 0), w: Math.round(r.w || 0), h: Math.round(r.h || 0) },
-                };
-                if (p.type === 'plot') {
-                    out.x = p.state.x; out.y = p.state.y; out.c = p.state.c;
-                    out.preset = p.state.preset;
-                    out.label = (OceanPresets[p.state.preset] && OceanPresets[p.state.preset].text) || p.state.c || 'plot';
-                }
-                return out;
-            });
-            return {
-                panels: list, count: list.length, max: MAX_PANELS,
-                active_panel_id: activePanelId, active_plot_panel_id: activePlotPanelId,
-            };
-        }
-
         // Find a leaf's parent split node (and which side it's on).
         function findParent(node, panelId, parent) {
             if (!node || node.leaf) return null;
@@ -2920,6 +2824,13 @@
 
             if (msg.type === 'dacStatus') {
                 currentDacStatus = { available: !!msg.available, shown: !!msg.shown };
+                return;
+            }
+
+            // A Copernicus overlay failed because copernicusmarine isn't installed
+            // or logged in — surface the one-time setup help through Jelly.
+            if (msg.type === 'overlaySetup') {
+                notifyCopernicusSetup(msg.message, msg.hint, msg.command);
                 return;
             }
 
@@ -4036,22 +3947,19 @@
                 text += `\n\nPlease update to the latest version.`;
             }
 
-            // Badge the bubble so it's noticeable even if the panel stays closed.
-            jellyToggle.classList.add('has-update');
-
-            // Pop Jelly open the first time we see this particular version, so the
-            // reminder is hard to miss — but don't force it open on every reload.
+            // Reveal Jelly and add the reminder. Pop the panel open the first time
+            // we see this particular version so it's hard to miss — but on later
+            // reloads just badge the bubble with a dot rather than forcing it open.
             let notified = null;
             try { notified = localStorage.getItem('gp_update_notified'); } catch (_) {}
-            if (notified !== info.latest) {
+            const firstSight = notified !== info.latest;
+            if (firstSight) {
                 try { localStorage.setItem('gp_update_notified', info.latest); } catch (_) {}
-                jellyOpen(true);   // greeting (if a key is set) lands first
             }
 
-            // Put the reminder in the panel and preserve its line breaks, then
-            // drop the commands into a copyable code block beneath the prose.
-            const div = addJellyMessage('jelly', text);
-            if (div) div.style.whiteSpace = 'pre-wrap';
+            // Put the reminder in the panel and drop the commands into a copyable
+            // code block (or a one-click download button) beneath the prose.
+            const div = notifyJelly(text, { open: firstSight });
             if (info.download_url) appendDownloadLink(div, info.download_url, info.download_label);
             else if (steps.length) appendCommandBlock(div, steps);
         }
@@ -4782,7 +4690,6 @@
 
             resetPlotState(true);
             CycleProfile.fullReset();
-            parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
             const fileId = datasetSelect.value;
             if (!fileId) return;
 
@@ -5036,9 +4943,9 @@
         });
 
 
-        // A fresh start: clear filters, zoom, colour trim, Jelly overlays + chat, and
-        // the saved layout — back to the default thermal preset. Used by every View
-        // selector button before it lays out its panels.
+        // A fresh start: clear filters, zoom, colour trim, and the saved layout —
+        // back to the default thermal preset. Used by every View selector button
+        // before it lays out its panels.
         function fullResetState() {
             currentPreset = 'preset_temp';
             applyPreset(currentPreset);
@@ -5046,14 +4953,7 @@
             updateToggleBtn(profileSidebarBtn, false);
             CycleProfile.resetState();
             currentZoomBounds = null;
-            parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
-            _pendingJellyOverlays = [];
-            if (_jellyOverlayArmed && plotIframe && plotIframe.contentWindow) {
-                plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: { clear: true } }, '*');
-            }
             updateCmapGradient(cmapInput.value);
-            jellyHistory = [];
-            jellyMessages.innerHTML = '';
             resetPlotState(true);
             clearSavedLayout();
         }
@@ -5124,63 +5024,37 @@
             btn.addEventListener('click', () => { if (!btn.disabled) selectView(btn.dataset.view); });
         });
 
-        // ===== Jelly 🪼 =====
+        // ===== Jelly 🪼 — passive notification bubble =====
+        // Jelly no longer chats. It's a quiet notification surface: hidden until
+        // there's something worth showing (a new release, or Copernicus overlay
+        // setup help), then it reveals its bubble with a dot and lists the notes.
+        const jellyBubble = document.getElementById('jellyBubble');
         const jellyToggle = document.getElementById('jellyToggle');
         const jellyPanel = document.getElementById('jellyPanel');
         const jellyCloseBtn = document.getElementById('jellyCloseBtn');
         const jellyClearBtn = document.getElementById('jellyClearBtn');
-        const jellyKeyBtn = document.getElementById('jellyKeyBtn');
-        const jellyKeyPrompt = document.getElementById('jellyKeyPrompt');
-        const jellyKeyInput = document.getElementById('jellyKeyInput');
-        const jellyKeySave = document.getElementById('jellyKeySave');
-        const jellyKeyDelete = document.getElementById('jellyKeyDelete');
-        const jellyKeyStatus = document.getElementById('jellyKeyStatus');
         const jellyMessages = document.getElementById('jellyMessages');
-        const jellyForm = document.getElementById('jellyForm');
-        const jellyInput = document.getElementById('jellyInput');
-        const jellySend = document.getElementById('jellySend');
 
-        let jellyHistory = [];
-        let jellyHasKey = false;
-        let jellyBusy = false;
-        let jellyFirstOpen = true;
-        let _pendingJellyOverlays = [];
-        let _jellyOverlayArmed = false;  // true once current plot has loaded at least once
-        let parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
+        // Kept here because the plot/globe message handlers above populate them.
         let currentLocation = null;
         let currentGlobalLimits = null;
         let currentColorLimits = null;
 
         function jellyOpen(open) {
-            if (open) {
-                jellyPanel.classList.remove('hidden');
-                jellyPanel.classList.add('flex');
-                setTimeout(() => jellyInput.focus(), 50);
-                if (jellyFirstOpen) {
-                    jellyFirstOpen = false;
-                    if (jellyHasKey) addJellyMessage('jelly', "Hi! I'm Jelly — ask me to plot things, style the chart, zoom, or tell you what's in the data.");
-                }
-            } else {
-                jellyPanel.classList.add('hidden');
-                jellyPanel.classList.remove('flex');
-            }
+            jellyPanel.classList.toggle('hidden', !open);
+            jellyPanel.classList.toggle('flex', open);
+            if (open) jellyToggle.classList.remove('has-update');
         }
 
         jellyToggle.addEventListener('click', () => jellyOpen(jellyPanel.classList.contains('hidden')));
         jellyCloseBtn.addEventListener('click', () => jellyOpen(false));
 
-        jellyKeyBtn.addEventListener('click', () => {
-            const hidden = jellyKeyPrompt.classList.contains('hidden');
-            jellyKeyPrompt.classList.toggle('hidden', !hidden);
-            jellyKeyPrompt.classList.toggle('flex', hidden);
-            jellyKeyDelete.classList.toggle('hidden', !jellyHasKey);
-            jellyKeyStatus.textContent = jellyHasKey ? 'A key is saved. You can replace or delete it.' : '';
-        });
-
+        // Dismiss: clear the notes, close the panel, and hide the bubble again.
         jellyClearBtn.addEventListener('click', () => {
-            jellyHistory = [];
             jellyMessages.innerHTML = '';
-            addJellyMessage('jelly', 'Cleared — fresh start.');
+            jellyOpen(false);
+            jellyToggle.classList.remove('has-update');
+            jellyBubble.classList.add('hidden');
         });
 
         function addJellyMessage(role, text, extra) {
@@ -5198,515 +5072,35 @@
             return div;
         }
 
-        async function checkJellyKey() {
-            try {
-                const r = await fetch('/api/jelly/key_status');
-                const d = await r.json();
-                jellyHasKey = !!d.has_key;
-            } catch { jellyHasKey = false; }
-            if (!jellyHasKey) {
-                jellyKeyPrompt.classList.remove('hidden');
-                jellyKeyPrompt.classList.add('flex');
-                jellyKeyStatus.textContent = 'No key saved yet. Paste one to get started.';
-            }
+        // Reveal the bubble (with a notification dot) and add a note to the panel.
+        // Returns the message element so callers can append command/download blocks.
+        // open=true pops the panel straight away (used for first-seen update notices).
+        function notifyJelly(text, { open = false } = {}) {
+            jellyBubble.classList.remove('hidden');
+            const div = addJellyMessage('jelly', text);
+            if (div) div.style.whiteSpace = 'pre-wrap';
+            if (open) jellyOpen(true);
+            else jellyToggle.classList.add('has-update');
+            return div;
         }
 
-        jellyKeySave.addEventListener('click', async () => {
-            const key = jellyKeyInput.value.trim();
-            if (!key) { jellyKeyStatus.textContent = 'Please paste a key.'; return; }
-            jellyKeyStatus.textContent = 'Saving...';
-            try {
-                const r = await fetch('/api/jelly/set_key', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key }) });
-                const d = await r.json();
-                if (d.status === 'success') {
-                    jellyHasKey = true;
-                    jellyKeyInput.value = '';
-                    jellyKeyStatus.textContent = 'Saved! Jelly is awake.';
-                    jellyKeyDelete.classList.remove('hidden');
-                    setTimeout(() => {
-                        jellyKeyPrompt.classList.add('hidden');
-                        jellyKeyPrompt.classList.remove('flex');
-                    }, 800);
-                } else {
-                    jellyKeyStatus.textContent = d.message || 'Failed to save.';
-                }
-            } catch (e) {
-                jellyKeyStatus.textContent = 'Network error.';
-            }
-        });
+        // De-dupe Copernicus setup notes so repeated overlay failures don't stack.
+        let _copernicusNotified = false;
 
-        jellyKeyDelete.addEventListener('click', async () => {
-            await fetch('/api/jelly/delete_key', { method: 'POST' });
-            jellyHasKey = false;
-            jellyKeyDelete.classList.add('hidden');
-            jellyKeyStatus.textContent = 'Key deleted.';
-        });
-
-        function gatherJellyContext() {
-            const files = fileRecords.filter(f => f.status === 'ready').map(f => f.name);
-            const activeRec = fileById(datasetSelect.value);
-            const vars = variableCache.map(v => ({ name: v.name, units: v.units, description: v.description }));
-            const userCTrimMin = parseFloat(cTrimMinInput.value);
-            const userCTrimMax = parseFloat(cTrimMaxInput.value);
-            const colorLimits = {
-                data_c_min: currentColorLimits ? currentColorLimits.cMin : null,
-                data_c_max: currentColorLimits ? currentColorLimits.cMax : null,
-                user_c_min: isNaN(userCTrimMin) ? null : userCTrimMin,
-                user_c_max: isNaN(userCTrimMax) ? null : userCTrimMax
-            };
-            return {
-                files,
-                current_file: activeRec ? activeRec.name : '',
-                variables: vars,
-                profile_info: { ...CycleProfile.getParams(), ...CycleProfile.getCapabilities() },
-                plot_state: {
-                    x: xSelect.value, y: ySelect.value, c: cVarSelect.value,
-                    cmap: cmapInput.value,
-                    invert_y: invertYBtn.classList.contains('active'),
-                    apply_qc: applyQcBtn.classList.contains('active'),
-                    highlight_qc: highlightQcBtn.classList.contains('active'),
-                    filter_time: filterTimeBtn.classList.contains('active'),
-                    ctd_interpolate: ctdInterpBtn.classList.contains('active'),
-                    ctd_qc: ctdQcBtn.classList.contains('active'),
-                    ctd_available: ctdContainer.style.display !== 'none',
-                    current_preset: currentPreset,
-                    is_x_datetime: !!isXDateTime,
-                    data_extent: currentGlobalLimits,
-                    // Depth-averaged current arrows on the map view.
-                    currents_available: currentDacStatus.available,
-                    currents_shown: currentDacStatus.shown
-                },
-                overrides: parentJellyOverrides,
-                zoom: currentZoomBounds,
-                color_limits: colorLimits,
-                location: currentLocation,
-                layout: gatherLayoutContext(),
-                live_gliders: (_liveData && _liveData.active ? _liveData.active : []).slice(0, 60).map(e => ({
-                    dataset: e.dataset,
-                    filename: e.filename,
-                    downloaded: !!e.downloaded,
-                    status: e.status || (e.downloaded ? 'ready' : null),
-                    updated: relTimeAgo(e.server_mtime),
-                    needs_update: !!e.needs_update,
-                    downloading: !!e.downloading
-                }))
-            };
+        // The globe iframe posts {type:'overlaySetup'} when a Copernicus overlay
+        // fails because copernicusmarine isn't installed / logged in. Surface it
+        // once through Jelly with the copyable setup command.
+        function notifyCopernicusSetup(msg, hint, command) {
+            if (_copernicusNotified) return;
+            _copernicusNotified = true;
+            const text = (msg || 'Copernicus overlays need a quick one-time setup.')
+                + (hint ? `\n\n${hint}` : '');
+            const div = notifyJelly(text, { open: true });
+            if (div && command) appendCommandBlock(div, command);
         }
 
-        function updateJellyColorBar(mode, colors) {
-            const gradEl = document.getElementById('cTrimGradient');
-            const topMask = document.getElementById('cTrimTopMask');
-            const bottomMask = document.getElementById('cTrimBottomMask');
-            if (!mode || mode === 'default') {
-                updateCmapGradient(cmapInput.value);
-                return;
-            }
-            if (mode === 'solid' && colors.length >= 1) {
-                const c = colors[0];
-                if (gradEl) gradEl.style.background = c;
-                if (topMask) topMask.style.backgroundColor = c;
-                if (bottomMask) bottomMask.style.backgroundColor = c;
-                cmapTrigger.style.background = c;
-            } else if (mode === 'gradient' && colors.length >= 2) {
-                const [c1, c2] = colors;
-                if (gradEl) gradEl.style.background = `linear-gradient(to top, ${c1}, ${c2})`;
-                if (topMask) topMask.style.backgroundColor = c2;
-                if (bottomMask) bottomMask.style.backgroundColor = c1;
-                cmapTrigger.style.background = `linear-gradient(to right, ${c1}, ${c2})`;
-            }
-        }
-
-        function postOverlayToPlot(action) {
-            const overrides = {};
-            if (action.type === 'set_title') {
-                overrides.title = action.title || '';
-                parentJellyOverrides.title = overrides.title || null;
-            }
-            if (action.type === 'set_color_mode') {
-                overrides.colorMode = action.mode || 'default';
-                overrides.colors = Array.isArray(action.colors) ? action.colors : [];
-                parentJellyOverrides.colorMode = overrides.colorMode === 'default' ? null : overrides.colorMode;
-                parentJellyOverrides.colors = overrides.colors;
-                updateJellyColorBar(overrides.colorMode, overrides.colors);
-            }
-            if (action.type === 'add_line') {
-                const ln = { axis: action.axis || 'y', value: action.value, label: action.label || '', color: action.color || '#ea4335' };
-                overrides.lines = [ln];
-                parentJellyOverrides.lines.push(ln);
-            }
-            if (action.type === 'add_stat_line') {
-                const ln = { stat: action.stat, axis: action.axis || 'y', label: action.label, color: action.color || '#34a853' };
-                overrides.lines = [ln];
-                parentJellyOverrides.lines.push(ln);
-            }
-            if (action.type === 'add_running_mean') {
-                const rm = {
-                    axis: action.axis === 'x' ? 'x' : 'y',
-                    window: action.window ? Math.max(3, Math.floor(Number(action.window))) : null,
-                    color: action.color || '#ea4335',
-                    label: action.label || ''
-                };
-                overrides.runningMean = rm;
-                parentJellyOverrides.runningMean = rm;
-            }
-            if (action.type === 'clear_overlays') {
-                overrides.clear = true;
-                parentJellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
-                updateCmapGradient(cmapInput.value);
-            }
-            if (!_jellyOverlayArmed || isPlotting) {
-                _pendingJellyOverlays.push(overrides);
-            } else {
-                plotIframe && plotIframe.contentWindow && plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides }, '*');
-            }
-        }
-
-        function fullOverridesPayload() {
-            const p = parentJellyOverrides;
-            const hasAny = p.title || p.colorMode || (p.lines && p.lines.length) || p.runningMean;
-            if (!hasAny) return null;
-            return {
-                title: p.title || '',
-                colorMode: p.colorMode || 'default',
-                colors: p.colors || [],
-                lines: p.lines || [],
-                runningMean: p.runningMean || null,
-                replaceLines: true
-            };
-        }
-
-        // Map a (possibly partial) name from Jelly to an exact live filename.
-        function resolveLiveFilename(name) {
-            if (!name || !_liveData || !_liveData.active) return null;
-            const active = _liveData.active;
-            const low = String(name).toLowerCase();
-            const hit = active.find(e => e.filename === name)
-                || active.find(e => e.filename.toLowerCase() === low)
-                || active.find(e => (e.dataset || '').toLowerCase() === low)
-                || active.find(e => e.filename.toLowerCase().includes(low))
-                || active.find(e => (e.dataset || '').toLowerCase().includes(low));
-            return hit ? hit.filename : null;
-        }
-
-        async function runJellyAction(a) {
-            switch(a.type) {
-                case 'load_file': {
-                    const target = fileByName(a.filename);
-                    const activeRec = fileById(datasetSelect.value);
-                    if (target && target.status === 'ready' && (!activeRec || activeRec.id !== target.id)) {
-                        const snapshot = a.preserve_style ? {
-                            x: xSelect.value,
-                            y: ySelect.value,
-                            c: cVarSelect.value,
-                            cmap: cmapInput.value,
-                            invert_y: invertYBtn.classList.contains('active')
-                        } : null;
-                        _jellyOverlayArmed = false;
-                        await selectFile(target.id);
-                        if (snapshot) {
-                            const has = (sel, val) => Array.from(sel.options).some(o => o.value === val);
-                            let changed = false;
-                            if (snapshot.x && has(xSelect, snapshot.x) && xSelect.value !== snapshot.x) { xSelect.value = snapshot.x; changed = true; }
-                            if (snapshot.y && has(ySelect, snapshot.y) && ySelect.value !== snapshot.y) { ySelect.value = snapshot.y; changed = true; }
-                            if (typeof snapshot.c === 'string' && (snapshot.c === '' || has(cVarSelect, snapshot.c)) && cVarSelect.value !== snapshot.c) { cVarSelect.value = snapshot.c; changed = true; }
-                            if (snapshot.cmap && cmapInput.value !== snapshot.cmap) { cmapInput.value = snapshot.cmap; updateCmapGradient(snapshot.cmap); changed = true; }
-                            if (invertYBtn.classList.contains('active') !== snapshot.invert_y) { updateToggleBtn(invertYBtn, snapshot.invert_y); changed = true; }
-                            if (changed) { checkAndUpdatePreset(); resetPlotState(true); updatePlot(); }
-                        }
-                    }
-                    break;
-                }
-                case 'load_preset': {
-                    if (OceanPresets[a.preset]) {
-                        currentPreset = a.preset;
-                        applyPreset(a.preset);
-                        _jellyOverlayArmed = false;
-                        resetPlotState(true);
-                        updatePlot();
-                    }
-                    break;
-                }
-                case 'set_variables': {
-                    const has = (sel, val) => Array.from(sel.options).some(o => o.value === val);
-                    if (a.x && has(xSelect, a.x)) xSelect.value = a.x;
-                    if (a.y && has(ySelect, a.y)) ySelect.value = a.y;
-                    if (typeof a.c === 'string' && (a.c === '' || has(cVarSelect, a.c))) cVarSelect.value = a.c;
-                    if (a.cmap) { cmapInput.value = a.cmap; updateCmapGradient(a.cmap); }
-                    if (typeof a.invert_y === 'boolean') updateToggleBtn(invertYBtn, a.invert_y);
-                    checkAndUpdatePreset();
-                    _jellyOverlayArmed = false;
-                    resetPlotState(true);
-                    updatePlot();
-                    break;
-                }
-                case 'set_profile': {
-                    // Delegate to CycleProfile by simulating an input change
-                    const pInp = document.getElementById('profileNumInput');
-                    if (pInp) {
-                        pInp.value = (a.profile_num === null || a.profile_num === undefined) ? '' : a.profile_num;
-                        pInp.dispatchEvent(new Event('change'));
-                    }
-                    break;
-                }
-                case 'set_navigate': {
-                    if (Array.isArray(a.sci_phases))      CycleProfile.setPhases(a.sci_phases);
-                    if (Array.isArray(a.direction_filter)) CycleProfile.setDirection(a.direction_filter);
-                    break;
-                }
-                case 'set_qc': {
-                    if (typeof a.apply === 'boolean' && !applyQcBtn.disabled && applyQcBtn.classList.contains('active') !== a.apply) applyQcBtn.click();
-                    if (typeof a.highlight === 'boolean' && highlightQcBtn.style.display !== 'none' && highlightQcBtn.classList.contains('active') !== a.highlight) highlightQcBtn.click();
-                    if (typeof a.filter_time === 'boolean' && filterTimeBtn.classList.contains('active') !== a.filter_time) filterTimeBtn.click();
-                    if (a.flags) { qcFlagsInput.value = a.flags; syncQcChips(); resetPlotState(false); updatePlot(); }
-                    break;
-                }
-                case 'set_ctd': {
-                    if (ctdContainer.style.display === 'none') break;
-                    if (typeof a.interpolate === 'boolean' && ctdInterpBtn.classList.contains('active') !== a.interpolate) ctdInterpBtn.click();
-                    if (typeof a.qc === 'boolean' && ctdQcBtn.classList.contains('active') !== a.qc) ctdQcBtn.click();
-                    break;
-                }
-                case 'set_zoom': {
-                    const toNum = v => {
-                        if (v === null || v === undefined) return undefined;
-                        if (typeof v === 'number') return v;
-                        const n = Number(v);
-                        if (!isNaN(n)) return n;
-                        const d = new Date(v).getTime();
-                        return isNaN(d) ? undefined : d;
-                    };
-                    const limits = {};
-                    // Only include an axis if BOTH bounds are explicitly provided (non-null)
-                    const xMinV = toNum(a.x_min), xMaxV = toNum(a.x_max);
-                    const yMinV = toNum(a.y_min), yMaxV = toNum(a.y_max);
-                    if (xMinV !== undefined && xMaxV !== undefined) {
-                        limits.xMin = xMinV; limits.xMax = xMaxV;
-                    }
-                    if (yMinV !== undefined && yMaxV !== undefined) {
-                        limits.yMin = yMinV; limits.yMax = yMaxV;
-                    }
-                    if (Object.keys(limits).length && plotIframe && plotIframe.contentWindow) {
-                        plotIframe.contentWindow.postMessage({ type: 'updateLimits', limits }, '*');
-                        const gl = currentGlobalLimits || {};
-                        const zb = currentZoomBounds || {};
-                        currentZoomBounds = {
-                            xMin: limits.xMin ?? zb.xMin ?? gl.xMin,
-                            xMax: limits.xMax ?? zb.xMax ?? gl.xMax,
-                            yMin: limits.yMin ?? zb.yMin ?? gl.yMin,
-                            yMax: limits.yMax ?? zb.yMax ?? gl.yMax
-                        };
-                    }
-                    break;
-                }
-                case 'set_color_limits': {
-                    if (!cVarSelect.value) break;
-                    const cmin = Number(a.c_min);
-                    const cmax = Number(a.c_max);
-                    if (isNaN(cmin) || isNaN(cmax)) break;
-                    cTrimMinInput.value = cmin.toFixed(4);
-                    cTrimMaxInput.value = cmax.toFixed(4);
-                    updateHandlesFromInputs('c');
-                    sendColourLimitsToIframe();
-                    break;
-                }
-                case 'set_currents': {
-                    // Toggle the depth-averaged current arrows on the map view.
-                    if (gliderMap.contentWindow && currentMapDataset) {
-                        const show = (typeof a.show === 'boolean') ? a.show : true;
-                        gliderMap.contentWindow.postMessage({ type: 'setDac', show }, '*');
-                        currentDacStatus.shown = show && currentDacStatus.available;
-                    }
-                    break;
-                }
-                case 'set_overlay': {
-                    // Show/replace/hide a Copernicus surface field on the globe.
-                    if (gliderMap.contentWindow && currentMapDataset) {
-                        const overlay = (typeof a.overlay === 'string') ? a.overlay.toLowerCase() : 'none';
-                        gliderMap.contentWindow.postMessage({ type: 'setOverlay', overlay }, '*');
-                    }
-                    break;
-                }
-                case 'download_live': {
-                    const fn = resolveLiveFilename(a.filename);
-                    if (fn) await bodcDownload(fn);
-                    break;
-                }
-                case 'delete_live': {
-                    const fn = resolveLiveFilename(a.filename);
-                    if (fn) await bodcDelete(fn);
-                    break;
-                }
-                case 'add_panel': {
-                    if (leafCount() >= MAX_PANELS) break;
-                    const t = PANEL_TYPE_SYNONYMS[String(a.panel || 'plot').toLowerCase()] || 'plot';
-                    if (PANEL_DEFS[t].singleton && hasPanelType(t)) break;   // already open
-                    const targetPanel = resolvePanelRef(a.target) || activePanel() || activePlotPanel();
-                    if (!targetPanel) break;
-                    const side = ['left', 'right', 'top', 'bottom'].includes(a.side) ? a.side : 'right';
-                    let seed = null;
-                    if (t === 'plot') {
-                        if (a.preset && OceanPresets[a.preset]) {
-                            seed = stateFromPreset(a.preset);
-                        } else if (a.variable) {
-                            const src = activePlotPanel();
-                            seed = src ? JSON.parse(JSON.stringify(src.state)) : captureToolbarState();
-                            seed.zoomBounds = null; seed.cMin = null; seed.cMax = null;
-                            seed.cTrimMin = ''; seed.cTrimMax = '';
-                            seed.c = a.variable; seed.preset = '';
-                        } else {
-                            seed = makeNewState('plot');
-                        }
-                    }
-                    splitPanel(targetPanel.id, side, t, seed);
-                    break;
-                }
-                case 'remove_panel': {
-                    const p = resolvePanelRef(a.target);
-                    if (p) closePanel(p.id);
-                    break;
-                }
-                case 'move_panel': {
-                    const p = resolvePanelRef(a.target);
-                    const rel = resolvePanelRef(a.relative_to);
-                    const side = ['left', 'right', 'top', 'bottom'].includes(a.side) ? a.side : 'right';
-                    if (p && rel && p.id !== rel.id) moveLeafToEdge(p.id, rel.id, side);
-                    break;
-                }
-                case 'swap_panels': {
-                    const pa = resolvePanelRef(a.a), pb = resolvePanelRef(a.b);
-                    if (pa && pb && pa.id !== pb.id) { markCustomLayout(); swapLeafPanels(layoutTree, pa.id, pb.id); renderLayout(); setActive(pa.id); }
-                    break;
-                }
-                case 'select_panel': {
-                    const p = resolvePanelRef(a.target);
-                    if (p) setActive(p.id);
-                    break;
-                }
-                case 'resize_panel': {
-                    const p = resolvePanelRef(a.target);
-                    let frac = Number(a.fraction);
-                    if (!p || isNaN(frac)) break;
-                    frac = Math.max(0.1, Math.min(0.9, frac));
-                    const found = findParent(layoutTree, p.id, null);
-                    if (found) { found.parent.ratio = (found.side === 'a') ? frac : 1 - frac; renderLayout(); }
-                    break;
-                }
-                case 'set_layout': {
-                    arrangeLayout(String(a.arrange || '').toLowerCase());
-                    break;
-                }
-                case 'dashboard': {
-                    applyDashboard();
-                    break;
-                }
-                case 'reset_layout': {
-                    clearSavedLayout();
-                    buildDefaultLayout();
-                    Object.values(panels).forEach(p => { if (p.type !== 'plot') renderPanel(p); });
-                    updatePlot();
-                    break;
-                }
-                case 'set_title':
-                case 'set_color_mode':
-                case 'add_line':
-                case 'add_stat_line':
-                case 'add_running_mean':
-                case 'clear_overlays':
-                    postOverlayToPlot(a);
-                    break;
-            }
-        }
-
-        async function runJellyActions(actions) {
-            for (const a of actions || []) {
-                try { await runJellyAction(a); } catch (e) { console.error('Jelly action failed:', a, e); }
-            }
-        }
-
-        jellyForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (jellyBusy) return;
-            const text = jellyInput.value.trim();
-            if (!text) return;
-            if (!jellyHasKey) {
-                jellyKeyPrompt.classList.remove('hidden');
-                jellyKeyPrompt.classList.add('flex');
-                jellyKeyStatus.textContent = 'Paste an API key first.';
-                return;
-            }
-            jellyInput.value = '';
-            addJellyMessage('user', text);
-            jellyHistory.push({ role: 'user', content: text });
-
-            jellyBusy = true;
-            jellySend.disabled = true;
-            jellyToggle.classList.add('thinking');
-            jellyPanel.classList.add('thinking');
-            const thinking = addJellyMessage('jelly thinking', 'thinking…');
-
-            try {
-                const r = await fetch('/api/jelly/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: text,
-                        history: jellyHistory.slice(-12),
-                        context: gatherJellyContext()
-                    })
-                });
-                const d = await r.json();
-                thinking.remove();
-                if (d.error) {
-                    addJellyMessage('error', d.error);
-                    if (d.needs_key) {
-                        jellyHasKey = false;
-                        jellyKeyPrompt.classList.remove('hidden');
-                        jellyKeyPrompt.classList.add('flex');
-                    }
-                } else {
-                    const reply = (d.message || '').trim() || '(no reply)';
-                    const extra = (d.actions && d.actions.length) ? `did ${d.actions.length} thing${d.actions.length>1?'s':''}` : '';
-                    addJellyMessage('jelly', reply, extra);
-                    jellyHistory.push({ role: 'assistant', content: reply });
-                    if (jellyHistory.length > 24) jellyHistory = jellyHistory.slice(-24);
-                    if (d.actions && d.actions.length) await runJellyActions(d.actions);
-                }
-            } catch (err) {
-                thinking.remove();
-                addJellyMessage('error', 'Network error talking to Jelly.');
-                console.error(err);
-            } finally {
-                jellyBusy = false;
-                jellySend.disabled = false;
-                jellyToggle.classList.remove('thinking');
-                jellyPanel.classList.remove('thinking');
-                jellyInput.focus();
-            }
-        });
-
-        // Flush queued overlays once the plot finishes loading, then re-apply persistent overrides
-        window.addEventListener('message', function(event) {
-            // Jelly overlays target the active panel only.
-            if (plotIframe && event.source !== plotIframe.contentWindow) return;
-            if (event.data && event.data.type === 'plotLoaded') {
-                _jellyOverlayArmed = true;
-                if (plotIframe && plotIframe.contentWindow) {
-                    if (_pendingJellyOverlays.length) {
-                        const queue = _pendingJellyOverlays.slice();
-                        _pendingJellyOverlays = [];
-                        queue.forEach(ov => plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: ov }, '*'));
-                    }
-                    const full = fullOverridesPayload();
-                    if (full) {
-                        plotIframe.contentWindow.postMessage({ type: 'jellyOverrides', overrides: full }, '*');
-                        if (full.colorMode) updateJellyColorBar(full.colorMode, full.colors);
-                    }
-                }
-            }
-        });
 
         initPanels();
-        checkJellyKey();
         init();
 
         // ---- Generic hover tooltip for anything with data-tip ----

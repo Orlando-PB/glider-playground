@@ -1,4 +1,4 @@
-"""FastAPI app — file management, cached data endpoints, Jelly chat passthrough."""
+"""FastAPI app — file management and cached data endpoints."""
 
 import logging
 import os
@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 
 from . import cache_logic
 from . import cycle_profile_logic
-from . import jelly_logic
 from . import live_logic
 from . import overlay_logic
 from . import plot_logic
@@ -316,9 +315,12 @@ def api_plot_data(
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
     max_points: int = None,
-):
+) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
+    # The `-> dict` annotation makes FastAPI serialize straight to JSON bytes via
+    # pydantic, skipping the jsonable_encoder pass that dominates on big arrays.
+    # plot_logic returns plain lists (NaN already -> None) so this stays valid JSON.
     return plot_logic.get_plot_data_json(
         _resolve_path(id), x_var, y_var, c_var,
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
@@ -338,7 +340,7 @@ def api_plot_data_bounds(
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
-):
+) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
     return plot_logic.get_plot_data_bounds(
@@ -436,35 +438,6 @@ def api_currents(id: str):
         lon_max=loc["lon_max"],
         target_date=target_date,
     )
-
-
-# ---------- jelly ----------
-
-@app.get("/api/jelly/key_status")
-def jelly_key_status():
-    return {"has_key": jelly_logic.has_api_key()}
-
-
-@app.post("/api/jelly/set_key")
-async def jelly_set_key(request: Request):
-    body = await request.json()
-    key = (body.get("key") or "").strip()
-    if not key or len(key) < 10:
-        return {"status": "error", "message": "Key looks too short."}
-    jelly_logic.set_api_key(key)
-    return {"status": "success"}
-
-
-@app.post("/api/jelly/delete_key")
-def jelly_delete_key():
-    jelly_logic.delete_api_key()
-    return {"status": "success"}
-
-
-@app.post("/api/jelly/chat")
-async def jelly_chat(request: Request):
-    body = await request.json()
-    return await jelly_logic.chat(body)
 
 
 if __name__ == "__main__":

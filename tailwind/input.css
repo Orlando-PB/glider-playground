@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@config "./tailwind.config.js";
+
+/* --- v3 compatibility shims (the Play CDN served Tailwind v3) ------------- */
+/* v4 changed the default border color from gray-200 to currentColor. */
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}
+/* v4's bare `ring` is 1px/currentColor; v3's was 3px/blue-500. Restore color. */
+@layer base {
+  * { --tw-ring-color: rgb(59 130 246 / 0.5); }
+}

@@ -14,6 +14,38 @@ from pathlib import Path
 # Locked to 200k points max for optimal WebGL performance
 MAX_RENDER_POINTS = 200000
 
+
+# Significant figures kept in the serialized plot arrays. The source sensor
+# data is float32 (~7.2 decimal digits), so anything beyond 7 sig figs is pure
+# float64 widening noise (e.g. 9.562800407409668 -> 9.5628004). Rounding it away
+# is lossless w.r.t. the instrument yet roughly halves the float text gzip ships
+# and what the browser has to JSON.parse. Bump this if a genuinely float64
+# variable ever needs more — it only trims noise, never bins or drops points.
+_PLOT_SIG_FIGS = 7
+
+
+def _floats_to_list(arr, sig=_PLOT_SIG_FIGS):
+    """numpy float array -> JSON-ready Python list, rounded to `sig` significant
+    figures, with non-finite (NaN/inf) mapped to None.
+
+    Vectorised end to end (the round, finite test and object cast all run in C),
+    so it stays far cheaper than a per-element Python loop. None is required
+    because the native (pydantic) JSON serializer emits bare NaN/Infinity tokens
+    otherwise, which are invalid JSON and break JSON.parse in the browser.
+    """
+    arr = np.asarray(arr, dtype=float)
+    out = arr.copy()
+    nz = np.isfinite(arr) & (arr != 0)
+    if nz.any():
+        # round to `sig` significant figures: scale so the keepable digits sit
+        # left of the decimal, round, scale back.
+        mag = np.floor(np.log10(np.abs(arr[nz])))
+        factor = 10.0 ** (sig - 1 - mag)
+        out[nz] = np.round(arr[nz] * factor) / factor
+    obj = out.astype(object)
+    obj[~np.isfinite(out)] = None
+    return obj.tolist()
+
 # When LOW_MEMORY_MODE=true all preloaded arrays and CTD overlays are stored
 # on disk instead of kept permanently in RAM. Each request loads only what it
 # needs, uses it, then the memory is freed. Full prewarming still happens — it
@@ -1050,17 +1082,14 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         if plot_c is not None: plot_c = plot_c[::step]
         if plot_sel is not None: plot_sel = plot_sel[::step]
 
-    if is_x_dt:
-        x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist()
-    else:
-        x_out = [None if np.isnan(v) else float(v) for v in plot_x]
+    # Datetime x keeps its string form; numeric arrays become NaN-safe lists.
+    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
+    y_out = _floats_to_list(plot_y)
 
-    y_out = [None if np.isnan(v) else float(v) for v in plot_y]
-    
     c_out = []
     c_min, c_max = 0.0, 1.0
     if plot_c is not None:
-        c_out = [None if np.isnan(v) else float(v) for v in plot_c]
+        c_out = _floats_to_list(plot_c)
         valid_c_for_scale = plot_c[plot_qc] if apply_qc else plot_c
         if len(valid_c_for_scale) > 0:
             c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
@@ -1260,12 +1289,13 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         if plot_sel is not None:
             plot_sel = plot_sel[::step]
 
-    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else [None if np.isnan(v) else float(v) for v in plot_x]
-    y_out = [None if np.isnan(v) else float(v) for v in plot_y]
+    # NaN-safe lists for the native JSON serializer; see get_plot_data_json.
+    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
+    y_out = _floats_to_list(plot_y)
 
     c_out, c_min, c_max = [], 0.0, 1.0
     if plot_c is not None:
-        c_out = [None if np.isnan(v) else float(v) for v in plot_c]
+        c_out = _floats_to_list(plot_c)
         valid_c = plot_c[plot_qc] if apply_qc else plot_c
         if len(valid_c) > 0:
             c_min = float(np.nanpercentile(valid_c, 0.1))

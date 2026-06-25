@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <title>Glider Plot</title>
     <script src="/static/console_log.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <link rel="stylesheet" href="/static/tailwind.css">
+    <!-- Self-hosted partial Plotly: gl2d bundle (scatter + scattergl) instead of
+         the full ~1MB-gzip build. Cuts parse time and drops a third-party fetch. -->
+    <script src="/static/plotly-gl2d-2.32.0.min.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
@@ -140,7 +142,6 @@
         let _currentZoom = null;
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
         let _suppressRelayout = false;  // true while we are driving relayout programmatically
-        let _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
 
         // ---- Compact multiview colour bar -------------------------------------
         // In multiview (more than one plot panel) each plot shows its own small,
@@ -161,10 +162,6 @@
         function cbarStops() {
             if (!plotData || !plotData.c || !plotData.c.length) return null;
             if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') return null;
-            if (_jellyOverrides.colorMode === 'solid') return null;
-            if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
-                return [_jellyOverrides.colors[0], _jellyOverrides.colors[1]];
-            }
             let cmapName = urlParams.get('cmap') || 'thermal';
             if (cmapName === 'black') return null;
             const reversed = cmapName.endsWith('_r');
@@ -338,35 +335,6 @@
             }
         }
 
-        function computeRunningMean(xs, ys, window, isXDate) {
-            const pairs = [];
-            for (let i = 0; i < xs.length; i++) {
-                const yv = ys[i];
-                if (yv === null || yv === undefined || isNaN(yv)) continue;
-                const raw = xs[i];
-                if (raw === null || raw === undefined) continue;
-                const xv = isXDate ? new Date(raw).getTime() : Number(raw);
-                if (isNaN(xv)) continue;
-                pairs.push([xv, Number(yv)]);
-            }
-            pairs.sort((a, b) => a[0] - b[0]);
-            const n = pairs.length;
-            if (!n) return { x: [], y: [] };
-            const w = Math.max(2, Math.min(n, Math.floor(window)));
-            const half = Math.floor(w / 2);
-            const out_x = new Array(n), out_y = new Array(n);
-            let sum = 0, count = 0, lo = 0, hi = 0;
-            for (let i = 0; i < n; i++) {
-                const wantLo = Math.max(0, i - half);
-                const wantHi = Math.min(n, i + half + 1);
-                while (hi < wantHi) { sum += pairs[hi][1]; count++; hi++; }
-                while (lo < wantLo) { sum -= pairs[lo][1]; count--; lo++; }
-                out_x[i] = isXDate ? new Date(pairs[i][0]).toISOString() : pairs[i][0];
-                out_y[i] = sum / count;
-            }
-            return { x: out_x, y: out_y };
-        }
-
         const plotConfig = {
             defaultMarkerSize: 8,
             defaultColour: '#41658a'
@@ -511,121 +479,6 @@
             }
         }
 
-        function buildJellyShapesAndAnnotations(TC) {
-            TC = TC || readThemeColors();
-            const shapes = [], annotations = [];
-            (_jellyOverrides.lines || []).forEach(ln => {
-                const numVal = typeof ln.value === 'number' ? ln.value : parseFloat(ln.value);
-                if (isNaN(numVal)) return;
-                const color = ln.color || '#ea4335';
-                if (ln.axis === 'y') {
-                    shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: numVal, y1: numVal, line: { color, width: 2, dash: 'dash' } });
-                    if (ln.label) annotations.push({ xref: 'paper', x: 0.99, xanchor: 'right', yref: 'y', y: numVal, yanchor: 'bottom', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
-                } else {
-                    shapes.push({ type: 'line', yref: 'paper', y0: 0, y1: 1, xref: 'x', x0: numVal, x1: numVal, line: { color, width: 2, dash: 'dash' } });
-                    if (ln.label) annotations.push({ yref: 'paper', y: 0.99, yanchor: 'top', xref: 'x', x: numVal, xanchor: 'left', text: ln.label, font: { size: 10, color }, bgcolor: TC.anno, bordercolor: color, borderwidth: 1, borderpad: 2, showarrow: false });
-                }
-            });
-            return { shapes, annotations };
-        }
-
-        function applyJellyOverrides() {
-            const plotDiv = document.getElementById('plotDiv');
-            if (!plotDiv || !plotDiv.data) return;
-
-            const TC = readThemeColors();
-            const layoutUpdate = {};
-            if (_jellyOverrides.title) {
-                layoutUpdate.title = { text: _jellyOverrides.title, font: { size: 16, color: TC.title }, x: 0.5, xanchor: 'center', y: 0.98, yanchor: 'top' };
-                layoutUpdate['margin.t'] = 40;
-                layoutUpdate['margin.l'] = 50;
-            } else {
-                layoutUpdate.title = null;
-                layoutUpdate['margin.t'] = 8;   // keep in sync with buildLayout's tight top margin
-                layoutUpdate['margin.l'] = 60;
-            }
-            const { shapes, annotations } = buildJellyShapesAndAnnotations(TC);
-            layoutUpdate.shapes = shapes;
-            layoutUpdate.annotations = annotations;
-
-            _suppressRelayout = true;
-            Plotly.relayout('plotDiv', layoutUpdate).then(() => { _suppressRelayout = false; positionCbar(); });
-
-            // Discrete 0-9 mode uses per-value traces with fixed colours; skip restyle.
-            if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') {
-                applyRunningMeanTrace();
-                return;
-            }
-
-            // Marker color: restyle the main scatter trace in place so we don't
-            // rebuild traces (which would risk dropping the high-res data).
-            let cmapName = urlParams.get('cmap') || 'thermal';
-            let effectiveColorscale = customColorscales[cmapName] || cmapName;
-            let forceSolidColor = null;
-            if (_jellyOverrides.colorMode === 'solid' && _jellyOverrides.colors.length >= 1) {
-                forceSolidColor = _jellyOverrides.colors[0];
-            } else if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
-                effectiveColorscale = [[0, _jellyOverrides.colors[0]], [1, _jellyOverrides.colors[1]]];
-            }
-            const passIdx = colouredTraceIdx();
-            let newColor, newScale;
-            if (forceSolidColor) {
-                newColor = forceSolidColor;
-                newScale = null;
-            } else if (plotData.c && plotData.c.length) {
-                const trace = plotDiv.data[passIdx];
-                newColor = (trace && trace.customdata && trace.customdata.length) ? trace.customdata : plotData.c;
-                newScale = effectiveColorscale;
-            } else {
-                newColor = (cmapName === 'black' ? 'black' : plotConfig.defaultColour);
-                newScale = null;
-            }
-            Plotly.restyle('plotDiv', { 'marker.color': [newColor], 'marker.colorscale': [newScale] }, [passIdx]);
-
-            applyRunningMeanTrace();
-        }
-
-        function applyRunningMeanTrace() {
-            const plotDiv = document.getElementById('plotDiv');
-            const traces = plotDiv.data || [];
-            let existingIdx = -1;
-            for (let i = 0; i < traces.length; i++) {
-                if (traces[i] && traces[i]._isRunningMean) { existingIdx = i; break; }
-            }
-
-            if (!_jellyOverrides.runningMean) {
-                if (existingIdx >= 0) Plotly.deleteTraces('plotDiv', [existingIdx]);
-                return;
-            }
-            if (!plotData.x || !plotData.x.length) return;
-
-            const rm = _jellyOverrides.runningMean;
-            const axis = rm.axis || 'y';
-            const defaultWin = Math.max(10, Math.floor(plotData.x.length / 100));
-            const win = rm.window ? Math.max(3, Math.floor(rm.window)) : defaultWin;
-            let traceX, traceY;
-            if (axis === 'x') {
-                const sm = computeRunningMean(plotData.y, plotData.x.map(v => plotData.is_x_dt ? new Date(v).getTime() : v), win, false);
-                traceX = sm.y; traceY = sm.x;
-            } else {
-                const sm = computeRunningMean(plotData.x, plotData.y, win, !!plotData.is_x_dt);
-                traceX = sm.x; traceY = sm.y;
-            }
-
-            const newTrace = {
-                x: traceX, y: traceY, mode: 'lines', type: 'scattergl',
-                line: { color: rm.color || '#ea4335', width: 2.5 },
-                name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
-                _isRunningMean: true
-            };
-
-            if (existingIdx >= 0) {
-                Plotly.deleteTraces('plotDiv', [existingIdx]).then(() => Plotly.addTraces('plotDiv', newTrace));
-            } else {
-                Plotly.addTraces('plotDiv', newTrace);
-            }
-        }
-
         function buildLayout(xRange, yRange) {
             const isXDate = plotData.is_x_dt;
             const isInverted = urlParams.get('invert_y') === 'true';
@@ -681,15 +534,6 @@
                 // x axis lines up with other (colorbar/no-legend) plots in multiview.
                 legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: TC.anno, bordercolor: GRID_COLOR, borderwidth: 1, x: 0.01, xanchor: 'left', y: 0.99, yanchor: 'top' },
             };
-
-            if (_jellyOverrides.title) {
-                layout.title = { text: _jellyOverrides.title, font: { size: 16, color: TC.title }, x: 0.5, xanchor: 'center', y: 0.98, yanchor: 'top' };
-                layout.margin = { l: 50, r: 20, t: 40, b: 50 };
-            }
-
-            const { shapes: jellyShapes, annotations: jellyAnnotations } = buildJellyShapesAndAnnotations(TC);
-            if (jellyShapes.length) layout.shapes = jellyShapes;
-            if (jellyAnnotations.length) layout.annotations = jellyAnnotations;
 
             if (xRange) {
                 layout.xaxis.range = xRange;
@@ -756,13 +600,6 @@
             }
 
             let effectiveColorscale = customColorscales[cmapName] || cmapName;
-            let forceSolidColor = null;
-
-            if (_jellyOverrides.colorMode === 'solid' && _jellyOverrides.colors.length >= 1) {
-                forceSolidColor = _jellyOverrides.colors[0];
-            } else if (_jellyOverrides.colorMode === 'gradient' && _jellyOverrides.colors.length >= 2) {
-                effectiveColorscale = [[0, _jellyOverrides.colors[0]], [1, _jellyOverrides.colors[1]]];
-            }
 
             let traces = [];
 
@@ -788,8 +625,8 @@
                     x: gx, y: gy, mode: 'markers', type: 'scattergl',
                     marker: {
                         size: plotConfig.defaultMarkerSize,
-                        color: forceSolidColor ? forceSolidColor : (gc.length && data.c ? gc : plotConfig.defaultColour), opacity: 0.8,
-                        colorscale: forceSolidColor ? undefined : (gc.length && data.c ? effectiveColorscale : undefined),
+                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: 0.8,
+                        colorscale: gc.length && data.c ? effectiveColorscale : undefined,
                         cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
                     hoverinfo: 'none', customdata: gc, name: 'Passed QC'
@@ -818,40 +655,15 @@
                     x: px, y: py, mode: 'markers', type: 'scattergl',
                     marker: {
                         size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
-                        color: forceSolidColor ? forceSolidColor : (pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour)),
+                        color: pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour),
                         opacity: 0.8,
-                        colorscale: forceSolidColor ? undefined : (pc ? effectiveColorscale : undefined),
+                        colorscale: pc ? effectiveColorscale : undefined,
                         cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
                     hoverinfo: 'none', customdata: pc || []
                 });
             }
             
-            if (_jellyOverrides.runningMean && data.x && data.x.length) {
-                const rm = _jellyOverrides.runningMean;
-                const axis = rm.axis || 'y';
-                const defaultWin = Math.max(10, Math.floor(data.x.length / 100));
-                const win = rm.window ? Math.max(3, Math.floor(rm.window)) : defaultWin;
-                let smoothed;
-                if (axis === 'x') {
-                    smoothed = computeRunningMean(data.y, data.x.map(v => data.is_x_dt ? new Date(v).getTime() : v), win, false);
-                    traces.push({
-                        x: smoothed.y, y: smoothed.x, mode: 'lines', type: 'scattergl',
-                        line: { color: rm.color || '#ea4335', width: 2.5 },
-                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
-                        _isRunningMean: true
-                    });
-                } else {
-                    smoothed = computeRunningMean(data.x, data.y, win, !!data.is_x_dt);
-                    traces.push({
-                        x: smoothed.x, y: smoothed.y, mode: 'lines', type: 'scattergl',
-                        line: { color: rm.color || '#ea4335', width: 2.5 },
-                        name: rm.label || `Running mean (${win})`, showlegend: false, hoverinfo: 'x+y',
-                        _isRunningMean: true
-                    });
-                }
-            }
-
             return traces;
         }
 
@@ -1247,43 +1059,6 @@
                     height: 800,
                     filename: `glider_plot_${urlParams.get('x')}_vs_${urlParams.get('y')}`
                 });
-            }
-
-            if (msg.type === 'jellyOverrides') {
-                const ov = msg.overrides || {};
-                if ('title' in ov) _jellyOverrides.title = ov.title || null;
-                if ('colorMode' in ov) {
-                    _jellyOverrides.colorMode = ov.colorMode;
-                    _jellyOverrides.colors = Array.isArray(ov.colors) ? ov.colors : [];
-                }
-                if (Array.isArray(ov.lines)) {
-                    const resolved = [];
-                    ov.lines.forEach(ln => {
-                        if (ln && (ln.stat === 'mean' || ln.stat === 'median')) {
-                            const axis = ln.axis || 'y';
-                            const arr = axis === 'y' ? plotData.y : plotData.x;
-                            const nums = [];
-                            for (let i = 0; i < arr.length; i++) {
-                                const v = axis === 'x' && plotData.is_x_dt ? (arr[i] !== null ? new Date(arr[i]).getTime() : null) : arr[i];
-                                if (v !== null && !isNaN(v)) nums.push(v);
-                            }
-                            if (!nums.length) return;
-                            let val;
-                            if (ln.stat === 'mean') val = nums.reduce((a,b)=>a+b,0)/nums.length;
-                            else { nums.sort((a,b)=>a-b); val = nums.length % 2 ? nums[(nums.length-1)/2] : 0.5*(nums[nums.length/2 -1]+nums[nums.length/2]); }
-                            resolved.push({ axis, value: val, label: ln.label || (ln.stat === 'mean' ? 'Mean' : 'Median'), color: ln.color || '#34a853' });
-                        } else if (ln && typeof ln.value !== 'undefined') {
-                            resolved.push({ axis: ln.axis || 'y', value: ln.value, label: ln.label || '', color: ln.color || '#ea4335' });
-                        }
-                    });
-                    if (ov.replaceLines) _jellyOverrides.lines = resolved;
-                    else _jellyOverrides.lines = (_jellyOverrides.lines || []).concat(resolved);
-                }
-                if ('runningMean' in ov) _jellyOverrides.runningMean = ov.runningMean;
-                if (ov.clear) _jellyOverrides = { title: null, colorMode: null, colors: [], lines: [], runningMean: null };
-
-                applyJellyOverrides();
-                applyCbar();
             }
 
             if (msg.type === 'autoColour') {

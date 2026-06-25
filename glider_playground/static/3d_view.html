@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <title>3D Ocean Chunk</title>
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <!-- Self-hosted partial Plotly: gl3d bundle (scatter3d + surface) instead of
+         the full ~1MB-gzip build. Cuts parse time and drops a third-party fetch. -->
+    <script src="/static/plotly-gl3d-2.32.0.min.js"></script>
     <script src="/static/console_log.js"></script>
     <style>
         :root, :root[data-theme="dark"] {

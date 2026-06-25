@@ -5,8 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Glider Globe View</title>
     <script src="/static/console_log.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="/static/tailwind.css">
+    <link rel="preload" as="style"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0"
+          onload="this.onload=null;this.rel='stylesheet'">
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0">
+    </noscript>
     <script src="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
     <!-- Standalone THREE (matches globe.gl 2.46.1's bundled three ≥0.154) for the
          CHL-a overlay mesh. Loaded AFTER globe.gl so globe.gl initialises untouched. -->
@@ -811,6 +818,20 @@
             clearTimeout(showOverlayError._t);
             // Give a bit longer to read/copy when there's a command to act on.
             showOverlayError._t = setTimeout(() => box.classList.remove('visible'), cmd ? 15000 : 7000);
+
+            // A command in the hint means this is a one-time Copernicus setup issue
+            // (install / login) rather than a transient failure — let the parent
+            // surface it through Jelly so it's noticeable even with the globe closed.
+            if (cmd) {
+                try {
+                    window.parent && window.parent.postMessage({
+                        type: 'overlaySetup',
+                        message: msg || 'Could not load Copernicus overlay',
+                        hint: hint || '',
+                        command: cmd
+                    }, '*');
+                } catch (_) {}
+            }
         }
 
         // ── Click-to-pick coordinates (for piloting hand-off) ──────────
