@@ -3935,7 +3935,14 @@
                 return;
             }
 
-            const html = active.map(e => {
+            liveList.innerHTML = active.map(liveCardHtml).join('');
+        }
+
+        // Build the markup for a single live-deployment card. Shared between the
+        // real server-scan render and the placeholder render that runs while the
+        // first scan is still in flight.
+        function liveCardHtml(e) {
+            const esc = escapeHtmlSafe;
                 const ago = relTimeAgo(e.server_mtime);
                 const isDeleting = _liveDeleting.has(e.filename);
                 const isPending = e.downloading || _liveOptimistic.has(e.filename);
@@ -3990,9 +3997,34 @@
                         <div class="file-card-actions">${actionHtml}</div>
                     </div>
                 `;
-            }).join('');
+        }
 
-            liveList.innerHTML = html;
+        // Seed the Live list from files we already know about (via /api/files)
+        // while the first BODC scan is still in flight. A managed live glider
+        // that was downloaded in a previous session is re-processed on startup,
+        // so without this the list sits blank until the (slower) server scan
+        // returns — instead we show those gliders right away with a processing
+        // placeholder. Once _liveData arrives, renderLive() takes over.
+        function renderLivePlaceholders() {
+            if (_liveData) return;
+            const placeholders = fileRecords
+                .filter(f => f.is_managed && f.is_nrt)
+                .map(f => ({
+                    kind: 'live',
+                    dataset: f.name,
+                    filename: (f.path || f.name).split(/[\\/]/).pop(),
+                    server_mtime: f.mtime,
+                    downloaded: true,
+                    managed: true,
+                    needs_update: false,
+                    downloading: false,
+                    suppressed: false,
+                    file_id: f.status === 'ready' ? f.id : null,
+                    status: f.status,
+                    progress: f.progress,
+                }));
+            if (placeholders.length === 0) return;
+            liveList.innerHTML = placeholders.map(liveCardHtml).join('');
         }
 
         async function bodcDownload(fn) {
@@ -4823,6 +4855,9 @@
             syncDatasetOptions();
             renderFilesList();
             updateTrigger();
+            // Until the first BODC scan lands, surface known live gliders (and
+            // their processing progress) in the Live list instead of leaving it blank.
+            renderLivePlaceholders();
 
             // When the set of ready files changes (one finished processing, was
             // added, or removed), tell the already-loaded globe to rebuild its

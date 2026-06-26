@@ -203,6 +203,11 @@
         let _currentZoom = null;
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
         let _suppressRelayout = false;  // true while we are driving relayout programmatically
+        // Side padding (fraction of the x-span) added beyond the data on each edge.
+        // Must match the parent's union-range padding in index.html
+        // (unionTimeRange's `pad = span * 0.015`) so a plot that's already aligned
+        // doesn't visibly shift when the parent drives the synced union range on load.
+        const SIDE_PAD_FRAC = 0.015;
 
         // ---- Compact multiview colour bar -------------------------------------
         // In multiview (more than one plot panel) each plot shows its own small,
@@ -894,9 +899,23 @@
                 layout.xaxis.range = isXDate ? [Number(zx0), Number(zx1)] : [zx0, zx1];
                 layout.xaxis.autorange = false;
             } else {
-                // Explicit so a Plotly.react reuse over a previously-zoomed div clears
-                // the old x-range instead of retaining it (newPlot autoranges anyway).
-                layout.xaxis.autorange = true;
+                // No explicit/saved range: instead of letting Plotly pick its own
+                // autorange padding (which differs from the parent's synced union
+                // padding and so caused a visible layout shift the moment sync drove
+                // the union range on load), pin an explicit range with the SAME side
+                // padding the union uses. A plot that already spans the full timeline
+                // then matches the union exactly → no shift. Setting it explicitly also
+                // clears any stale range on a Plotly.react reuse over a zoomed div.
+                // Only time (date) axes get synced, so only they need to pre-match the
+                // union padding; value x-axes keep Plotly's own autorange.
+                const xMin = getSafeMin(plotData.x), xMax = getSafeMax(plotData.x);
+                if (isXDate && isFinite(xMin) && isFinite(xMax) && xMax > xMin) {
+                    const pad = (xMax - xMin) * SIDE_PAD_FRAC;
+                    layout.xaxis.range = [xMin - pad, xMax + pad];
+                    layout.xaxis.autorange = false;
+                } else {
+                    layout.xaxis.autorange = true;
+                }
             }
 
             if (yRange) {
@@ -1386,6 +1405,24 @@
                         const cMin = plotData.is_x_dt ? toNumX(c.xMin) : Number(c.xMin);
                         const cMax = plotData.is_x_dt ? toNumX(c.xMax) : Number(c.xMax);
                         if (reqXMin < cMin || reqXMax > cMax) needBase = true;
+                    }
+                }
+
+                // If the driven x-range already matches what's on screen (within an
+                // imperceptible 0.1% of the span) and nothing else needs to change,
+                // skip the relayout entirely. This is the common on-load case: a
+                // freshly-drawn plot already padded to the union range (see buildLayout)
+                // gets driven to that same range — so there's no point paying for a
+                // WebGL redraw or risking the faint shift it would cause. We bail before
+                // aborting any in-flight fetch, since that fetch is for the same range.
+                if (hasX && !hasY && !needBase) {
+                    const pd = document.getElementById('plotDiv');
+                    const curR = pd && pd._fullLayout && pd._fullLayout.xaxis && pd._fullLayout.xaxis.range;
+                    if (curR) {
+                        const c0 = toNumX(curR[0]), c1 = toNumX(curR[1]);
+                        const lo = Math.min(c0, c1), hi = Math.max(c0, c1);
+                        const span = Math.abs(hi - lo) || 1;
+                        if (Math.abs(reqXMin - lo) < span * 0.001 && Math.abs(reqXMax - hi) < span * 0.001) return;
                     }
                 }
 
