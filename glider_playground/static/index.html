@@ -878,7 +878,7 @@
 
         /* ---------- Summary panel ---------- */
         #summaryList { background: var(--bg-panel); }
-        .summary-content { display: flex; flex-direction: column; gap: 8px; padding: 9px; }
+        .summary-content { display: flex; flex-direction: column; gap: 5px; padding: 6px; }
         /* Header: deployment name + live/recovered status pill. */
         .summary-head { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
         .summary-title {
@@ -897,12 +897,12 @@
         @keyframes summaryPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
         /* Stat grid: auto-fills, so it's two columns when wide and one when narrow. */
         .summary-grid {
-            display: grid; gap: 6px;
+            display: grid; gap: 5px;
             grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
         }
         .summary-item {
-            display: flex; flex-direction: column; gap: 1px;
-            padding: 6px 8px;
+            display: flex; flex-direction: column; gap: 0;
+            padding: 2px 8px;
             background: var(--bg-panel-2, var(--bg-panel));
             border: 1px solid var(--border);
             border-radius: var(--radius-md, 8px);
@@ -910,13 +910,13 @@
         }
         .summary-item .s-label {
             display: flex; align-items: center; gap: 4px;
-            font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
-            color: var(--text-muted);
+            font-size: 8px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+            line-height: 1.2; color: var(--text-muted);
         }
-        .summary-item .s-label .material-symbols-outlined { font-size: 12px; }
+        .summary-item .s-label .material-symbols-outlined { font-size: 11px; }
         .summary-item .s-value {
-            font-size: 11px; font-weight: 600; color: var(--text-primary);
-            line-height: 1.3; word-break: break-word;
+            font-size: 10.5px; font-weight: 600; color: var(--text-primary);
+            line-height: 1.2; word-break: break-word;
         }
         .summary-item .s-value a { color: var(--accent); text-decoration: none; }
         .summary-item .s-value a:hover { text-decoration: underline; }
@@ -2824,15 +2824,18 @@
             _pendingGlobeFit = false;
             tearDownPanels();
             _nextPanelId = 1;
+            const summary = createPanel('summary', {});
             const plot = createPanel('plot', captureToolbarState());
             const map = createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = createPanel('3d',  { datasetId: datasetSelect.value || '' });
-            layoutTree = defaultLayoutTree(plot.id, map.id, td.id);
+            layoutTree = defaultLayoutTree(summary.id, plot.id, map.id, td.id);
             _viewKind = 'default'; _layoutPortrait = isPortrait();
             plotIframe = plot.iframe;
             renderLayout();
+            renderPanel(summary);
             setActive(plot.id);
             markViewApplied();
+            requestAnimationFrame(fitClassicSummaryHeight);
         }
 
         function buildFromSnapshot(snap) {
@@ -3318,21 +3321,45 @@
             return window.innerHeight > window.innerWidth;
         }
 
-        // Globe + 3D + a single plot. Landscape: maps in a narrow left column, plot
-        // on the right. Portrait: plot on top, maps split globe|3D beneath it.
-        function defaultLayoutTree(plotId, mapId, tdId) {
-            if (isPortrait()) {
-                return {
+        // Globe + 3D + a single plot, with a full-width summary strip across the top.
+        // Landscape: maps in a narrow left column, plot on the right. Portrait: plot on
+        // top, maps split globe|3D beneath it. `summaryId` is optional (older restored
+        // layouts may not have one). The summary's height is fitted to its content by
+        // fitClassicSummaryHeight() after layout, so the ratio here is just a seed.
+        function defaultLayoutTree(summaryId, plotId, mapId, tdId) {
+            const main = isPortrait()
+                ? {
                     dir: 'col', ratio: 0.5,
                     a: { leaf: true, panelId: plotId },
                     b: { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } }
+                }
+                : {
+                    dir: 'row', ratio: 0.24,
+                    a: { dir: 'col', ratio: 2 / 3, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },  // globe 2/3, 3D 1/3
+                    b: { leaf: true, panelId: plotId }
                 };
-            }
-            return {
-                dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 2 / 3, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },  // globe 2/3, 3D 1/3
-                b: { leaf: true, panelId: plotId }
-            };
+            if (!summaryId) return main;
+            return { dir: 'col', ratio: 0.16, _summaryTop: true, a: { leaf: true, panelId: summaryId }, b: main };
+        }
+
+        // Size the classic-view summary strip to exactly fit its content (no scrollbar,
+        // no wasted space). The strip is full width, so its grid wraps to as few rows
+        // as fit; we measure that natural height and translate it to a tree ratio.
+        // Skips once the user has hand-edited the layout (_viewKind cleared on drag).
+        function fitClassicSummaryHeight() {
+            if (_viewKind !== 'default' || !layoutTree || !layoutTree._summaryTop) return;
+            const summaryP = Object.values(panels).find(p => p.type === 'summary');
+            if (!summaryP) return;
+            const hostH = panelHost.clientHeight;
+            const content = summaryP.el.querySelector('#summaryContent');
+            if (!hostH || !content) return;
+            // The panel body fills the whole panel (the header floats on top, absolute,
+            // and consumes no layout space), so the body only needs the content height.
+            const contentH = content.scrollHeight;
+            if (!contentH) return;
+            const desired = contentH + 2;   // +2 hairline so nothing clips
+            layoutTree.ratio = Math.max(0.04, Math.min(0.5, desired / hostH));
+            applyGeometry();
         }
 
         // Globe + 3D, no plot. Landscape: side by side. Portrait: globe on top, 3D below.
@@ -3458,15 +3485,17 @@
                 layoutTree = bioopticsLayoutTree(plotIds, mapP.id);
             } else { // 'default'
                 if (!mapP || !tdP || plotIds.length !== 1) return;
-                layoutTree = defaultLayoutTree(plotIds[0], mapP.id, tdP.id);
+                const summaryP = Object.values(panels).find(p => p.type === 'summary');
+                layoutTree = defaultLayoutTree(summaryP ? summaryP.id : null, plotIds[0], mapP.id, tdP.id);
             }
             _layoutPortrait = isPortrait();
             renderLayout();
+            requestAnimationFrame(fitClassicSummaryHeight);
         }
         let _reflowTimer = null;
         window.addEventListener('resize', () => {
             clearTimeout(_reflowTimer);
-            _reflowTimer = setTimeout(reflowLayoutForOrientation, 150);
+            _reflowTimer = setTimeout(() => { reflowLayoutForOrientation(); fitClassicSummaryHeight(); }, 150);
         });
 
         // Drop all plot panels and stash non-(globe/3D) singletons, but KEEP the
@@ -3763,14 +3792,16 @@
         function applyDefaultView(presetKey) {
             _pendingGlobeFit = false;
             const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const summary = createPanel('summary', {});
             const plot = createPanel('plot', presetKey ? stateFromPreset(presetKey) : captureToolbarState());
             const map  = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const td   = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
-            layoutTree = defaultLayoutTree(plot.id, map.id, td.id);
+            layoutTree = defaultLayoutTree(summary.id, plot.id, map.id, td.id);
             _viewKind = 'default'; _layoutPortrait = isPortrait();
             if (presetKey) currentPreset = presetKey;
             plotIframe = plot.iframe;
             renderLayout();
+            renderPanel(summary);
             renderPanel(plot);
             if (!keepMap) renderPanel(map);
             if (!keepTd) renderPanel(td);
@@ -3778,6 +3809,7 @@
             setActive(plot.id);
             updatePresetUI();
             markViewApplied();
+            requestAnimationFrame(fitClassicSummaryHeight);
         }
 
         function resetPlotState(fullReset = true) {
@@ -4671,6 +4703,7 @@
                 }
 
                 renderSummary(data.global_attributes || {}, escapeHtml);
+                requestAnimationFrame(fitClassicSummaryHeight);   // content changed → re-fit the classic strip
 
                 // Re-apply any active filter to the freshly rendered rows.
                 applyListFilter('var');
