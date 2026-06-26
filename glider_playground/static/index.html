@@ -834,6 +834,10 @@
             transition: background-color 0.12s;
         }
         .var-row:hover { background: var(--bg-panel-3); }
+        /* The row rules above set display:flex with the same specificity as Tailwind's
+           .hidden{display:none}, but win by cascade order — so filtering (which toggles
+           .hidden) wouldn't hide rows. Re-assert hidden at higher specificity. */
+        .var-row.hidden, .attr-row.hidden { display: none !important; }
         .var-row .var-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .var-row .var-name { font-size: 11px; font-weight: 500; color: var(--text-primary); font-family: 'SF Mono','Menlo','Monaco', ui-monospace, monospace; letter-spacing: -0.01em; }
         .var-row .var-units { font-size: 9.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
@@ -849,6 +853,77 @@
         .attr-row:hover { background: var(--bg-panel-3); }
         .attr-row .attr-key { font-size: 10.5px; font-weight: 600; color: var(--text-primary); }
         .attr-row .attr-val { font-size: 10px; color: var(--text-secondary); word-break: break-word; }
+
+        /* ---------- Instruments panel ---------- */
+        #instrumentsList { background: var(--bg-panel); }
+        .instrument-rows { display: flex; flex-direction: column; padding: 6px; gap: 6px; }
+        .instrument-card {
+            display: flex; align-items: flex-start; gap: 8px;
+            padding: 7px 9px;
+            background: var(--bg-panel-2, var(--bg-panel));
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md, 8px);
+            border-left: 3px solid var(--accent);
+        }
+        .instrument-card .instrument-icon {
+            font-size: 16px; color: var(--accent); flex-shrink: 0; margin-top: 1px;
+        }
+        .instrument-card .instrument-name {
+            font-size: 11px; font-weight: 600; color: var(--text-primary);
+            line-height: 1.3; word-break: break-word;
+        }
+        .instrument-empty {
+            padding: 16px; text-align: center; font-size: 10px; color: var(--text-muted);
+        }
+
+        /* ---------- Summary panel ---------- */
+        #summaryList { background: var(--bg-panel); }
+        .summary-content { display: flex; flex-direction: column; gap: 8px; padding: 9px; }
+        /* Header: deployment name + live/recovered status pill. */
+        .summary-head { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+        .summary-title {
+            font-size: 12px; font-weight: 700; color: var(--text-primary);
+            line-height: 1.25; word-break: break-word; flex: 1 1 120px; min-width: 0;
+        }
+        .summary-status {
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+        }
+        .summary-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .summary-status.is-live { color: #0a8a3e; background: rgba(16, 185, 129, 0.14); }
+        .summary-status.is-live .dot { animation: summaryPulse 1.6s ease-in-out infinite; }
+        .summary-status.is-recovered { color: var(--text-secondary); background: var(--bg-panel-3); }
+        @keyframes summaryPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        /* Stat grid: auto-fills, so it's two columns when wide and one when narrow. */
+        .summary-grid {
+            display: grid; gap: 6px;
+            grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+        }
+        .summary-item {
+            display: flex; flex-direction: column; gap: 1px;
+            padding: 6px 8px;
+            background: var(--bg-panel-2, var(--bg-panel));
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md, 8px);
+            min-width: 0;
+        }
+        .summary-item .s-label {
+            display: flex; align-items: center; gap: 4px;
+            font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .summary-item .s-label .material-symbols-outlined { font-size: 12px; }
+        .summary-item .s-value {
+            font-size: 11px; font-weight: 600; color: var(--text-primary);
+            line-height: 1.3; word-break: break-word;
+        }
+        .summary-item .s-value a { color: var(--accent); text-decoration: none; }
+        .summary-item .s-value a:hover { text-decoration: underline; }
+        .summary-item .s-sub { font-size: 9px; color: var(--text-muted); }
+        /* A wide item spans the whole row even in the 2-col layout. */
+        .summary-item.s-wide { grid-column: 1 / -1; }
+        .summary-empty { padding: 16px; text-align: center; font-size: 10px; color: var(--text-muted); }
 
         /* ---------- Tabs ---------- */
         #datasetInfoContainer button[id^="tab"] {
@@ -1135,6 +1210,7 @@
                         <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
                         <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
                         <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top) with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
+                        <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
                     </div>
                 </div>
 
@@ -1333,6 +1409,12 @@
                 </div>
                 <div id="attrRows"></div>
                 <div id="attrNoMatch" class="ds-nomatch hidden">No matching attributes.</div>
+            </div>
+            <div id="instrumentsList" class="flex-col w-full overflow-y-auto flex-grow relative">
+                <div id="instrumentRows" class="instrument-rows"></div>
+            </div>
+            <div id="summaryList" class="flex-col w-full overflow-y-auto flex-grow relative">
+                <div id="summaryContent" class="summary-content"></div>
             </div>
         </div>
 
@@ -1723,6 +1805,8 @@
             '3d':  { label: '3D View',    icon: 'deployed_code', singleton: true, stashId: 'iframe3D',  isFrame: true },
             vars:  { label: 'Variables',  icon: 'table_rows',    singleton: true, stashId: 'varList',   isFrame: false },
             attrs: { label: 'Attributes', icon: 'description',   singleton: true, stashId: 'attrList',  isFrame: false },
+            instruments: { label: 'Instruments', icon: 'sensors', singleton: true, stashId: 'instrumentsList', isFrame: false },
+            summary: { label: 'Summary', icon: 'summarize', singleton: true, stashId: 'summaryList', isFrame: false },
         };
 
         const activePanel = () => activePanelId ? panels[activePanelId] : null;
@@ -2922,6 +3006,10 @@
                 // Duo globe just (re)loaded → (re)apply its Copernicus overlay.
                 const mp = panelByWindow(event.source);
                 if (mp && _duoOverlays[mp.id]) applyDuoOverlay(mp, _duoOverlays[mp.id]);
+                // Stats globe → keep its Layers panel collapsed.
+                if (mp && _collapseLayersPanels.has(mp.id)) {
+                    try { event.source.postMessage({ type: 'collapseLayers' }, '*'); } catch (_) {}
+                }
                 return;
             }
 
@@ -3290,6 +3378,30 @@
             };
         }
 
+        // Stats: three equal columns. Left column = summary (top), globe (middle),
+        // instruments (bottom); middle = variables; right = attributes. Portrait
+        // stacks every panel in a single column.
+        function statsLayoutTree(summaryId, mapId, instrId, varsId, attrsId) {
+            // Left column: summary on top, then globe over instruments beneath it.
+            const leftCol = {
+                dir: 'col', ratio: 0.26,
+                a: { leaf: true, panelId: summaryId },
+                b: { dir: 'col', ratio: 0.62, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: instrId } }
+            };
+            if (isPortrait()) {
+                return {
+                    dir: 'col', ratio: 0.5,
+                    a: leftCol,
+                    b: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: varsId }, b: { leaf: true, panelId: attrsId } }
+                };
+            }
+            return {
+                dir: 'row', ratio: 1 / 3,
+                a: leftCol,
+                b: { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: varsId }, b: { leaf: true, panelId: attrsId } }    // variables | attributes
+            };
+        }
+
         // Duo: two globes stacked on the left, two plots stacked on the right, with
         // the plots given the lion's share of the width. Landscape splits left|right;
         // portrait stacks the plots on top with the globes side by side beneath.
@@ -3328,6 +3440,13 @@
             if (_viewKind === 'map') {
                 if (!mapP || !tdP) return;
                 layoutTree = mapViewTree(mapP.id, tdP.id);
+            } else if (_viewKind === 'stats') {
+                const summaryP = Object.values(panels).find(p => p.type === 'summary');
+                const instrP = Object.values(panels).find(p => p.type === 'instruments');
+                const varsP  = Object.values(panels).find(p => p.type === 'vars');
+                const attrsP = Object.values(panels).find(p => p.type === 'attrs');
+                if (!mapP || !summaryP || !instrP || !varsP || !attrsP) return;
+                layoutTree = statsLayoutTree(summaryP.id, mapP.id, instrP.id, varsP.id, attrsP.id);
             } else if (_viewKind === 'overview') {
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
@@ -3520,6 +3639,11 @@
         // handler). Cleared whenever a non-Duo view is selected.
         let _duoOverlays = {};
 
+        // Globe panel ids whose Layers panel should start collapsed (the Stats view —
+        // its globe is a compact reference map, so the layers chrome just gets in the
+        // way). Reapplied on every (re)load via the mapReady handler.
+        let _collapseLayersPanels = new Set();
+
         // Tell one Duo globe to show its overlay and tuck its Layers panel away.
         // If Copernicus isn't set up the overlay fetch fails inside the globe, which
         // posts {type:'overlaySetup'} back here → Jelly surfaces the setup help.
@@ -3592,6 +3716,41 @@
             if (!keepMap) { _pendingGlobeFit = true; renderPanel(map); }  // fresh globe fits via mapReady
             if (!keepTd) renderPanel(td);
             refitReusedGlobe(keepMap, true);   // reused globe → whole-globe now
+            setActive(map.id);
+            updatePresetUI();
+            setColourRail(false);   // no plot → grey the colour bar
+            markViewApplied();
+        }
+
+        // Stats: a no-plot dataset-inspection layout. Three equal columns — the map
+        // (over the instruments list) on the left, variables in the middle, attributes
+        // on the right — so you can read at a glance which instruments a glider carries.
+        function applyStatsView() {
+            _pendingGlobeFit = false;
+            const { map: keepMap } = keepGlobe();   // globe only — no 3D in Stats
+            const map     = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const summary = createPanel('summary', {});
+            const instr   = createPanel('instruments', {});
+            const vars    = createPanel('vars',  {});
+            const attrs   = createPanel('attrs', {});
+            layoutTree = statsLayoutTree(summary.id, map.id, instr.id, vars.id, attrs.id);
+            _viewKind = 'stats'; _layoutPortrait = isPortrait();
+            activePlotPanelId = null;
+            plotIframe = null;
+            currentPreset = '__stats__';
+            // Keep this globe's Layers panel collapsed — a fresh globe collapses via
+            // the mapReady handler; a reused (already-loaded) one needs it pushed now.
+            _collapseLayersPanels = new Set([map.id]);
+            renderLayout();
+            if (!keepMap) { _pendingGlobeFit = true; renderPanel(map); }  // fresh globe fits via mapReady
+            renderPanel(summary);
+            renderPanel(instr);
+            renderPanel(vars);
+            renderPanel(attrs);
+            refitReusedGlobe(keepMap, false);
+            if (keepMap && map.iframe && map.iframe.contentWindow) {
+                try { map.iframe.contentWindow.postMessage({ type: 'collapseLayers' }, '*'); } catch (_) {}
+            }
             setActive(map.id);
             updatePresetUI();
             setColourRail(false);   // no plot → grey the colour bar
@@ -4326,6 +4485,98 @@
             if (input) input.addEventListener('input', () => applyListFilter(which));
         });
 
+        // Build the at-a-glance deployment summary (Stats view, above the globe) from
+        // the dataset's global attributes. Everything is best-effort: each card is
+        // skipped when its source attribute is absent, so partial metadata still reads
+        // cleanly. Laid out as an auto-fitting grid so it stays tidy when the panel is
+        // narrow (one column) or wide (two).
+        function renderSummary(attrs, escapeHtml) {
+            const host = document.getElementById('summaryContent');
+            if (!host) return;
+
+            // Case-insensitive attribute lookup → trimmed string ('' if absent).
+            const keyMap = {};
+            Object.keys(attrs).forEach(k => { keyMap[k.toLowerCase()] = k; });
+            const g = (...names) => {
+                for (const n of names) {
+                    const real = keyMap[n.toLowerCase()];
+                    if (real != null) {
+                        const v = String(attrs[real] == null ? '' : attrs[real]).trim();
+                        if (v) return v;
+                    }
+                }
+                return '';
+            };
+
+            const id = g('id');
+            const title = g('title') || id || g('trajectory') || 'Glider deployment';
+
+            // Real-time vs delayed/recovered. BODC ids end _R (real-time) / _D (delayed);
+            // the title and rtqc method also flag it.
+            const isRealTime = /_R$/.test(id) || /real[\s-]?time/i.test(title) || /real[\s-]?time/i.test(g('rtqc_method'));
+
+            const parseDate = (s) => { const d = new Date(s); return isNaN(d.getTime()) ? null : d; };
+            const start = parseDate(g('time_coverage_start', 'date_created'));
+            const end   = parseDate(g('time_coverage_end'));
+            const now = new Date();
+            const DAY = 86400000;
+            const daysSinceEnd = end ? (now - end) / DAY : Infinity;
+            // "Live" = real-time stream whose last data is recent (still reporting).
+            const isLive = isRealTime && daysSinceEnd <= 7;
+
+            const fmtDate = (d) => d ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+            const fmtDays = (n) => { const v = Math.max(0, Math.round(n)); return v === 1 ? '1 day' : `${v} days`; };
+
+            const items = [];
+            const push = (icon, label, value, sub, wide) => {
+                if (!value) return;
+                items.push(`
+                    <div class="summary-item${wide ? ' s-wide' : ''}">
+                        <span class="s-label"><span class="material-symbols-outlined">${icon}</span>${escapeHtml(label)}</span>
+                        <span class="s-value">${value}</span>
+                        ${sub ? `<span class="s-sub">${escapeHtml(sub)}</span>` : ''}
+                    </div>`);
+            };
+            const esc = (s) => escapeHtml(s);
+
+            // When out / duration.
+            if (start) push('flight_takeoff', 'Deployed', esc(fmtDate(start)));
+            if (end)   push(isLive ? 'wifi' : 'flight_land', isLive ? 'Last data' : 'Recovered', esc(fmtDate(end)));
+            if (start && end) {
+                const out = isLive ? (now - start) / DAY : (end - start) / DAY;
+                push('schedule', isLive ? 'Time at sea' : 'Duration', esc(fmtDays(out)), isLive ? 'ongoing' : 'at sea');
+            }
+
+            // Who owns / runs it.
+            const pi = g('contributor_name');
+            if (pi) push('person', 'Contributor', esc(pi));
+            const inst = g('creator_institution', 'institution', 'publisher_institution', 'agency');
+            if (inst) push('apartment', 'Institution', esc(inst));
+            const project = g('project', 'program', 'mission');
+            if (project) push('workspaces', 'Project', esc(project));
+
+            // Platform identity.
+            push('travel_explore', 'Platform', esc(g('platform') || 'Glider'));
+            push('verified', 'Deployment', esc(g('internal_mission_identifier') || g('mission')));
+
+            const statusPill = (start || end)
+                ? `<span class="summary-status ${isLive ? 'is-live' : 'is-recovered'}"><span class="dot"></span>${isLive ? 'Live' : 'Recovered'}</span>`
+                : '';
+
+            if (!items.length && !title) {
+                host.innerHTML = '<div class="summary-empty">No summary metadata.</div>';
+                return;
+            }
+
+            host.innerHTML = `
+                <div class="summary-head">
+                    <span class="summary-title" title="${esc(title)}">${esc(title)}</span>
+                    ${statusPill}
+                </div>
+                <div class="summary-grid">${items.join('')}</div>
+            `;
+        }
+
         async function loadDatasetInfo(fileId) {
             try {
                 const res = await fetch(`/api/dataset_info?id=${encodeURIComponent(fileId)}`);
@@ -4387,6 +4638,39 @@
                 } else {
                     attrRows.innerHTML = '<div class="p-4 text-center text-[10px]" style="color: var(--text-muted);">No attributes found.</div>';
                 }
+
+                // Instruments — pulled from the `instrument` global attribute, split
+                // on commas into one clear card each (handles a plain "a, b, c" string
+                // or a Python-list-style "['a', 'b']" value).
+                const instrRows = document.getElementById('instrumentRows');
+                if (instrRows) {
+                    instrRows.innerHTML = '';
+                    const instrKey = data.global_attributes
+                        ? Object.keys(data.global_attributes).find(k => k.toLowerCase() === 'instrument')
+                        : null;
+                    const raw = instrKey ? String(data.global_attributes[instrKey] || '') : '';
+                    const instruments = raw
+                        .replace(/^\s*\[/, '').replace(/\]\s*$/, '')          // drop list brackets
+                        .split(',')
+                        .map(s => s.trim().replace(/^['"]|['"]$/g, '').trim()) // drop wrapping quotes
+                        .filter(Boolean);
+                    if (instruments.length) {
+                        instruments.forEach(name => {
+                            const card = document.createElement('div');
+                            card.className = 'instrument-card';
+                            card.title = name;
+                            card.innerHTML = `
+                                <span class="material-symbols-outlined instrument-icon">sensors</span>
+                                <span class="instrument-name">${escapeHtml(name)}</span>
+                            `;
+                            instrRows.appendChild(card);
+                        });
+                    } else {
+                        instrRows.innerHTML = '<div class="instrument-empty">No instruments listed.</div>';
+                    }
+                }
+
+                renderSummary(data.global_attributes || {}, escapeHtml);
 
                 // Re-apply any active filter to the freshly rendered rows.
                 applyListFilter('var');
@@ -5371,12 +5655,15 @@
         function selectView(kind) {
             fullResetState();
             if (kind !== 'duo') _duoOverlays = {};   // leaving Duo → stop reapplying its overlays
+            if (kind !== 'stats') _collapseLayersPanels = new Set();   // leaving Stats → stop auto-collapsing layers
             if (kind === 'duo') {
                 applyDuo();
             } else if (kind === 'biooptics') {
                 applyBioOptics();
             } else if (kind === 'map') {
                 applyMapView();
+            } else if (kind === 'stats') {
+                applyStatsView();
             } else if (kind === 'overview') {
                 applyOverview();
             } else if (kind === 'dashboard') {
