@@ -4354,15 +4354,19 @@
                 const anyCtdUseful = interpUseful || cleanUseful;
                 ctdContainer.style.display = anyCtdUseful ? 'flex' : 'none';
 
-                // First time we activate this file, apply recommended defaults —
-                // but only auto-enable when the file has NO QC variables. If the
-                // data already carries QC, leave Clean/Interpolate off by default
-                // (the user can still switch them on). Re-selecting the same file
-                // later doesn't override the user's choice.
+                // First time we activate this file, apply the file's recommended
+                // CTD defaults — the SAME rule the dashboard/preset path uses
+                // (recommendedCtd), so a file always lands on a consistent default
+                // whichever view loads it. Previously this also required `!hasAnyQc`,
+                // which left Interpolate/Clean OFF for QC-bearing files — so swapping
+                // to such a file rendered its CTD/derived vars (e.g. DENSITY)
+                // un-interpolated and sparse (the "1-point after swap" bug). QC
+                // presence is intentionally ignored here, matching recommendedCtd().
+                // Re-selecting the same file doesn't override the user's manual choice.
                 if (activeRec && activeRec.id !== _ctdDefaultsAppliedFor) {
                     _ctdDefaultsAppliedFor = activeRec.id;
-                    updateToggleBtn(ctdInterpBtn, interpUseful && !hasAnyQc);
-                    updateToggleBtn(ctdQcBtn, cleanUseful && !hasAnyQc);
+                    updateToggleBtn(ctdInterpBtn, interpUseful);
+                    updateToggleBtn(ctdQcBtn, cleanUseful);
                 }
             } else {
                 ctdContainer.style.display = 'none';
@@ -4936,7 +4940,15 @@
                     // profile instead of full data. Clear it for every panel (the
                     // active one is re-captured fresh by updatePlot below).
                     p.state.cycleProfile = {};
-                    if (p.id !== activePlotPanelId) { p.state.zoomBounds = null; renderPlotPanel(p); }
+                    // Same problem for the zoom window: it's in the OLD file's x/y
+                    // space, so applied to the new file it clips down to ~nothing (the
+                    // "1-point / low-res after swap" bug). Must clear it for the ACTIVE
+                    // panel too — otherwise it gets saved into the layout and the
+                    // restore path (_pendingRestoreSync -> applyToolbarState) re-seeds
+                    // it into currentZoomBounds, which is why a hard reload didn't help.
+                    p.state.zoomBounds = null;
+                    if (p.id === activePlotPanelId) currentZoomBounds = null;
+                    else renderPlotPanel(p);
                 }
             });
 

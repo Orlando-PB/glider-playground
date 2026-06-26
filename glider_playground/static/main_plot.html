@@ -591,7 +591,16 @@
                           header: true, children: buildDraw },
                     ];
                     const ptNote = ((plotData.x && plotData.x.length) || 0).toLocaleString() + ' pts';
-                    if (window.logPlotTiming) window.logPlotTiming('WebGL Plot', phases, tPainted - _gpClick, ptNote);
+                    // Surface the request's data-affecting params so a "too few points"
+                    // plot shows WHY (a stale profile/cycle/QC filter, a zoom param, etc.)
+                    // right in the log rather than needing the Network tab.
+                    const FILTER_KEYS = ['x_var','y_var','c_var','apply_qc','qc_flags','filter_time',
+                        'profile_num','cycle_num','cycle_var','sci_phases','direction_filter',
+                        'ctd_interpolate','ctd_qc','zXmin','zXmax','zYmin','zYmax','max_points'];
+                    const reqDetail = 'req: ' + FILTER_KEYS
+                        .filter(k => apiParams.has(k) && apiParams.get(k) !== '' && apiParams.get(k) !== 'false')
+                        .map(k => `${k}=${apiParams.get(k)}`).join('  ');
+                    if (window.logPlotTiming) window.logPlotTiming('WebGL Plot', phases, tPainted - _gpClick, ptNote, reqDetail);
                     else window.logRender && window.logRender('WebGL Plot', tPainted - _gpClick);
                 } catch (_) { /* never let logging break the render */ }
 

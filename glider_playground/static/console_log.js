@@ -130,7 +130,9 @@
     // named phase (queueing, idle waiting, anything we forgot to measure).
     //   note    — optional string shown in the collapsed header (e.g. point count),
     //             kept out of the aligned columns so it never shifts the bars.
-    window.logPlotTiming = function (label, phases, totalMs, note) {
+    //   detail  — optional string printed as a dim line inside the group (e.g. the
+    //             request's filter params, for debugging "why so few points?").
+    window.logPlotTiming = function (label, phases, totalMs, note, detail) {
         const total = Math.max(0, totalMs);
         const sum = phases.reduce((s, p) => s + Math.max(0, p.ms), 0);
         const rows = phases.slice();
@@ -145,6 +147,7 @@
             'color:#86efac;font-weight:normal',
             'color:#556'
         );
+        if (detail) console.log(`%c${detail}`, 'color:#9aa6b8');
 
         const BAR = 22;
         // Pad names to a shared width INCLUDING the indent of nested rows so bars line up.
