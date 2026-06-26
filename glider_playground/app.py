@@ -393,6 +393,22 @@ def api_plot_data(
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
+
+    # Cache the packed binary payload per (file signature + version + params): a hit
+    # skips the entire read→filter→downsample→pack pipeline. Only the binary form is
+    # cached (it's what we send); the JSON path is the rare error/fallback case.
+    cache_key = "|".join(str(v) for v in (
+        x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc, filter_time,
+        profile_num, cycle_num, cycle_var, sci_phases, direction_filter,
+        ctd_interpolate, ctd_qc, highlight_profile, max_points,
+        zoom_x_var, zoom_x_min, zoom_x_max, zoom_y_min, zoom_y_max,
+    )) if binary else None
+    if cache_key is not None:
+        hit = cache_logic.get_plot_binary(id, cache_key)
+        if hit is not None:
+            return Response(content=hit, media_type="application/octet-stream",
+                            headers={"Server-Timing": "cache;dur=0"})
+
     # Per-step server timings, surfaced to the frontend's PLOT log as a Server-Timing
     # header so the "server" phase can be broken down (read / filter / serialize / ...).
     timings = {}
@@ -416,6 +432,8 @@ def api_plot_data(
     server_timing = ", ".join(f"{k};dur={v:.1f}" for k, v in timings.items()) if timings else None
     # A packed payload comes back as bytes; an error (or the JSON path) as a dict.
     if isinstance(result, (bytes, bytearray)):
+        if cache_key is not None:
+            cache_logic.put_plot_binary(id, cache_key, bytes(result))
         headers = {"Server-Timing": server_timing} if server_timing else None
         return Response(content=bytes(result), media_type="application/octet-stream", headers=headers)
     if server_timing:

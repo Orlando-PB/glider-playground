@@ -2061,7 +2061,16 @@
                 // else fall back to now so a stray reload doesn't show a huge delay.
                 const tSrc = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
                 const t0 = (_interactionTs && tSrc - _interactionTs < 2000) ? _interactionTs : tSrc;
-                const params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
+                // Shared point budget: split a fixed total across the open plot panels so
+                // the combined draw work — and thus wall-clock, since same-origin iframes
+                // draw serially on one main thread — stays ~constant no matter how many
+                // plots are open. One plot gets the full server cap (classic unchanged);
+                // N plots get cap/N each. The server's stride downsample still spans the
+                // full record, so the extent (incl. endpoints) is preserved.
+                const nPlots = plotPanelCount();
+                const POINT_BUDGET = 200000;   // matches the server's MAX_RENDER_POINTS
+                let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
+                if (nPlots > 1) params += `&max_points=${Math.round(POINT_BUDGET / nPlots)}`;
                 // Warm reuse: once this iframe has loaded once, re-drive it in place with
                 // a 'replot' message (→ Plotly.react, reusing the WebGL context) instead
                 // of a full src navigation. _frameReady flips true on the first

@@ -18,10 +18,12 @@ import gc
 import hashlib
 import json
 import os
+import shutil
 import sys
 import threading
 import time
 import traceback
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
@@ -40,6 +42,10 @@ THROTTLE_PI_STAGES = 0.5
 CACHE_ROOT = Path.home() / ".glider_playground"
 UPLOADS_DIR = CACHE_ROOT / "uploads"
 PAYLOADS_DIR = CACHE_ROOT / "payloads"
+# On-demand cache of the packed binary plot payloads (what /api/plot_data?binary=1
+# actually sends). Keyed by file signature + CACHE_VERSION + the output-affecting
+# params, so a hit skips the whole read→filter→downsample→serialize pipeline.
+PLOTCACHE_DIR = CACHE_ROOT / "plotcache"
 REGISTRY_FILE = CACHE_ROOT / "registry.json"
 
 
@@ -72,7 +78,8 @@ DATA_DIR = _resolve_data_dir()
 # Bump this whenever processing logic changes and cached results should be
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
 # v9: Backscatter
-CACHE_VERSION = "9"
+# v10: binary plot payloads + on-demand plot-payload cache
+CACHE_VERSION = "10"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -81,6 +88,7 @@ NRT_WINDOW_DAYS = 7
 CACHE_ROOT.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
 PAYLOADS_DIR.mkdir(exist_ok=True)
+PLOTCACHE_DIR.mkdir(exist_ok=True)
 
 
 # Best-effort: ask glibc to return freed memory to the OS. On Linux/glibc
@@ -248,6 +256,7 @@ def _load_once():
         # If the processing code has changed, drop all cached results so every
         # file gets reprocessed with the new logic. Just bump CACHE_VERSION.
         if data.get("_cache_version") != CACHE_VERSION:
+            _wipe_plotcache()   # stale binary payloads keyed by the old version
             return
         for rid, rec in data.items():
             if rid == "_cache_version":
@@ -354,6 +363,7 @@ def _reset(rec: dict, size: int, mtime: int):
         rec.pop(k, None)
     rec["_done_steps"] = []
     _drop_payload_sidecar(rec["id"])
+    clear_plot_binary(rec["id"])
     plot_logic.clear_preloaded(rec.get("path", ""))
     spatial_logic.get_core_spatial_data.cache_clear()
 
@@ -487,6 +497,7 @@ def remove_file(file_id: str, *, delete_upload: bool = True) -> bool:
         path = rec.get("path", "")
         plot_logic.clear_preloaded(path)
         _drop_payload_sidecar(file_id)
+        clear_plot_binary(file_id)
         _persist_locked()
     # Delete the upload file *after* releasing the lock so the worker's
     # open file handle can close cleanly before the path disappears.
@@ -557,6 +568,116 @@ def _is_removed(rec: dict) -> bool:
 
 
 _LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
+
+
+# ---------- binary plot-payload cache ----------
+#
+# A hit skips the whole get_plot_data_json pipeline (NetCDF read, CTD overlay,
+# QC filter, downsample, pack) and returns the exact bytes we'd send. Two tiers:
+# a small in-RAM LRU (hottest entries) over a per-file disk store that survives
+# restarts. The disk key folds in the file signature + CACHE_VERSION, so a
+# changed file or a version bump can never serve stale bytes.
+
+# Keep RAM modest on the Pi (disk read of ~1.5 MB is only a few ms there); a
+# roomier budget on a normal machine where repeated view loads benefit most.
+_PLOTCACHE_MEM_MAX = (24 * 1024 * 1024) if _LOW_MEMORY else (256 * 1024 * 1024)
+_PLOTCACHE_MEM: "OrderedDict[str, bytes]" = OrderedDict()
+_PLOTCACHE_MEM_BYTES = 0
+_PLOTCACHE_MEM_LOCK = threading.Lock()
+
+
+def _plot_key(rec: dict, params_str: str) -> str:
+    """Cache key = hash(version + file signature + output-affecting params)."""
+    sig = f"{rec.get('size')}:{rec.get('mtime')}"
+    return hashlib.sha256(f"{CACHE_VERSION}|{sig}|{params_str}".encode()).hexdigest()
+
+
+def _plotcache_file(file_id: str, keyhash: str) -> Path:
+    return PLOTCACHE_DIR / file_id / f"{keyhash}.bin"
+
+
+def _mem_get(keyhash: str) -> Optional[bytes]:
+    with _PLOTCACHE_MEM_LOCK:
+        data = _PLOTCACHE_MEM.get(keyhash)
+        if data is not None:
+            _PLOTCACHE_MEM.move_to_end(keyhash)
+        return data
+
+
+def _mem_put(keyhash: str, data: bytes):
+    if _PLOTCACHE_MEM_MAX <= 0 or len(data) > _PLOTCACHE_MEM_MAX:
+        return
+    global _PLOTCACHE_MEM_BYTES
+    with _PLOTCACHE_MEM_LOCK:
+        if keyhash in _PLOTCACHE_MEM:
+            _PLOTCACHE_MEM_BYTES -= len(_PLOTCACHE_MEM.pop(keyhash))
+        _PLOTCACHE_MEM[keyhash] = data
+        _PLOTCACHE_MEM_BYTES += len(data)
+        while _PLOTCACHE_MEM_BYTES > _PLOTCACHE_MEM_MAX and _PLOTCACHE_MEM:
+            _, evicted = _PLOTCACHE_MEM.popitem(last=False)
+            _PLOTCACHE_MEM_BYTES -= len(evicted)
+
+
+def get_plot_binary(file_id: str, params_str: str) -> Optional[bytes]:
+    """Cached packed binary for these params, or None. Only ready files are
+    cached — mid-processing a derived var may be missing, which would poison
+    the cache with a wrong (sparse) payload."""
+    rec = get_record(file_id)
+    if not rec or rec.get("status") != STATUS_READY:
+        return None
+    keyhash = _plot_key(rec, params_str)
+    data = _mem_get(keyhash)
+    if data is not None:
+        return data
+    fp = _plotcache_file(file_id, keyhash)
+    try:
+        if fp.exists():
+            data = fp.read_bytes()
+            _mem_put(keyhash, data)
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def put_plot_binary(file_id: str, params_str: str, data: bytes):
+    rec = get_record(file_id)
+    if not rec or rec.get("status") != STATUS_READY:
+        return
+    keyhash = _plot_key(rec, params_str)
+    _mem_put(keyhash, data)
+    fp = _plotcache_file(file_id, keyhash)
+    tmp = fp.with_suffix(".bin.tmp")
+    try:
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(data)
+        os.replace(str(tmp), str(fp))
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def clear_plot_binary(file_id: str):
+    """Drop a file's cached plot payloads (on reprocess / removal). The disk dir
+    is keyed by file_id; the RAM tier isn't file-indexed, so on these rare events
+    just clear it wholesale — it refills cheaply from disk/compute."""
+    global _PLOTCACHE_MEM_BYTES
+    shutil.rmtree(PLOTCACHE_DIR / file_id, ignore_errors=True)
+    with _PLOTCACHE_MEM_LOCK:
+        _PLOTCACHE_MEM.clear()
+        _PLOTCACHE_MEM_BYTES = 0
+
+
+def _wipe_plotcache():
+    """Nuke the whole on-disk plot cache (e.g. on a CACHE_VERSION bump)."""
+    global _PLOTCACHE_MEM_BYTES
+    for child in PLOTCACHE_DIR.glob("*"):
+        shutil.rmtree(child, ignore_errors=True) if child.is_dir() else child.unlink(missing_ok=True)
+    with _PLOTCACHE_MEM_LOCK:
+        _PLOTCACHE_MEM.clear()
+        _PLOTCACHE_MEM_BYTES = 0
 
 
 def _mark_step_done(rec: dict, step: str):
