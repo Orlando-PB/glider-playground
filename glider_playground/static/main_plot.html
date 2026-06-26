@@ -238,16 +238,21 @@
 
         // Pin the colour bar to the plot's drawing area (the y-axis span) using the
         // real computed margins, so it lines up regardless of theme/title/resize.
-        function positionCbar() {
+        // Before the first draw _fullLayout doesn't exist yet; callers can pass the
+        // layout margin they just built so the bar lands in its slot from frame one
+        // (avoids a brief unpinned flash before applyCbar re-pins post-draw).
+        function positionCbar(marginFallback) {
             const cbar = document.getElementById('cbar');
             const plotDiv = document.getElementById('plotDiv');
-            const m = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.margin;
+            const m = (plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.margin) || marginFallback;
             if (m) { cbar.style.top = m.t + 'px'; cbar.style.bottom = m.b + 'px'; }
         }
 
         // Show/hide + rebuild the colour bar and shift the plot to make room. Cheap
         // and idempotent; safe to call after any render, relayout or state change.
-        function applyCbar() {
+        // marginFallback (the layout's margin) lets a pre-draw call pin the bar
+        // before Plotly's computed margins exist.
+        function applyCbar(marginFallback) {
             const cbar = document.getElementById('cbar');
             const plotDiv = document.getElementById('plotDiv');
             if (!cbar || !plotDiv) return;
@@ -275,7 +280,7 @@
             document.getElementById('cbarMin').textContent = fmtCbar(_cbarMin);
             document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
 
-            positionCbar();
+            positionCbar(marginFallback);
         }
 
         // Size the main plot to leave room for the left profile sidebar and/or the
@@ -344,10 +349,16 @@
             };
         }
 
-        // Fetch the value-vs-depth data (all points + selection flag, light point
-        // budget) and draw the SVG marginal. Re-runs whenever the iframe reloads
-        // (toggle / colour map / profile-filter changes all reload it).
+        // The marginal is value-vs-depth: horizontal position AND colour are both the
+        // colour variable, depth is y — every one of those is already in the main
+        // payload we hold (_originalPlotData). So in the common case we build it here
+        // with zero extra server round trips. The one exception is an active
+        // sub-selection (profile / cycle / phase / direction): the main payload is then
+        // FILTERED to that selection, but the marginal wants the whole greyed column
+        // with the selection coloured on top — data we don't have. Only that case
+        // falls back to a fetch (see _profileNeedsFetch / _renderProfileSidebarFetch).
         let _profileFetchSeq = 0;
+
         async function renderProfileSidebar() {
             const profileDiv = document.getElementById('profileDiv');
             if (!profileDiv) return;
@@ -362,6 +373,103 @@
             profileDiv.style.width = SIDEBAR_W + 'px';
             layoutPlotArea();   // reserve the left strip on the main plot
 
+            return _profileNeedsFetch() ? _renderProfileSidebarFetch()
+                                        : _renderProfileSidebarLocal();
+        }
+
+        // A filter that prunes the main payload to a sub-selection — so the marginal's
+        // greyed context isn't present in the data we hold and must be fetched.
+        function _profileNeedsFetch() {
+            return ['profile_num', 'cycle_num', 'sci_phases', 'direction_filter']
+                .some(k => { const v = urlParams.get(k); return v !== null && v !== ''; });
+        }
+
+        // Per-point "is inside the current zoom window" flag, in the main plot's
+        // (x_var, depth) space, or null when there's no zoom (→ no greying). Mirrors
+        // the server's zoom_mask so the local marginal greys exactly as the fetch did.
+        function _zoomSelectionMask(src) {
+            const z = _currentZoom;
+            if (!z || z.xMin === undefined || z.xMax === undefined
+                   || z.yMin === undefined || z.yMax === undefined) return null;
+            const toMs = (s) => {
+                if (typeof s === 'number') return s;
+                const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
+                return isNaN(t) ? Date.parse(s) : t;
+            };
+            const isXDate = !!src.is_x_dt;
+            const xlo = isXDate ? toMs(z.xMin) : Number(z.xMin);
+            const xhi = isXDate ? toMs(z.xMax) : Number(z.xMax);
+            const ylo = Number(z.yMin), yhi = Number(z.yMax);
+            if (!(isFinite(xlo) && isFinite(xhi) && isFinite(ylo) && isFinite(yhi))) return null;
+            const xMin = Math.min(xlo, xhi), xMax = Math.max(xlo, xhi);
+            const yMin = Math.min(ylo, yhi), yMax = Math.max(ylo, yhi);
+            const xs = src.x, ys = src.y, n = src.y.length;
+            const sel = new Array(n);
+            let any = false;
+            for (let i = 0; i < n; i++) {
+                const inside = xs[i] >= xMin && xs[i] <= xMax && ys[i] >= yMin && ys[i] <= yMax;
+                sel[i] = inside; if (inside) any = true;
+            }
+            return any ? sel : null;   // nothing in view → treat as no greying
+        }
+
+        // Indices to keep when thinning n points to `budget`, mirroring the server:
+        // with a selection mask, keep the selected points dense and stride only the
+        // grey context; otherwise a plain uniform stride. null = keep everything.
+        function _marginalKeepIdx(n, sel, budget) {
+            if (n <= budget) return null;
+            const thin = (idx, cap) => {
+                if (idx.length <= cap) return idx;
+                const step = Math.ceil(idx.length / cap);
+                const out = [];
+                for (let j = 0; j < idx.length; j += step) out.push(idx[j]);
+                return out;
+            };
+            if (sel) {
+                const selIdx = [], ctxIdx = [];
+                for (let i = 0; i < n; i++) (sel[i] ? selIdx : ctxIdx).push(i);
+                const keep = thin(selIdx, 20000).concat(thin(ctxIdx, budget));
+                keep.sort((a, b) => a - b);
+                return keep;
+            }
+            const keep = [];
+            const step = Math.ceil(n / budget);
+            for (let i = 0; i < n; i += step) keep.push(i);
+            return keep;
+        }
+
+        // Build + draw the marginal from the payload already in hand — no fetch.
+        function _renderProfileSidebarLocal() {
+            const profileDiv = document.getElementById('profileDiv');
+            const src = _originalPlotData;
+            if (!src || !src.c || !src.c.length || src.c.length !== src.y.length) {
+                profileDiv.style.display = 'none'; layoutPlotArea(); return null;
+            }
+            ++_profileFetchSeq;   // supersede any in-flight fetch from a previous render
+            const t0 = performance.timeOrigin + performance.now();
+            const sel = _zoomSelectionMask(src);
+            const keep = _marginalKeepIdx(src.c.length, sel, 2500);
+            const pick = (arr) => keep ? keep.map(i => arr[i]) : arr;
+            const pdata = {
+                x: pick(src.c),   // colour value → horizontal position
+                y: pick(src.y),
+                c: pick(src.c),
+                c_min: src.c_min, c_max: src.c_max,
+                c_var: src.c_var, c_units: src.c_units,
+                profile_highlight: !!sel,
+                in_selection: sel ? (keep ? keep.map(i => sel[i]) : sel) : [],
+            };
+            Plotly.react('profileDiv', buildProfileTraces(pdata), buildProfileLayout(pdata),
+                { displayModeBar: false, responsive: true, staticPlot: true });
+            const t1 = performance.timeOrigin + performance.now();
+            return { points: pdata.x.length, fetchMs: 0, drawMs: t1 - t0 };
+        }
+
+        // Fetch the value-vs-depth data (all points + selection flag, light point
+        // budget) and draw the SVG marginal. Only used when a sub-selection is active.
+        async function _renderProfileSidebarFetch() {
+            const profileDiv = document.getElementById('profileDiv');
+            const cVar = urlParams.get('c_var');
             // Value on X, depth on Y, with the selection highlighted; capped to a
             // light point budget since SVG (not WebGL) draws these.
             const p = new URLSearchParams(window.location.search);
@@ -400,14 +508,23 @@
 
             const seq = ++_profileFetchSeq;
             try {
+                // This sidebar fetch is an internal sub-request of the plot — fold it
+                // into the parent's PLOT timing log (see initPlot) rather than letting
+                // it print a standalone "API /api/plot_data" line.
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
+                const t0 = performance.timeOrigin + performance.now();
                 const resp = await fetch('/api/plot_data?' + p.toString());
                 const pdata = await resp.json();
-                if (seq !== _profileFetchSeq) return;   // a newer render superseded this one
-                if (pdata.error || !pdata.x || !pdata.x.length) { profileDiv.style.display = 'none'; layoutPlotArea(); return; }
+                const tFetched = performance.timeOrigin + performance.now();
+                if (seq !== _profileFetchSeq) return null;   // a newer render superseded this one
+                if (pdata.error || !pdata.x || !pdata.x.length) { profileDiv.style.display = 'none'; layoutPlotArea(); return null; }
                 Plotly.react('profileDiv', buildProfileTraces(pdata), buildProfileLayout(pdata),
                     { displayModeBar: false, responsive: true, staticPlot: true });
+                const tDrawn = performance.timeOrigin + performance.now();
+                return { points: pdata.x.length, fetchMs: tFetched - t0, drawMs: tDrawn - tFetched };
             } catch (_) {
                 if (seq === _profileFetchSeq) { profileDiv.style.display = 'none'; layoutPlotArea(); }
+                return null;
             }
         }
 
@@ -544,6 +661,12 @@
                 // Wait one frame so the timestamp reflects pixels actually painted,
                 // not just Plotly's draw call returning.
                 await new Promise(r => requestAnimationFrame(r));
+                const tMainPainted = now();
+                // Fold the profile-sidebar sub-plot into THIS plot's timing. It was
+                // kicked off (concurrently) during renderPlot, so wait for it here and
+                // count whatever time it adds beyond the main paint. Its own API log is
+                // suppressed in renderProfileSidebar so it never prints a separate line.
+                const profileInfo = renderMarks.profilePromise ? await renderMarks.profilePromise : null;
                 const tPainted = now();
 
                 // Timing/logging is purely diagnostic — it must NEVER throw out of the
@@ -573,7 +696,7 @@
                     const buildDraw = [
                         { name: 'traces', ms: (renderMarks.tBuilt || tRenderStart) - tRenderStart, color: '#86efac' },
                         { name: 'draw',   ms: tDrawn - (renderMarks.tBuilt || tRenderStart),       color: '#86efac' },
-                        { name: 'paint',  ms: tPainted - tDrawn,                                    color: '#86efac' },
+                        { name: 'paint',  ms: tMainPainted - tDrawn,                                color: '#86efac' },
                     ];
                     // Phases with sub-steps are rendered as header-only labels (no
                     // parent bar/total) so the detail rows don't read as a double count.
@@ -587,10 +710,17 @@
                         { name: 'network',         ms: fetchRoundTrip - serverMs,   color: '#7ec8f7' },
                         { name: 'json read',       ms: jsonTotal,                   color: '#7ec8f7',
                           header: !!jsonChildren, children: jsonChildren },
-                        { name: 'build + draw',    ms: tPainted - tRenderStart,     color: '#86efac',
+                        { name: 'build + draw',    ms: tMainPainted - tRenderStart, color: '#86efac',
                           header: true, children: buildDraw },
                     ];
-                    const ptNote = ((plotData.x && plotData.x.length) || 0).toLocaleString() + ' pts';
+                    // Profile sidebar paints concurrently with the main plot, so charge
+                    // only the extra wall-clock time it added beyond the main paint
+                    // (often ~0 when it finished while the main plot was still painting).
+                    if (profileInfo) {
+                        phases.push({ name: 'profile', ms: Math.max(0, tPainted - tMainPainted), color: '#c4a8f5' });
+                    }
+                    let ptNote = ((plotData.x && plotData.x.length) || 0).toLocaleString() + ' pts';
+                    if (profileInfo && profileInfo.points) ptNote += '  +  ' + profileInfo.points.toLocaleString() + ' prof';
                     // Surface the request's data-affecting params so a "too few points"
                     // plot shows WHY (a stale profile/cycle/QC filter, a zoom param, etc.)
                     // right in the log rather than needing the Network tab.
@@ -833,12 +963,24 @@
             const layout = buildLayout(null, null);
             if (marks) marks.tBuilt = performance.timeOrigin + performance.now();
 
+            // Reserve the colour-bar (and profile-sidebar) strip and reveal the bar
+            // BEFORE the first draw, so Plotly measures the final (narrower) box and
+            // paints once into place. Without this the plot draws full-width with the
+            // bar on top of it, then resizes — the visible "shift to make room" jump.
+            // No plot exists yet, so layoutPlotArea just sets the box size (no resize);
+            // the bar is pinned from the layout margin we just built.
+            applyCbar(layout.margin);
+
             // Returned so callers (initPlot) can await the actual WebGL draw, not just
             // the synchronous trace-building. The secondary work in .then (profile
             // sidebar, hover wiring) is incidental and not awaited by the timing.
             const drawDone = Plotly.newPlot('plotDiv', traces, layout, { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
                 applyCbar();
-                renderProfileSidebar();
+                // Kick off the profile sidebar now (it paints concurrently with this
+                // plot) and hand the promise to initPlot so its fetch + draw time is
+                // folded into this plot's PLOT timing instead of logging on its own.
+                const _profilePromise = renderProfileSidebar();
+                if (marks) marks.profilePromise = _profilePromise;
                 let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
