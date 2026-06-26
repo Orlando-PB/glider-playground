@@ -106,7 +106,10 @@
     // One collapsed log for a full plot render: header shows the total click->painted
     // time, the expanded view breaks it into phases plus any unaccounted remainder.
     //   label   — e.g. 'WebGL Plot'
-    //   phases  — ordered [{ name, ms, color? }]; deltas between pipeline marks
+    //   phases  — ordered [{ name, ms, color?, children? }]; deltas between pipeline
+    //             marks. A phase may carry `children` (same shape) to break it down
+    //             further — they render indented, with an auto "·other" remainder so
+    //             the children always reconcile to the parent.
     //   totalMs — overall click -> fully-painted time
     // Unaccounted = total - sum(phases); it surfaces time we didn't attribute to a
     // named phase (queueing, idle waiting, anything we forgot to measure).
@@ -125,22 +128,45 @@
             'color:#86efac;font-weight:normal',
             'color:#556'
         );
-        const nameW = Math.max.apply(null, rows.map(p => p.name.length));
+
         const BAR = 22;
-        for (const p of rows) {
-            const frac = total > 0 ? Math.max(0, p.ms) / total : 0;
-            const filled = Math.min(BAR, Math.round(frac * BAR));
-            const bar = '█'.repeat(filled) + '·'.repeat(BAR - filled);
-            const pct = (frac * 100).toFixed(0).padStart(3);
-            const color = p.dim ? '#5b6472' : (p.color || '#7ec8f7');
-            console.log(
-                `%c${p.name.padEnd(nameW)} %c${bar} %c${pct}%%  %c${fmt(p.ms).padStart(8)}`,
-                p.dim ? 'color:#5b6472' : 'color:#aac8e8',
-                `color:${color}`,
-                'color:#667',
-                p.dim ? 'color:#5b6472' : 'color:#cdd3de'
-            );
-        }
+        // Pad names to a shared width INCLUDING the indent of nested rows so bars line up.
+        const widthOf = (list, indent) => list.reduce((w, p) => {
+            let cur = Math.max(w, indent + p.name.length);
+            if (p.children && p.children.length) cur = Math.max(cur, widthOf(p.children, indent + 2));
+            return cur;
+        }, 0);
+        const nameW = widthOf(rows, 0);
+
+        const printRow = (p, indent) => {
+            const name = (' '.repeat(indent) + p.name).padEnd(nameW);
+            // A `header` phase is a pure grouping label — its children carry the
+            // numbers, so showing the parent's own bar/total would read as a
+            // double count. Print just the label; children still reconcile to p.ms.
+            if (p.header) {
+                console.log(`%c${name}`, 'color:#aac8e8;font-weight:600');
+            } else {
+                const frac = total > 0 ? Math.max(0, p.ms) / total : 0;
+                const filled = Math.min(BAR, Math.round(frac * BAR));
+                const bar = '█'.repeat(filled) + '·'.repeat(BAR - filled);
+                const pct = (frac * 100).toFixed(0).padStart(3);
+                const color = p.dim ? '#5b6472' : (p.color || '#7ec8f7');
+                console.log(
+                    `%c${name} %c${bar} %c${pct}%%  %c${fmt(p.ms).padStart(8)}`,
+                    p.dim ? 'color:#5b6472' : 'color:#aac8e8',
+                    `color:${color}`,
+                    'color:#667',
+                    p.dim ? 'color:#5b6472' : 'color:#cdd3de'
+                );
+            }
+            if (p.children && p.children.length) {
+                const childSum = p.children.reduce((s, c) => s + Math.max(0, c.ms), 0);
+                for (const c of p.children) printRow(c, indent + 2);
+                const other = p.ms - childSum;
+                if (Math.abs(other) >= 1) printRow({ name: 'other', ms: other, dim: true }, indent + 2);
+            }
+        };
+        for (const p of rows) printRow(p, 0);
         console.groupEnd();
     };
 

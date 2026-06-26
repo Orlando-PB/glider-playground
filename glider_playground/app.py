@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,7 +29,11 @@ app = FastAPI()
 # compresses ~5x, which is the biggest win for the user on home-internet uplink
 # — see the overlay size audit. minimum_size skips tiny payloads where the
 # gzip overhead isn't worth it. Negligible CPU cost on the Pi.
-app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+# compresslevel=1 (was 5): on a ~10MB plot_data payload, level 5 spends ~157ms
+# compressing to 2.13MB while level 1 spends ~36ms to 2.44MB. Trading +0.3MB of
+# transfer for ~120ms less server CPU is a clear win on the plot hot path (and the
+# big vendor bundles are cached immutably, so their compression only matters once).
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -329,6 +333,7 @@ def api_cycles(id: str):
 
 @app.get("/api/plot_data")
 def api_plot_data(
+    response: Response,
     id: str, x_var: str, y_var: str, c_var: str = "",
     apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
     profile_num: float = None,
@@ -341,10 +346,13 @@ def api_plot_data(
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
+    # Per-step server timings, surfaced to the frontend's PLOT log as a Server-Timing
+    # header so the "server" phase can be broken down (read / filter / serialize / ...).
+    timings = {}
     # The `-> dict` annotation makes FastAPI serialize straight to JSON bytes via
     # pydantic, skipping the jsonable_encoder pass that dominates on big arrays.
     # plot_logic returns plain lists (NaN already -> None) so this stays valid JSON.
-    return plot_logic.get_plot_data_json(
+    result = plot_logic.get_plot_data_json(
         _resolve_path(id), x_var, y_var, c_var,
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
         filter_time=filter_time, profile_num=profile_num,
@@ -353,7 +361,14 @@ def api_plot_data(
         max_points=max_points,
         zoom_x_var=zoom_x_var, zoom_x_min=zoom_x_min, zoom_x_max=zoom_x_max,
         zoom_y_min=zoom_y_min, zoom_y_max=zoom_y_max,
+        timings=timings,
     )
+    if timings:
+        # e.g. "read;dur=120.5, filter;dur=8.2, serialize;dur=45.0"
+        response.headers["Server-Timing"] = ", ".join(
+            f"{k};dur={v:.1f}" for k, v in timings.items()
+        )
+    return result
 
 
 @app.get("/api/plot_data_bounds")

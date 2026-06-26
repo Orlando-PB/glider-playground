@@ -9,6 +9,7 @@ import datetime
 import os
 import functools
 import threading
+import time
 from pathlib import Path
 
 # Locked to 200k points max for optimal WebGL performance
@@ -892,7 +893,17 @@ def _apply_direction_mask(data_dict, directions):
         return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None, timings=None):
+    # `timings` (optional dict) is filled in place with per-step ms so the endpoint
+    # can surface a Server-Timing breakdown. perf_counter / dict writes are ~free.
+    _tprev = time.perf_counter()
+    def _mark(name):
+        nonlocal _tprev
+        if timings is not None:
+            now = time.perf_counter()
+            timings[name] = timings.get(name, 0.0) + (now - _tprev) * 1000.0
+            _tprev = now
+
     if c_var == "None":
         c_var = ""
 
@@ -949,6 +960,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
     if data_dict is None:
         return {"error": "Failed to extract variables from dataset"}
+    _mark("read")
 
     if ctd_interpolate or ctd_qc:
         overlay = _ctd_processed_arrays(filepath, ctd_interpolate, ctd_qc)
@@ -961,6 +973,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
                 interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
             )
             data_dict = {**data_dict, **_emit_overlay(processed, ctd_var_map)}
+        _mark("ctd")
 
     x_vals = data_dict.get(x_var, np.array([]))
     y_vals = data_dict.get(y_var, np.array([]))
@@ -1078,6 +1091,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
             stats["qc_removed"] = int(old_sum - current_mask.sum())
 
     stats["valid"] = int(current_mask.sum())
+    _mark("filter")
 
     plot_x = x_vals[current_mask]
     plot_y = y_vals[current_mask]
@@ -1107,15 +1121,24 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         plot_x = plot_x[keep]; plot_y = plot_y[keep]; plot_qc = plot_qc[keep]; plot_sel = plot_sel[keep]
         if plot_c is not None: plot_c = plot_c[keep]
     elif stats["valid"] > render_cap:
-        step = stats["valid"] // render_cap
+        # ceil, not floor: valid // cap floors to step=1 whenever valid < 2*cap
+        # (e.g. 245386 // 200000 == 1), so the cap leaked up to ~2x its limit and
+        # decimated nothing. ceil guarantees the result is <= render_cap.
+        step = int(np.ceil(stats["valid"] / render_cap))
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
         plot_qc = plot_qc[::step]
         if plot_c is not None: plot_c = plot_c[::step]
         if plot_sel is not None: plot_sel = plot_sel[::step]
+    _mark("downsample")
 
-    # Datetime x keeps its string form; numeric arrays become NaN-safe lists.
-    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
+    # Datetime x is emitted as epoch-ms integers (UTC) rather than formatted
+    # strings: the vectorised astype is ~10x faster than per-element strftime (~23ms
+    # -> ~2ms on 160k points) and the payload is ~35% smaller. Plotly's date axis
+    # (xaxis.type='date') consumes ms-since-epoch directly, and ms even preserves
+    # sub-second precision the old '%Y-%m-%d %H:%M:%S' format dropped. Nulls were
+    # already removed by current_mask, so a plain tolist() is safe.
+    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
     y_out = _floats_to_list(plot_y)
 
     c_out = []
@@ -1128,6 +1151,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
             c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
 
     units_map = _get_var_units(filepath)
+    _mark("serialize")
     return {
         "x": x_out,
         "y": y_out,
@@ -1321,8 +1345,9 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         if plot_sel is not None:
             plot_sel = plot_sel[::step]
 
-    # NaN-safe lists for the native JSON serializer; see get_plot_data_json.
-    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
+    # Epoch-ms (UTC) for datetime x, matching get_plot_data_json — a zoom bg-fetch
+    # replaces plotData with this chunk, so the x format must stay identical.
+    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
     y_out = _floats_to_list(plot_y)
 
     c_out, c_min, c_max = [], 0.0, 1.0
