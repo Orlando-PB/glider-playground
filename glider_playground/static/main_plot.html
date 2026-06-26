@@ -971,20 +971,31 @@
                 clearTimeout(_pendingBounds);
 
                 const showBase = coversFull || needBase;
-                if (showBase && plotData !== _originalPlotData) plotData = _originalPlotData;
+                // Was this panel already displaying the full base record (vs a zoomed
+                // high-res chunk)? If so, showing the base at a new range is just an axis
+                // move — no trace data changes — so we can relayout instead of rebuilding.
+                const wasBase = plotData === _originalPlotData;
+                if (showBase && !wasBase) plotData = _originalPlotData;
 
                 _suppressRelayout = true;
-                if (showBase) {
-                    // Rebuild traces from the full record, clipped to the requested
-                    // axis range (y left autoranged when no y bounds were supplied).
+                if (showBase && !wasBase) {
+                    // We swapped a high-res chunk back to the base record: the traces
+                    // genuinely changed, so rebuild them, clipped to the requested axis
+                    // range (y left autoranged when no y bounds were supplied).
                     Plotly.react('plotDiv', createTraces(plotData),
                         buildLayout(hasX ? [msg.limits.xMin, msg.limits.xMax] : null,
                                     hasY ? [msg.limits.yMin, msg.limits.yMax] : null))
                         .then(() => { _suppressRelayout = false; });
                 } else {
+                    // Already showing the right data (base record on a zoom-out, or the
+                    // current chunk on a zoom-in) — only the axes need to move. A relayout
+                    // skips the up-to-200k-point WebGL rebuild a react would do, which is
+                    // what made synced panels lag a beat behind the one being driven.
                     const update = {};
                     if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
+                    else if (showBase) update['xaxis.autorange'] = true;
                     if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
+                    else if (showBase) update['yaxis.autorange'] = invY ? 'reversed' : true;
                     Plotly.relayout('plotDiv', update).then(() => { _suppressRelayout = false; });
                 }
 
@@ -994,26 +1005,28 @@
                 const yMax = hasY ? msg.limits.yMax : gl.yMax;
                 if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
 
-                // At full extent the base record already is the data — re-render is
-                // done, skip the high-res fetch entirely (this is what makes a synced
-                // zoom-out snap rather than reload the full data a second later).
-                if (coversFull) {
-                    _currentZoom = { xMin, xMax, yMin, yMax, yAuto: true };
-                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
-                    // `driven` marks this as an alignment-driven echo (not a fresh user
-                    // zoom) so the parent doesn't re-propagate it into a feedback loop.
-                    window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
-                    return;
-                }
-
                 // Programmatic relayout doesn't always fire plotly_relayout with the flat-indexed
                 // keys (xaxis.range[0], xaxis.range[1]) that the drag handler expects, so we
-                // directly drive the same zoom flow here: record the new zoom bounds, notify
-                // the parent, and schedule a bgFetch for high-res data. An x-only update (no y
-                // bounds — e.g. a synced time axis) leaves the y axis autoranged on re-render.
+                // directly drive the same zoom flow here: record the new zoom bounds and notify
+                // the parent. An x-only update (no y bounds — e.g. a synced time axis) leaves the
+                // y axis autoranged on re-render. `driven` marks this as an alignment-driven echo
+                // (not a fresh user zoom) so the parent doesn't re-propagate it into a feedback loop.
                 _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
-                _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
+
+                if (showBase) {
+                    // We're already showing the base record clipped to this range — either a
+                    // full-extent reset (coversFull) or a zoom-OUT past our last-fetched window
+                    // (needBase). The base record covers it at full downsample density, so skip
+                    // the high-res fetch: re-fetching buys nothing, and across N synced panels it
+                    // serializes on the server NETCDF lock and makes multiview zoom-out crawl in
+                    // one panel at a time. The render above is the final state — report it done.
+                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+                } else {
+                    // A true zoom-IN: the global downsample is too sparse for this narrower
+                    // window, so fetch high-res data for it (triggerBgFetch reports completion).
+                    _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
+                }
             }
             
             // Driven reset (e.g. the parent's "align time axes" toggle being turned
