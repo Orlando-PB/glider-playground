@@ -281,7 +281,7 @@
         // (shaft + two barbs) so it renders as one stroked line on the globe.
         // spanKm is the track's extent, used to keep arrows proportionate to
         // the view so they don't dominate a small deployment.
-        function buildDacArrows(vectors, spanKm) {
+        function buildDacArrows(vectors, spanKm, trackId) {
             const out = [];
             if (!Array.isArray(vectors)) return out;
             const kmToLat = (km) => km / 110.574;
@@ -319,6 +319,7 @@
                 const alt = DAC_CONFIG.altitude;
                 out.push({
                     kind: 'dac',
+                    trackId,
                     speed,
                     t: 1, // filled in below once the count is known
                     coordinates: [
@@ -347,7 +348,7 @@
             return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
         }
 
-        function buildSegments(points) {
+        function buildSegments(points, trackId) {
             if (points.length < 2) return [];
             // Downsample if needed so we keep render cost bounded.
             const stride = Math.max(1, Math.ceil((points.length - 1) / CONFIG.maxSegments));
@@ -363,7 +364,7 @@
                 const t = n === 0 ? 1 : i / (n - 1 || 1);
                 segs.push({
                     coordinates: [sampled[i], sampled[i + 1]],
-                    t
+                    t, trackId
                 });
             }
             return segs;
@@ -375,10 +376,18 @@
         });
 
         let myGlobe = null;
-        let trackSegments = [];
-        let dacArrows = [];
+        // Every processed glider is drawn at once: the active one in the accent
+        // colour, the rest as grey context lines. allTracks holds the prebuilt
+        // geometry for each so switching the active one is a pure recolour +
+        // recentre (no refetch, no iframe reload) — see setActiveTrack.
+        let allTracks = [];      // [{id, name, segments, formattedPath, view, isNrt, lastLat, lastLon, dacArrows}]
+        let activeId = null;     // id of the active (accent-coloured) track
+        let hoverId = null;      // id of the grey track under the cursor, or null
+        let dacArrows = [];      // the ACTIVE track's DAC arrows (others never show DAC)
         let showDac = false;   // DAC arrows default to off, even when available; user toggles them on
-        let _trackView = null;   // {centreLat, centreLng, maxSpan} for re-fitting the camera
+        let _trackView = null;   // active track's {centreLat, centreLng, maxSpan} for re-fitting the camera
+
+        function activeTrack() { return allTracks.find(t => t.id === activeId) || null; }
 
         // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass / ssh) ──
         // Only one surface field is shown at a time; turning one on replaces the
@@ -445,9 +454,50 @@
             return `linear-gradient(to right, ${parts.join(', ')})`;
         }
 
-        // What goes into pathsData: always the track, plus DAC arrows when shown.
+        // What goes into pathsData: every track's segments (grey ones first so
+        // the active track paints on top), plus the active track's DAC arrows
+        // when shown. Order only changes when the active track changes, so hover
+        // restyling never has to re-tessellate the path layer.
         function visiblePaths() {
-            return showDac ? trackSegments.concat(dacArrows) : trackSegments;
+            const out = [];
+            for (const t of allTracks) if (t.id !== activeId) out.push(...t.segments);
+            const at = activeTrack();
+            if (at) out.push(...at.segments);
+            if (showDac && at) out.push(...at.dacArrows);
+            return out;
+        }
+
+        // Position dots, one per glider so it's obvious where each one is:
+        //  • live (NRT) gliders → a red dot + pulse at the last fix, always shown;
+        //  • everyone else → a grey dot at its end position, shown only while NOT
+        //    selected (the active track is already obvious in the accent colour).
+        function buildPositionDots() {
+            const pts = [];
+            for (const t of allTracks) {
+                const end = t.formattedPath[t.formattedPath.length - 1];
+                if (t.isNrt) {
+                    const lat = t.lastLat != null ? Number(t.lastLat) : end.lat;
+                    const lng = t.lastLon != null ? Number(t.lastLon) : end.lng;
+                    pts.push({ lat, lng, trackId: t.id, live: true, active: t.id === activeId });
+                } else if (t.id !== activeId) {
+                    pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, live: false, active: false });
+                }
+            }
+            return pts;
+        }
+
+        // Push the dots to the globe: every dot as an HTML marker, but only the
+        // live ones also get a pulsing ring.
+        function applyDots() {
+            if (!myGlobe) return;
+            const dots = buildPositionDots();
+            myGlobe.htmlElementsData(dots).ringsData(dots.filter(d => d.live));
+        }
+
+        // Re-apply the path colour/stroke accessors so the layer recolours
+        // without rebuilding geometry (used on hover and active-track changes).
+        function refreshPathStyle() {
+            if (myGlobe) myGlobe.pathColor(myGlobe.pathColor()).pathStroke(myGlobe.pathStroke());
         }
 
         // Tell the parent app whether DAC arrows exist for this file and whether
@@ -476,162 +526,177 @@
                 ` depth-averaged currents (${dacArrows.length} dives)`;
         }
 
+        // Theme-aware colour for a track segment. The active track keeps the
+        // accent (yellow) age-fade; the rest are grey, brighter + bolder while
+        // hovered. DAC arrows (active-only) keep their own grey->black fade.
+        function segColor(seg) {
+            if (seg.kind === 'dac') {
+                const t = seg.t == null ? 1 : seg.t;
+                const g = Math.round(DAC_CONFIG.greyOld * (1 - t)); // grey -> black
+                const a = DAC_CONFIG.alphaOld + (1 - DAC_CONFIG.alphaOld) * t;
+                return rgbaString({ r: g, g, b: g }, a);
+            }
+            if (seg.trackId === activeId) {
+                const rgb = hexToRgb(readThemeColors().path);
+                const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
+                // Darken the rgb itself for older segments so they fade even on
+                // light backgrounds where alpha alone isn't enough.
+                const k = 0.4 + 0.6 * seg.t;
+                return rgbaString({ r: rgb.r * k, g: rgb.g * k, b: rgb.b * k }, a);
+            }
+            // Grey context track. A light theme needs a darker grey to read
+            // against the white globe; a dark theme a lighter one. Hover lifts
+            // both brightness and opacity.
+            const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+            const hovered = seg.trackId === hoverId;
+            const g = dark ? (hovered ? 235 : 145) : (hovered ? 35 : 110);
+            const aBase = hovered ? 0.95 : 0.42;
+            const a = aBase * (0.55 + 0.45 * seg.t);   // faint age fade
+            return rgbaString({ r: g, g, b: g }, a);
+        }
+
+        function segStroke(seg) {
+            if (seg.kind === 'dac') {
+                return DAC_CONFIG.strokeMin + (DAC_CONFIG.strokeMax - DAC_CONFIG.strokeMin) * (seg.t == null ? 1 : seg.t);
+            }
+            if (seg.trackId === activeId) {
+                return CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
+            }
+            // Grey context tracks stay clearly visible (and easier to hit) rather
+            // than tapering to a hairline; hovering bumps them to full thickness.
+            if (seg.trackId === hoverId) return CONFIG.pathThicknessMax;
+            return 2.0 + 0.6 * seg.t;
+        }
+
+        // Turn one raw track ({id,name,path,dac,last_lat,last_lon,is_nrt}) from
+        // /api/map_all into prebuilt geometry the globe can draw directly. The
+        // heavy work (segment + DAC arrow building, bounds) happens here, once.
+        function buildTrack(raw) {
+            const formattedPath = (raw.path || [])
+                .filter(c => Array.isArray(c) && c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
+                .map(c => ({ lat: Number(c[0]), lng: Number(c[1]), alt: CONFIG.lineAltitude }));
+            if (formattedPath.length === 0) return null;
+
+            let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+            for (const p of formattedPath) {
+                if (p.lat < minLat) minLat = p.lat;
+                if (p.lat > maxLat) maxLat = p.lat;
+                if (p.lng < minLng) minLng = p.lng;
+                if (p.lng > maxLng) maxLng = p.lng;
+            }
+            const cLat = Math.cos((minLat + maxLat) / 2 * Math.PI / 180) || 1e-6;
+            const spanKm = Math.hypot((maxLat - minLat) * 110.574, (maxLng - minLng) * 111.320 * cLat);
+
+            return {
+                id: raw.id,
+                name: raw.name || '',
+                formattedPath,
+                segments: buildSegments(formattedPath, raw.id),
+                dacArrows: buildDacArrows(raw.dac, spanKm, raw.id),
+                isNrt: !!raw.is_nrt,
+                lastLat: raw.last_lat,
+                lastLon: raw.last_lon,
+                view: {
+                    centreLat: (minLat + maxLat) / 2,
+                    centreLng: (minLng + maxLng) / 2,
+                    maxSpan: Math.max(maxLat - minLat, maxLng - minLng),
+                },
+            };
+        }
+
+        // Point the camera at the active track. instant=true for the first
+        // frame; otherwise a short ease so switching gliders glides over.
+        function recentreOnActive(instant) {
+            const at = activeTrack();
+            if (!myGlobe || !at) return;
+            _trackView = at.view;
+            const alt = Math.max(0.05, at.view.maxSpan / CONFIG.zoomScaleFactor);
+            myGlobe.pointOfView({ lat: at.view.centreLat, lng: at.view.centreLng, altitude: alt }, instant ? 0 : 700);
+        }
+
+        async function fetchAllTracks() {
+            const res = await fetch('/api/map_all');
+            const data = await res.json();
+            const tracks = [];
+            for (const raw of (data.tracks || [])) {
+                const t = buildTrack(raw);
+                if (t) tracks.push(t);
+            }
+            allTracks = tracks;
+            return tracks;
+        }
+
         async function initMap() {
             const startTime = performance.now();
             const params = new URLSearchParams(window.location.search);
-            const fileId = params.get('id') || params.get('filename');
-
-            if (!fileId) {
-                document.getElementById('loadingIcon').textContent = 'error';
-                document.getElementById('loadingIcon').classList.remove('animate-spin');
-                document.getElementById('statusText').textContent = 'No dataset provided';
-                return;
-            }
+            activeId = params.get('id') || params.get('filename') || null;
 
             try {
-                const response = await fetch(`/api/map?id=${encodeURIComponent(fileId)}`);
-                const data = await response.json();
+                await fetchAllTracks();
 
-                if (data.error) throw new Error(data.error);
-
-                const formattedPath = data.path
-                    .filter(coords => Array.isArray(coords) && coords.length >= 2 && !isNaN(coords[0]) && !isNaN(coords[1]))
-                    .map(coords => ({ lat: Number(coords[0]), lng: Number(coords[1]), alt: CONFIG.lineAltitude }));
-
-                if (formattedPath.length === 0) {
+                if (allTracks.length === 0) {
                     document.getElementById('loadingIcon').textContent = 'error';
                     document.getElementById('loadingIcon').classList.remove('animate-spin');
-                    document.getElementById('statusText').textContent = 'No LATITUDE/LONGITUDE in this file';
+                    document.getElementById('statusText').textContent = 'No mappable files';
                     return;
                 }
 
-                const segments = buildSegments(formattedPath);
-                trackSegments = segments;
+                // Fall back to the first track if the requested id isn't mappable.
+                if (!activeTrack()) activeId = allTracks[0].id;
 
-                // Track extent in km — keeps current arrows scaled to the view.
-                let trackSpanKm = 0;
-                if (formattedPath.length > 1) {
-                    let aLat = Infinity, bLat = -Infinity, aLng = Infinity, bLng = -Infinity;
-                    for (const p of formattedPath) {
-                        if (p.lat < aLat) aLat = p.lat;
-                        if (p.lat > bLat) bLat = p.lat;
-                        if (p.lng < aLng) aLng = p.lng;
-                        if (p.lng > bLng) bLng = p.lng;
-                    }
-                    const cLat = Math.cos((aLat + bLat) / 2 * Math.PI / 180) || 1e-6;
-                    trackSpanKm = Math.hypot((bLat - aLat) * 110.574, (bLng - aLng) * 111.320 * cLat);
-                }
-                dacArrows = buildDacArrows(data.dac, trackSpanKm);
+                dacArrows = activeTrack().dacArrows;
                 updateDacToggle();
-
-                // Overlays are available for any mappable file.
                 revealOverlayButtons();
 
-                // Live-position blob for NRT (Near Real-Time) deployments —
-                // the glider is presumed still in the water at this last fix.
-                const nrtPoints = [];
-                if (data.is_nrt && data.last_lat != null && data.last_lon != null) {
-                    nrtPoints.push({
-                        lat: Number(data.last_lat),
-                        lng: Number(data.last_lon),
-                        size: 0.55,
-                        color: '#ef4444',
-                    });
-                }
+                const dots = buildPositionDots();
+                const liveDots = dots.filter(d => d.live);
 
-                const segColor = (seg) => {
-                    if (seg.kind === 'dac') {
-                        const t = seg.t == null ? 1 : seg.t;
-                        const g = Math.round(DAC_CONFIG.greyOld * (1 - t)); // grey -> black
-                        const a = DAC_CONFIG.alphaOld + (1 - DAC_CONFIG.alphaOld) * t;
-                        return rgbaString({ r: g, g, b: g }, a);
-                    }
-                    const rgb = hexToRgb(readThemeColors().path);
-                    const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
-                    // Darken the rgb itself for the older segments so they fade
-                    // even on light backgrounds where alpha alone isn't enough.
-                    const k = 0.4 + 0.6 * seg.t;
-                    return rgbaString({ r: rgb.r * k, g: rgb.g * k, b: rgb.b * k }, a);
-                };
-                const segStroke = (seg) => seg.kind === 'dac'
-                    ? DAC_CONFIG.strokeMin + (DAC_CONFIG.strokeMax - DAC_CONFIG.strokeMin) * (seg.t == null ? 1 : seg.t)
-                    : CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
+                document.getElementById('statusText').textContent = 'Rendering 3D globe...';
+                const tc = readThemeColors();
+                myGlobe = Globe()
+                    (document.getElementById('globe-container'))
+                    .globeTileEngineUrl((x, y, l) => `https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${l}/${y}/${x}`)
+                    .backgroundColor(tc.bg)
+                    .showAtmosphere(true)
+                    .atmosphereColor(tc.atmosphere)
+                    .pathsData(visiblePaths())
+                    .pathPoints('coordinates')
+                    .pathPointLat('lat')
+                    .pathPointLng('lng')
+                    .pathPointAlt(pt => pt.alt || 0)
+                    .pathColor(segColor)
+                    .pathStroke(segStroke)
+                    .ringsData(liveDots)
+                    .ringLat('lat')
+                    .ringLng('lng')
+                    .ringColor(() => (t => `rgba(239,68,68,${(1 - t) * 0.7})`))
+                    .ringMaxRadius(2.6)
+                    .ringPropagationSpeed(0.6)
+                    .ringRepeatPeriod(3500)
+                    .htmlElementsData(dots)
+                    .htmlLat('lat')
+                    .htmlLng('lng')
+                    .htmlAltitude(0)
+                    .htmlElement(dotEl);
 
-                if (!myGlobe) {
-                    document.getElementById('statusText').textContent = 'Rendering 3D globe...';
+                // Clamp camera distance: prevents zooming out so far the globe
+                // shrinks, and zooming in past the tile resolution.
+                try {
+                    const radius = myGlobe.getGlobeRadius();
+                    const controls = myGlobe.controls();
+                    controls.minDistance = radius * (1 + CONFIG.minAltitude);
+                    controls.maxDistance = radius * (1 + CONFIG.maxAltitude);
+                } catch (_) {}
 
-                    const tc = readThemeColors();
-                    myGlobe = Globe()
-                        (document.getElementById('globe-container'))
-                        .globeTileEngineUrl((x, y, l) => `https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${l}/${y}/${x}`)
-                        .backgroundColor(tc.bg)
-                        .showAtmosphere(true)
-                        .atmosphereColor(tc.atmosphere)
-                        .pathsData(visiblePaths())
-                        .pathPoints('coordinates')
-                        .pathPointLat('lat')
-                        .pathPointLng('lng')
-                        .pathPointAlt(pt => pt.alt || 0)
-                        .pathColor(segColor)
-                        .pathStroke(segStroke)
-                        .ringsData(nrtPoints)
-                        .ringLat('lat')
-                        .ringLng('lng')
-                        .ringColor(() => (t => `rgba(239,68,68,${(1 - t) * 0.7})`))
-                        .ringMaxRadius(2.6)
-                        .ringPropagationSpeed(0.6)
-                        .ringRepeatPeriod(3500)
-                        .htmlElementsData(nrtPoints)
-                        .htmlLat('lat')
-                        .htmlLng('lng')
-                        .htmlAltitude(0)
-                        .htmlElement(() => {
-                            const el = document.createElement('div');
-                            el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 12px rgba(239,68,68,0.8);pointer-events:none;transform:translate(-50%,-50%);';
-                            return el;
-                        });
+                attachCoordPicker();
 
-                    // Clamp camera distance: prevents zooming out so far the
-                    // globe shrinks, and zooming in past the tile resolution.
-                    try {
-                        const radius = myGlobe.getGlobeRadius();
-                        const controls = myGlobe.controls();
-                        controls.minDistance = radius * (1 + CONFIG.minAltitude);
-                        controls.maxDistance = radius * (1 + CONFIG.maxAltitude);
-                    } catch (_) {}
-
-                    attachCoordPicker();
-
-                    myGlobe.onGlobeReady(() => {
-                        document.getElementById('globe-container').style.visibility = 'visible';
-                        document.getElementById('overlay').style.display = 'none';
-
-                        window.logRender('3D Globe Frontend', performance.now() - startTime);
-                    });
-
-                } else {
-                    myGlobe.pathsData(visiblePaths())
-                           .ringsData(nrtPoints)
-                           .htmlElementsData(nrtPoints);
+                myGlobe.onGlobeReady(() => {
+                    document.getElementById('globe-container').style.visibility = 'visible';
                     document.getElementById('overlay').style.display = 'none';
-                }
-
-                let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-                formattedPath.forEach(p => {
-                    if (p.lat < minLat) minLat = p.lat;
-                    if (p.lat > maxLat) maxLat = p.lat;
-                    if (p.lng < minLng) minLng = p.lng;
-                    if (p.lng > maxLng) maxLng = p.lng;
+                    window.logRender('3D Globe Frontend', performance.now() - startTime);
                 });
 
-                const centreLat = (minLat + maxLat) / 2;
-                const centreLng = (minLng + maxLng) / 2;
-                const maxSpan = Math.max(maxLat - minLat, maxLng - minLng);
-                const dynamicAltitude = Math.max(0.05, maxSpan / CONFIG.zoomScaleFactor);
-
-                // Remember the track extent so the parent can re-fit on demand.
-                _trackView = { centreLat, centreLng, maxSpan };
-                myGlobe.pointOfView({ lat: centreLat, lng: centreLng, altitude: dynamicAltitude }, 0);
+                recentreOnActive(true);
 
                 // Let the dashboard know the globe is ready (e.g. for the Map preset).
                 try { window.parent.postMessage({ type: 'mapReady' }, '*'); } catch (_) {}
@@ -641,6 +706,105 @@
                 document.getElementById('loadingIcon').classList.remove('animate-spin');
                 document.getElementById('statusText').textContent = err.message || 'Failed to load map';
             }
+        }
+
+        // Hover highlighting uses the same forgiving radius as click selection
+        // (nearestTrackAtScreen) rather than globe.gl's exact on-line pick, so a
+        // grey track lights up as soon as the cursor is close to it — and the
+        // cursor becomes a pointer to signal it's clickable.
+        let _coordAimOn = false;   // crosshair pick mode (after picking a coord)
+        let _hoverRAF = 0, _hoverXY = null;
+
+        function applyHoverCursor() {
+            const el = document.getElementById('globe-container');
+            if (el) el.style.cursor = hoverId ? 'pointer' : (_coordAimOn ? 'crosshair' : '');
+        }
+
+        function setHover(id) {
+            if (id === hoverId) return;
+            hoverId = id;
+            applyHoverCursor();
+            refreshPathStyle();
+        }
+
+        // Throttle hover hit-testing to one check per animation frame.
+        function scheduleHover(cx, cy) {
+            _hoverXY = [cx, cy];
+            if (_hoverRAF) return;
+            _hoverRAF = requestAnimationFrame(() => {
+                _hoverRAF = 0;
+                if (_hoverXY) setHover(nearestTrackAtScreen(_hoverXY[0], _hoverXY[1], 14));
+            });
+        }
+
+        function clearHover() {
+            if (_hoverRAF) { cancelAnimationFrame(_hoverRAF); _hoverRAF = 0; }
+            _hoverXY = null;
+            setHover(null);
+        }
+
+        // The dot marking a glider's position — red (with a stronger glow) for a
+        // live deployment, grey for a historical one.
+        function dotEl(d) {
+            const el = document.createElement('div');
+            const c = d.live ? '#ef4444' : '#9ca3af';
+            const glow = d.live ? '0 0 12px rgba(239,68,68,0.8)' : '0 0 8px rgba(156,163,175,0.7)';
+            const sz = d.live ? 14 : 10;
+            el.style.cssText = `width:${sz}px;height:${sz}px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:${glow};pointer-events:none;transform:translate(-50%,-50%);`;
+            return el;
+        }
+
+        // Switch the active (accent) track without refetching or reloading: clear
+        // the active-only overlays/currents (they belong to the old glider's
+        // region), repoint DAC at the new track, recolour, refresh the live
+        // markers, and recentre. This is what makes selection feel instant.
+        function setActiveTrack(id) {
+            if (!allTracks.some(t => t.id === id)) {
+                // Unknown id (e.g. a file that just finished processing) — refetch
+                // the track set, then apply once it's present.
+                fetchAllTracks().then(() => {
+                    if (allTracks.some(t => t.id === id)) setActiveTrack(id);
+                });
+                return;
+            }
+            if (id === activeId) { recentreOnActive(false); return; }
+
+            // Remember whichever layer was open so we can re-fetch it for the new
+            // glider's time/location (overlays/currents are mutually exclusive).
+            const prevOverlayKey = activeOverlay;
+            const prevCurrents = currentsActive;
+
+            activeId = id;
+            hoverId = null;
+            applyHoverCursor();
+
+            // Tear down the old glider's overlay/currents: their data is for a
+            // different region/date, and the caches are keyed only by variable —
+            // so drop the meshes AND the cached payloads before refetching.
+            if (activeOverlay) { activeOverlay = null; applyOverlay(); }
+            if (currentsActive) deactivateCurrents();
+            for (const k in overlayCache) delete overlayCache[k];
+            currentsData = null;
+
+            dacArrows = activeTrack().dacArrows;
+            updateDacToggle();
+            if (myGlobe) {
+                myGlobe.pathsData(visiblePaths());   // reorder + recolour in one pass
+                applyDots();   // active non-live track drops its grey dot; others update
+            }
+            recentreOnActive(false);
+            reportDacStatus();
+
+            // Re-open the same layer for the new glider — fetches its own
+            // time/location, showing the loading state meanwhile.
+            if (prevOverlayKey) loadOverlay(prevOverlayKey);
+            else if (prevCurrents) loadCurrents();
+        }
+
+        // Ask the parent app to make `id` the active dataset (drives the top
+        // menu); it echoes back a setActive message which runs setActiveTrack.
+        function selectTrack(id) {
+            try { window.parent.postMessage({ type: 'requestActivate', id }, '*'); } catch (_) {}
         }
 
         document.getElementById('dacToggle').addEventListener('click', () => {
@@ -860,8 +1024,8 @@
         // drops back to the grab hand (clearing the inline cursor lets the CSS
         // grab/grabbing rules take over again).
         function setCoordAim(on) {
-            const el = document.getElementById('globe-container');
-            if (el) el.style.cursor = on ? 'crosshair' : '';
+            _coordAimOn = on;
+            applyHoverCursor();   // a track under the cursor (pointer) still wins
         }
 
         function attachCoordPicker() {
@@ -873,16 +1037,31 @@
             });
             el.addEventListener('pointermove', (e) => {
                 // A press that turns into a drag means the user is rotating —
-                // leave aim mode right away so the cursor reads as a grab.
+                // leave aim mode right away and stop highlighting so the cursor
+                // reads as a grab.
                 if (_coordDown && Math.hypot(e.clientX - _coordDown.x, e.clientY - _coordDown.y) > _COORD_MOVE_TOL) {
                     setCoordAim(false);
+                    clearHover();
+                    return;
                 }
+                // Otherwise highlight the nearest grey track within the hit radius.
+                scheduleHover(e.clientX, e.clientY);
             });
+            el.addEventListener('pointerleave', clearHover);
             el.addEventListener('pointerup', (e) => {
                 const start = _coordDown;
                 _coordDown = null;
                 if (!start) return;
                 if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _COORD_MOVE_TOL) return; // a drag/rotate
+                // A click on (or near) a grey context track selects it as the
+                // active glider, driven from the top menu. The nearest-track
+                // fallback adds a forgiving hit radius so a slightly-off click
+                // still lands. Clicking the active track or open ocean reads
+                // coordinates, as before.
+                const pick = (hoverId && hoverId !== activeId)
+                    ? hoverId
+                    : nearestTrackAtScreen(e.clientX, e.clientY, 14);
+                if (pick) { selectTrack(pick); return; }
                 const geo = pickGlobeCoords(e.clientX, e.clientY);
                 if (geo) { showCoordBubble(geo); setCoordAim(true); }
             });
@@ -908,6 +1087,49 @@
                 const geo = myGlobe.toGeoCoords({ x: hit.x, y: hit.y, z: hit.z });
                 return { lat: geo.lat, lng: geo.lng };
             } catch (_) { return null; }
+        }
+
+        // Nearest grey (non-active) track whose line passes within `tolPx` of the
+        // point, or null. Gives hover/click a forgiving hit area so you don't have
+        // to land dead-on a thin line. Only points on the camera-facing hemisphere
+        // count, so a track on the far side of the globe can't be picked through it.
+        // Cartesian coords are cached per track (globe radius is fixed) and thinned
+        // to a bounded sample, so this is cheap enough to run every hover frame.
+        const _tmpV = new THREE.Vector3();
+        function ensureCart(t) {
+            if (t.cart) return t.cart;
+            const stride = Math.max(1, Math.ceil(t.formattedPath.length / 220));
+            const cart = [];
+            for (let i = 0; i < t.formattedPath.length; i += stride) {
+                const p = t.formattedPath[i];
+                const w = myGlobe.getCoords(p.lat, p.lng, p.alt || 0);
+                cart.push([w.x, w.y, w.z]);
+            }
+            t.cart = cart;
+            return cart;
+        }
+        function nearestTrackAtScreen(clientX, clientY, tolPx) {
+            if (!myGlobe) return null;
+            const rect = document.getElementById('globe-container').getBoundingClientRect();
+            const px = clientX - rect.left, py = clientY - rect.top;
+            const cam = myGlobe.camera();
+            const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+            let best = null, bestD = tolPx * tolPx;
+            for (const t of allTracks) {
+                if (t.id === activeId) continue;
+                for (const c of ensureCart(t)) {
+                    // Skip back-facing points (outward normal must face the camera).
+                    if (c[0] * (ex - c[0]) + c[1] * (ey - c[1]) + c[2] * (ez - c[2]) <= 0) continue;
+                    _tmpV.set(c[0], c[1], c[2]).project(cam);
+                    if (_tmpV.z > 1) continue;   // behind the camera
+                    const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                    const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                    const dx = sx - px, dy = sy - py;
+                    const d = dx * dx + dy * dy;
+                    if (d < bestD) { bestD = d; best = t.id; }
+                }
+            }
+            return best;
         }
 
         function showCoordBubble({ lat, lng }) {
@@ -1042,8 +1264,7 @@
         }
 
         async function loadOverlay(key) {
-            const params = new URLSearchParams(window.location.search);
-            const fileId = params.get('id') || params.get('filename');
+            const fileId = activeId;   // overlays always target the active glider
             if (!fileId) return;
 
             overlayLoading = key;
@@ -1377,8 +1598,7 @@
         }
 
         async function loadCurrents() {
-            const params = new URLSearchParams(window.location.search);
-            const fileId = params.get('id') || params.get('filename');
+            const fileId = activeId;   // currents always target the active glider
             if (!fileId) return;
             currentsLoading = true;
             updateCurrentsButton();
@@ -1498,6 +1718,22 @@
                 if (myGlobe) myGlobe.pathsData(visiblePaths());
             } else if (event.data.type === 'queryDac') {
                 reportDacStatus();
+            } else if (event.data.type === 'setActive') {
+                // Parent switched the active dataset — recolour/recentre in place
+                // (no reload) so the swap is instant.
+                if (event.data.id) setActiveTrack(event.data.id);
+            } else if (event.data.type === 'refreshTracks') {
+                // The set of processed files changed (added / removed / finished).
+                // Rebuild the context tracks, keeping the current active glider.
+                fetchAllTracks().then(() => {
+                    if (!activeTrack() && allTracks.length) activeId = allTracks[0].id;
+                    dacArrows = activeTrack() ? activeTrack().dacArrows : [];
+                    updateDacToggle();
+                    if (myGlobe) {
+                        myGlobe.pathsData(visiblePaths());
+                        applyDots();
+                    }
+                });
             } else if (event.data.type === 'fitView') {
                 fitView(event.data);
             } else if (event.data.type === 'setOverlay') {

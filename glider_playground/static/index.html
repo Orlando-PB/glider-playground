@@ -2875,6 +2875,14 @@
                 return;
             }
 
+            // The user clicked a grey context track on the globe — make it the
+            // active dataset (drives the top menu + every panel). selectFile runs
+            // handleDatasetChange, which posts setActive back to the globe.
+            if (msg.type === 'requestActivate') {
+                if (msg.id && msg.id !== datasetSelect.value) selectFile(msg.id);
+                return;
+            }
+
             // The globe finished (re)loading. If we just built the Map preset, ask
             // it to zoom out to fit the whole track with a margin.
             if (msg.type === 'mapReady') {
@@ -4501,9 +4509,19 @@
             gliderMap.classList.remove('hidden');
             mapEmptyText.classList.add('hidden');
 
-            // Reset until the freshly-loaded map reports its DAC status back.
+            // Reset until the map reports its DAC status back for the new active.
             currentDacStatus = { available: false, shown: false };
-            gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            // The globe draws every processed glider at once. Switching the active
+            // one is just a recolour + recentre inside the already-loaded iframe —
+            // far snappier than a reload (new WebGL context + refetch of all
+            // tracks). Only set src the first time, or after it was blanked.
+            const alreadyLoaded = currentMapDataset && gliderMap.src &&
+                                  gliderMap.src.includes('map_view.html');
+            if (alreadyLoaded) {
+                try { gliderMap.contentWindow.postMessage({ type: 'setActive', id: fileId }, '*'); } catch (_) {}
+            } else {
+                gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            }
             currentMapDataset = fileId;
             // The globe now has a src — clear its "Globe" placeholder veil. Needed on
             // refresh into Map view, where placeholders were evaluated before the src
@@ -4561,6 +4579,7 @@
         const processingBar = document.getElementById('processingBar');
 
         let fileRecords = [];               // last response from /api/files
+        let _lastReadyIds = '';             // signature of ready-file ids, to detect set changes for the globe
         let pollingTimer = null;            // active when any file is processing
         let pendingActivateId = null;       // file we want to load once it's ready
         let _ctdDefaultsAppliedFor = null;  // file id whose CTD defaults were applied
@@ -4741,6 +4760,17 @@
             syncDatasetOptions();
             renderFilesList();
             updateTrigger();
+
+            // When the set of ready files changes (one finished processing, was
+            // added, or removed), tell the already-loaded globe to rebuild its
+            // context tracks so newly-processed gliders appear / removed ones go.
+            const readySig = fileRecords.filter(f => f.status === 'ready').map(f => f.id).sort().join(',');
+            if (readySig !== _lastReadyIds) {
+                _lastReadyIds = readySig;
+                if (currentMapDataset && gliderMap.src && gliderMap.src.includes('map_view.html')) {
+                    try { gliderMap.contentWindow.postMessage({ type: 'refreshTracks' }, '*'); } catch (_) {}
+                }
+            }
 
             if (activate) {
                 const saved = getCookie(COOKIE_FILE);

@@ -298,6 +298,52 @@ def api_map(id: str):
     return payload
 
 
+def _downsample_path(path: list, cap: int) -> list:
+    """Evenly thin a [[lat,lon],...] track to at most `cap` points, always
+    keeping the first and last fix. The globe further downsamples to its own
+    segment cap, so this just bounds the JSON transfer for the all-tracks view.
+    """
+    n = len(path)
+    if n <= cap:
+        return path
+    stride = -(-(n - 1) // cap)  # ceil
+    out = [path[i] for i in range(0, n, stride)]
+    if out[-1] is not path[-1]:
+        out.append(path[-1])
+    return out
+
+
+@app.get("/api/map_all")
+def api_map_all():
+    """Lightweight paths for every processed (ready) file — the globe draws
+    these as grey context tracks behind the active (yellow) one. Active-file
+    detail (surface overlays / currents) still comes from the per-id endpoints;
+    everything here is read straight from the already-cached `map` payloads, so
+    there's no extra processing.
+    """
+    tracks = []
+    for rec in cache_logic.list_files():
+        if rec.get("status") != "ready":
+            continue
+        fid = rec["id"]
+        payload = cache_logic.get_payload(fid, "map")
+        if not isinstance(payload, dict) or "error" in payload:
+            continue
+        path = payload.get("path") or []
+        if not path:
+            continue
+        tracks.append({
+            "id": fid,
+            "name": rec.get("name"),
+            "path": _downsample_path(path, 800),
+            "dac": payload.get("dac") or [],
+            "last_lat": rec.get("last_lat"),
+            "last_lon": rec.get("last_lon"),
+            "is_nrt": rec.get("is_nrt"),
+        })
+    return {"tracks": tracks}
+
+
 @app.get("/api/3d_data")
 def api_3d_data(id: str):
     return _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
