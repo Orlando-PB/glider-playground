@@ -38,11 +38,31 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+# Vendor bundles are immutable (version is baked into the filename, e.g.
+# plotly-gl2d-2.32.0.min.js) so they can be cached forever — important since the
+# plot iframe reloads them on every re-plot. Our own source (HTML + the small
+# helper scripts/styles) changes between releases, so it must revalidate every
+# load or users run stale code after an auto-update (e.g. a cached console_log.js
+# missing a newly-added helper).
+_IMMUTABLE_SUFFIXES = (".min.js", ".woff", ".woff2", ".ttf", ".png", ".webp",
+                       ".svg", ".jpg", ".jpeg", ".gif", ".ico", ".icns")
+
+
 @app.middleware("http")
 async def log_request_timing(request, call_next):
     t0 = time.time()
     response = await call_next(request)
     response.headers["X-Process-Time"] = str(time.time() - t0)
+
+    path = request.url.path
+    if path == "/" or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache"
+    elif path.startswith("/static/"):
+        if path.endswith(_IMMUTABLE_SUFFIXES):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            # console_log.js, cycle_profile.js, tailwind.css — revalidate (cheap 304).
+            response.headers["Cache-Control"] = "no-cache"
     return response
 
 

@@ -46,11 +46,21 @@
         console.groupEnd();
     }
 
+    // The main plot fetch is folded into the unified PLOT timing log (logPlotTiming),
+    // so we skip its standalone "API /api/plot_data" line to avoid a duplicate log.
+    // initPlot sets this flag synchronously right before issuing that one fetch.
+    let _skipNextApiLog = false;
+    window.gpSkipNextApiLog = function () { _skipNextApiLog = true; };
+
     const _origFetch = window.fetch;
     window.fetch = async function (...args) {
+        // Capture (and clear) the suppress flag synchronously at call time, before
+        // any await — otherwise a concurrent fetch could consume it.
+        const skipLog = _skipNextApiLog;
+        _skipNextApiLog = false;
         const response = await _origFetch.apply(this, args);
         const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
-        if (url.indexOf('/api/') !== -1) {
+        if (!skipLog && url.indexOf('/api/') !== -1) {
             const t = response.headers && response.headers.get('X-Process-Time');
             if (t) {
                 try {
@@ -83,6 +93,55 @@
             'color:#86efac;font-weight:normal',
             'color:#556'
         );
+    };
+
+    // High-resolution timestamp comparable ACROSS documents (parent <-> iframe).
+    // performance.now() is per-document; adding timeOrigin lifts it to a shared
+    // epoch-ms clock so a timestamp taken in index.html lines up with one taken
+    // inside the plot iframe.
+    window.gpNow = function () {
+        return performance.timeOrigin + performance.now();
+    };
+
+    // One collapsed log for a full plot render: header shows the total click->painted
+    // time, the expanded view breaks it into phases plus any unaccounted remainder.
+    //   label   — e.g. 'WebGL Plot'
+    //   phases  — ordered [{ name, ms, color? }]; deltas between pipeline marks
+    //   totalMs — overall click -> fully-painted time
+    // Unaccounted = total - sum(phases); it surfaces time we didn't attribute to a
+    // named phase (queueing, idle waiting, anything we forgot to measure).
+    window.logPlotTiming = function (label, phases, totalMs) {
+        const total = Math.max(0, totalMs);
+        const sum = phases.reduce((s, p) => s + Math.max(0, p.ms), 0);
+        const rows = phases.slice();
+        rows.push({ name: 'unaccounted', ms: total - sum, dim: true });
+
+        const fmt = (ms) => (Math.abs(ms) >= 100 ? ms.toFixed(0) : ms.toFixed(1)) + 'ms';
+        const headerSecs = (total / 1000).toFixed(3);
+
+        console.groupCollapsed(
+            `%c PLOT %c ${label}  %c${headerSecs}s`,
+            'background:#14532d;color:#86efac;font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px',
+            'color:#86efac;font-weight:normal',
+            'color:#556'
+        );
+        const nameW = Math.max.apply(null, rows.map(p => p.name.length));
+        const BAR = 22;
+        for (const p of rows) {
+            const frac = total > 0 ? Math.max(0, p.ms) / total : 0;
+            const filled = Math.min(BAR, Math.round(frac * BAR));
+            const bar = '█'.repeat(filled) + '·'.repeat(BAR - filled);
+            const pct = (frac * 100).toFixed(0).padStart(3);
+            const color = p.dim ? '#5b6472' : (p.color || '#7ec8f7');
+            console.log(
+                `%c${p.name.padEnd(nameW)} %c${bar} %c${pct}%%  %c${fmt(p.ms).padStart(8)}`,
+                p.dim ? 'color:#5b6472' : 'color:#aac8e8',
+                `color:${color}`,
+                'color:#667',
+                p.dim ? 'color:#5b6472' : 'color:#cdd3de'
+            );
+        }
+        console.groupEnd();
     };
 
     window.logVersion = function (version, isServer, throttle, lowMemory) {

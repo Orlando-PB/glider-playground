@@ -2040,6 +2040,13 @@
             return params;
         }
 
+        // Absolute timestamp (gpNow / shared epoch-ms clock) of the user action that
+        // kicked off the current (re)plot — set at the start of updatePlot and read
+        // by renderPanel so the plot iframe can measure the full click->painted time.
+        // For multiview every panel in the same burst shares this one click time, so
+        // each panel's timing reveals how long it waited before its iframe started.
+        let _interactionTs = 0;
+
         // (Re)load / refresh a panel from its state, dispatched by type.
         function renderPanel(panel) {
             if (!panel) return;
@@ -2048,7 +2055,13 @@
                 if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; return; }
                 panel.iframe.classList.remove('hidden');
                 const multiview = plotPanelCount() > 1 ? 1 : 0;
-                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
+                // Hand the iframe the click time (_gpt0) and this src-set time (_gpt1)
+                // so it can attribute parent dispatch + browser navigation/parse. Use
+                // the recorded click only when it's fresh (a real action <2s ago),
+                // else fall back to now so a stray reload doesn't show a huge delay.
+                const tSrc = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
+                const t0 = (_interactionTs && tSrc - _interactionTs < 2000) ? _interactionTs : tSrc;
+                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}&_gpt0=${t0.toFixed(1)}&_gpt1=${tSrc.toFixed(1)}`;
             } else if (panel.type === 'map') {
                 if (!datasetSelect.value) return;
                 if (panel.hostedEl) loadMapImage();        // primary globe (stashed gliderMap)
@@ -5083,6 +5096,9 @@
         // re-rendering keeps the two in sync.
         async function updatePlot() {
             if (_suspendToolbar) return;   // ignore widget writes done while restoring a panel
+            // Stamp the click time at the earliest point we control (handlers call
+            // updatePlot synchronously). renderPanel forwards it to the plot iframe.
+            _interactionTs = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
             if (isPlotting) { plotQueued = true; return; }
 
             // The toolbar drives the active PLOT panel (which may differ from the

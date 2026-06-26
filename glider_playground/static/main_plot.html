@@ -125,6 +125,17 @@
     <div id="profileDiv"></div>
 
     <script>
+        // --- Render timing ---------------------------------------------------
+        // Absolute (shared epoch-ms) timestamp for when this script began running.
+        // The gap from the parent's src-set time (_gpt1) to here is browser
+        // navigation + HTML/Plotly parse — the biggest cost the old RENDER log hid.
+        const _gpScriptStart = performance.timeOrigin + performance.now();
+        const _gpParams = new URLSearchParams(window.location.search);
+        // Click time and src-set time handed down by the parent (index.html). Absent
+        // when the iframe is opened directly — then we just start the clock here.
+        const _gpClick = parseFloat(_gpParams.get('_gpt0')) || _gpScriptStart;
+        const _gpSrcSet = parseFloat(_gpParams.get('_gpt1')) || _gpScriptStart;
+
         const bgSpinner = document.getElementById('bgSpinner');
 
         // Notify the dashboard parent when this panel is interacted with (click,
@@ -464,15 +475,52 @@
 
         async function initPlot() {
             if (!window.location.search) return;
-            
-            const startTime = performance.now();
+
+            const now = () => performance.timeOrigin + performance.now();
             try {
-                const response = await fetch(`/api/plot_data${window.location.search}`);
+                // Strip our timing params before forwarding to the API (they're noise
+                // to the server and would bloat the cache key if it ever keyed on them).
+                const apiParams = new URLSearchParams(window.location.search);
+                apiParams.delete('_gpt0'); apiParams.delete('_gpt1');
+
+                const tFetchSent = now();
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();  // folded into PLOT log
+                const response = await fetch(`/api/plot_data?${apiParams.toString()}`);
+                const tFetchResolved = now();
+                // Server compute time (seconds) reported by the timing middleware.
+                const serverHdr = response.headers && response.headers.get('X-Process-Time');
+                const serverMs = serverHdr ? parseFloat(serverHdr) * 1000 : 0;
+
                 plotData = await response.json();
+                const tJsonParsed = now();
 
                 if (plotData.error) throw new Error(plotData.error);
 
-                renderPlot();
+                await renderPlot();
+                // Wait one frame so the timestamp reflects pixels actually painted,
+                // not just Plotly's draw call returning.
+                await new Promise(r => requestAnimationFrame(r));
+                const tPainted = now();
+
+                // Timing/logging is purely diagnostic — it must NEVER throw out of the
+                // render path (e.g. a stale cached console_log.js without logPlotTiming
+                // would otherwise abort the overlay fade + zoom-reload below).
+                try {
+                    // Phases, in pipeline order. server/network are carved out of the
+                    // one fetch round-trip; the rest are contiguous marks.
+                    const fetchRoundTrip = tFetchResolved - tFetchSent;
+                    const phases = [
+                        { name: 'parent dispatch', ms: _gpSrcSet - _gpClick,        color: '#9aa6b8' },
+                        { name: 'load + parse',    ms: _gpScriptStart - _gpSrcSet,   color: '#c4a8f5' },
+                        { name: 'iframe init',     ms: tFetchSent - _gpScriptStart,  color: '#9aa6b8' },
+                        { name: 'server',          ms: serverMs,                     color: '#fbbf24' },
+                        { name: 'network',         ms: fetchRoundTrip - serverMs,    color: '#7ec8f7' },
+                        { name: 'json read',       ms: tJsonParsed - tFetchResolved, color: '#7ec8f7' },
+                        { name: 'build + draw',    ms: tPainted - tJsonParsed,       color: '#86efac' },
+                    ];
+                    if (window.logPlotTiming) window.logPlotTiming('WebGL Plot', phases, tPainted - _gpClick);
+                    else window.logRender && window.logRender('WebGL Plot', tPainted - _gpClick);
+                } catch (_) { /* never let logging break the render */ }
 
                 // Reloaded straight into a saved zoom (e.g. the user changed cmap or
                 // draw order while zoomed in)? /api/plot_data returns the full,
@@ -492,8 +540,6 @@
                     }
                 }
 
-                window.logRender('WebGL Plot', performance.now() - startTime);
-                
                 const overlay = document.getElementById('overlay');
                 overlay.style.opacity = '0';
                 setTimeout(() => overlay.style.display = 'none', 300);
@@ -699,7 +745,10 @@
             _originalPlotData = plotData;
             _cbarMin = plotData.c_min; _cbarMax = plotData.c_max;
 
-            Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
+            // Returned so callers (initPlot) can await the actual WebGL draw, not just
+            // the synchronous trace-building. The secondary work in .then (profile
+            // sidebar, hover wiring) is incidental and not awaited by the timing.
+            const drawDone = Plotly.newPlot('plotDiv', createTraces(plotData), buildLayout(null, null), { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
                 applyCbar();
                 renderProfileSidebar();
                 let xMin, xMax;
@@ -832,6 +881,8 @@
                 clearTimeout(_pendingBounds);
                 _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
             });
+
+            return drawDone;
         }
 
         async function triggerBgFetch(xMin, xMax, yMin, yMax) {
