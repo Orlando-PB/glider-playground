@@ -892,7 +892,7 @@ def _apply_direction_mask(data_dict, directions):
         return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None):
     if c_var == "None":
         c_var = ""
 
@@ -926,6 +926,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 
     if direction_filter and "PROFILE_DIRECTION" in var_names:
         vars_to_extract.add("PROFILE_DIRECTION")
+
+    # When the marginal greys points outside a zoom window, the window is in the
+    # main plot's x_var space (which differs from this fetch's x_var = colour
+    # variable), so the original x_var column has to be loaded alongside.
+    if highlight_profile and zoom_x_var and zoom_x_var in var_names:
+        vars_to_extract.add(zoom_x_var)
 
     ctd_var_map = _resolve_ctd_var_map(filepath) if (ctd_interpolate or ctd_qc) else {}
     if ctd_interpolate or ctd_qc:
@@ -984,6 +990,32 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     for m in (profile_mask, cycle_mask, phase_mask, dir_mask):
         if m is not None:
             selection_mask = m if selection_mask is None else (selection_mask & m)
+
+    # Zoom highlight: with the marginal active and the main plot zoomed, treat
+    # "inside the current view" exactly like a selection — colour the in-view
+    # points and grey the rest. The window is in the main plot's x_var / depth
+    # space, so test the main x column and depth (y_var) here. Folds into the
+    # selection mask so a profile/cycle filter and the zoom narrow it together.
+    if (highlight_profile and zoom_x_var
+            and zoom_x_min is not None and zoom_x_max is not None
+            and zoom_y_min is not None and zoom_y_max is not None):
+        zx = data_dict.get(zoom_x_var)
+        if zx is not None and len(zx) == len(x_vals):
+            if np.issubdtype(zx.dtype, np.datetime64):
+                zx_lo = np.datetime64(pd.to_datetime(zoom_x_min, unit='ms'))
+                zx_hi = np.datetime64(pd.to_datetime(zoom_x_max, unit='ms'))
+                with np.errstate(invalid='ignore'):
+                    zoom_mask = (zx >= zx_lo) & (zx <= zx_hi)
+            else:
+                zxf = np.asarray(zx, dtype=float)
+                with np.errstate(invalid='ignore'):
+                    zoom_mask = (zxf >= float(zoom_x_min)) & (zxf <= float(zoom_x_max))
+            if not np.issubdtype(y_vals.dtype, np.datetime64):
+                yf = np.asarray(y_vals, dtype=float)
+                y_lo, y_hi = sorted((float(zoom_y_min), float(zoom_y_max)))
+                with np.errstate(invalid='ignore'):
+                    zoom_mask &= (yf >= y_lo) & (yf <= y_hi)
+            selection_mask = zoom_mask if selection_mask is None else (selection_mask & zoom_mask)
 
     if highlight_profile:
         # Keep every point; the selection is returned as a per-point flag so the

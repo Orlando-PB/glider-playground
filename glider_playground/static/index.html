@@ -1133,6 +1133,8 @@
                         <button class="view-seg-btn" data-view="map" title="Globe + 3D side by side (no plot)"><span class="material-symbols-outlined text-[14px]">map</span>Map</button>
                         <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
                         <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
+                        <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
+                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top) with globe + 3D on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
                     </div>
                 </div>
 
@@ -1312,6 +1314,9 @@
             </div>
             <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
             <iframe id="gliderMap" src="" class="w-full h-full border-none"></iframe>
+            <!-- Second globe, used only by the Duo view (an independent map_view so it
+                 can carry a different Copernicus overlay than the primary globe). -->
+            <iframe id="gliderMap2" src="" class="w-full h-full border-none"></iframe>
             <iframe id="iframe3D" src="/static/3d_view.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
             <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
                 <div class="ds-search-wrap">
@@ -1708,7 +1713,13 @@
         // #panelStash) so all their population code keeps working by id.
         const PANEL_DEFS = {
             plot:  { label: 'Plot',       icon: 'show_chart',    singleton: false },
-            map:   { label: 'Globe',      icon: 'public',        singleton: true, stashId: 'gliderMap', isFrame: true },
+            // `multi`: more than one allowed. The first globe hosts the stashed
+            // gliderMap (keeps all its dataset/DAC bookkeeping working); extra globes
+            // added via the panel "+" get their own iframe. 3D stays a hard singleton.
+            map:   { label: 'Globe',      icon: 'public',        singleton: true, multi: true, stashId: 'gliderMap', isFrame: true },
+            // Second globe — only assembled by the Duo view, hidden from the add menu
+            // so users don't see two "Globe" entries.
+            map2:  { label: 'Globe',      icon: 'public',        singleton: true, stashId: 'gliderMap2', isFrame: true, hidden: true },
             '3d':  { label: '3D View',    icon: 'deployed_code', singleton: true, stashId: 'iframe3D',  isFrame: true },
             vars:  { label: 'Variables',  icon: 'table_rows',    singleton: true, stashId: 'varList',   isFrame: false },
             attrs: { label: 'Attributes', icon: 'description',   singleton: true, stashId: 'attrList',  isFrame: false },
@@ -2039,7 +2050,11 @@
                 const multiview = plotPanelCount() > 1 ? 1 : 0;
                 panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
             } else if (panel.type === 'map') {
-                if (datasetSelect.value) loadMapImage();
+                if (!datasetSelect.value) return;
+                if (panel.hostedEl) loadMapImage();        // primary globe (stashed gliderMap)
+                else loadExtraMap(panel);                  // extra globe with its own iframe
+            } else if (panel.type === 'map2') {
+                if (datasetSelect.value) loadMap2Image();
             } else if (panel.type === '3d') {
                 const fid = datasetSelect.value;
                 const f = document.getElementById('iframe3D');
@@ -2057,6 +2072,7 @@
             switch (panel.type) {
                 case 'plot':
                 case 'map':
+                case 'map2':
                 case '3d': {
                     const f = panel.iframe;   // for map/3d this is the hosted iframe
                     return !f || f.classList.contains('hidden') || !f.getAttribute('src');
@@ -2100,6 +2116,10 @@
             el.style.position = ''; el.style.inset = ''; el.style.width = ''; el.style.height = ''; el.style.display = '';
             if (!def.isFrame) el.classList.remove('flex');
             el.classList.add('hidden');
+            // The Duo view's second globe is the only frame that goes fully idle when
+            // stashed (the primary globe shows in every view). Blank it so it stops
+            // rendering; loadMap2Image reloads it next time Duo is built.
+            if (def.stashId === 'gliderMap2') el.src = '';
             document.getElementById('panelStash').appendChild(el);
             panel.hostedEl = null;
             panel.iframe = null;
@@ -2117,10 +2137,17 @@
             body.className = 'gp-panel-body';
             el.appendChild(body);
 
+            // A `multi` frame singleton (the globe) hosts its stashed element for the
+            // first instance; once that element is in use, any further instance gets
+            // its own iframe so several globes can coexist.
+            const stashEl = def.stashId ? document.getElementById(def.stashId) : null;
+            const stashFree = stashEl ? document.getElementById('panelStash').contains(stashEl) : false;
+            const useFreshFrame = !!(def.multi && def.isFrame && stashEl && !stashFree);
+
             let iframe = null;
-            if (type === 'plot') {
+            if (type === 'plot' || useFreshFrame) {
                 iframe = document.createElement('iframe');
-                iframe.className = 'gp-frame hidden';
+                iframe.className = 'gp-frame' + (type === 'plot' ? ' hidden' : '');
                 iframe.src = '';
                 body.appendChild(iframe);
             }
@@ -2165,7 +2192,7 @@
             panelHost.appendChild(el);
             const panel = { id, type, state, el, body, iframe, hostedEl: null };
             panels[id] = panel;
-            if (def.stashId) mountHosted(panel);
+            if (def.stashId && !useFreshFrame) mountHosted(panel);
             return panel;
         }
 
@@ -2390,7 +2417,7 @@
 
         function splitPanel(panelId, side, type = 'plot', seedState = null) {
             if (leafCount() >= MAX_PANELS) return null;
-            if (PANEL_DEFS[type].singleton && hasPanelType(type)) return null;
+            if (PANEL_DEFS[type].singleton && !PANEL_DEFS[type].multi && hasPanelType(type)) return null;
             if (!panels[panelId]) return null;
 
             const np = createPanel(type, seedState || makeNewState(type));
@@ -2597,9 +2624,10 @@
             menu.className = 'gp-add-menu';
             _addMenuEl = menu;
             Object.entries(PANEL_DEFS).forEach(([type, def]) => {
+                if (def.hidden) return;   // e.g. the Duo view's second globe
                 const item = document.createElement('button');
                 item.className = 'gp-add-item';
-                const disabled = def.singleton && hasPanelType(type);
+                const disabled = def.singleton && !def.multi && hasPanelType(type);
                 item.disabled = disabled;
                 item.innerHTML = `<span class="material-symbols-outlined">${def.icon}</span>${def.label}${disabled ? ' <span class="gp-add-open">(open)</span>' : ''}`;
                 item.addEventListener('click', (e) => {
@@ -2837,10 +2865,13 @@
             // The globe finished (re)loading. If we just built the Map preset, ask
             // it to zoom out to fit the whole track with a margin.
             if (msg.type === 'mapReady') {
-                if (_pendingGlobeFit && gliderMap.contentWindow) {
+                if (_pendingGlobeFit && event.source === gliderMap.contentWindow) {
                     gliderMap.contentWindow.postMessage({ type: 'fitView', whole: true }, '*');
                     _pendingGlobeFit = false;
                 }
+                // Duo globe just (re)loaded → (re)apply its Copernicus overlay.
+                const mp = panelByWindow(event.source);
+                if (mp && _duoOverlays[mp.id]) applyDuoOverlay(mp, _duoOverlays[mp.id]);
                 return;
             }
 
@@ -3188,15 +3219,41 @@
             };
         }
 
+        // Duo: two globes stacked on the left, two plots stacked on the right, with
+        // the plots given the lion's share of the width. Landscape splits left|right;
+        // portrait stacks the plots on top with the globes side by side beneath.
+        function duoLayoutTree(topMapId, bottomMapId, plotTopId, plotBottomId) {
+            if (isPortrait()) {
+                return {
+                    dir: 'col', ratio: 0.6,
+                    a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: plotTopId }, b: { leaf: true, panelId: plotBottomId } },
+                    b: { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: topMapId }, b: { leaf: true, panelId: bottomMapId } }
+                };
+            }
+            return {
+                dir: 'row', ratio: 0.3,   // globes take 30% of the width; plots get the wider 70%
+                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: topMapId }, b: { leaf: true, panelId: bottomMapId } },
+                b: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: plotTopId }, b: { leaf: true, panelId: plotBottomId } }
+            };
+        }
+
         // Re-flow the active preset layout when the screen crosses the
         // portrait/landscape boundary (e.g. a phone rotating). Only touches the
         // built-in presets — a hand-edited layout (_viewKind === null) is left as-is.
         function reflowLayoutForOrientation() {
             if (!_viewKind) return;
             if (isPortrait() === _layoutPortrait) return;
-            const mapP = Object.values(panels).find(p => p.type === 'map');
+            const mapP = primaryMapPanel();
             const tdP  = Object.values(panels).find(p => p.type === '3d');
             const plotIds = treeLeafIds(layoutTree, []).filter(id => panels[id] && panels[id].type === 'plot');
+            if (_viewKind === 'duo') {
+                const map2P = Object.values(panels).find(p => p.type === 'map2');
+                if (!mapP || !map2P || plotIds.length < 2) return;
+                layoutTree = duoLayoutTree(mapP.id, map2P.id, plotIds[0], plotIds[1]);
+                _layoutPortrait = isPortrait();
+                renderLayout();
+                return;
+            }
             if (_viewKind === 'map') {
                 if (!mapP || !tdP) return;
                 layoutTree = mapViewTree(mapP.id, tdP.id);
@@ -3204,6 +3261,9 @@
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
             } else if (_viewKind === 'dashboard') {
+                if (!mapP || !tdP || !plotIds.length) return;
+                layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
+            } else if (_viewKind === 'biooptics') {
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
             } else { // 'default'
@@ -3224,8 +3284,15 @@
         // reloads it (new WebGL context + lost tile cache → sluggish globe), so the
         // layout builders below reuse these in place and only reposition them.
         // Returns the surviving {map, td} (either may be null if not currently open).
+        // The primary globe (the one hosting the stashed gliderMap), preferred over
+        // any extra globes when a built-in view needs "the" map.
+        function primaryMapPanel() {
+            return Object.values(panels).find(p => p.type === 'map' && p.hostedEl)
+                || Object.values(panels).find(p => p.type === 'map') || null;
+        }
+
         function keepGlobeAnd3D() {
-            const map = Object.values(panels).find(p => p.type === 'map') || null;
+            const map = primaryMapPanel();
             const td  = Object.values(panels).find(p => p.type === '3d')  || null;
             Object.values(panels).forEach(p => {
                 if (p === map || p === td) return;
@@ -3315,6 +3382,115 @@
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);   // runs after the iframes have a src, so placeholders clear
             markViewApplied();
+            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
+        }
+
+        // Bio-optics: temperature, then chlorophyll and backscatter each shown twice —
+        // once surfacing the smallest values, once the largest — so both faint and
+        // intense features read clearly. Globe + 3D sit in a column on the left
+        // (same arrangement as Dashboard).
+        function applyBioOptics() {
+            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
+            const presetOk = (key) => {
+                const p = OceanPresets[key];
+                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
+            };
+            const specs = [
+                { key: 'preset_temp', drawOrder: 'normal'   },
+                { key: 'preset_chla', drawOrder: 'smallest' },
+                { key: 'preset_chla', drawOrder: 'largest'  },
+                { key: 'preset_bbp',  drawOrder: 'smallest' },
+                { key: 'preset_bbp',  drawOrder: 'largest'  },
+            ].filter(s => presetOk(s.key));
+            if (specs.length === 0) return;
+
+            _pendingGlobeFit = false;
+            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
+            const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
+
+            // Same preset can appear twice (chl, bbp) with different draw orders.
+            const plotIds = specs.map(spec => {
+                const s = stateFromPreset(spec.key);
+                s.drawOrder = spec.drawOrder;
+                return createPanel('plot', s).id;
+            });
+
+            layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
+            _viewKind = 'biooptics'; _layoutPortrait = isPortrait();
+            plotIframe = panels[plotIds[0]].iframe;
+
+            // Suppress time-axis alignment while the batch loads (see applyDashboard).
+            _bulkLoading = true;
+            clearTimeout(_bulkLoadTimer);
+            renderLayout();
+            plotIds.forEach(id => renderPanel(panels[id]));
+            if (!keepMap) renderPanel(map);
+            if (!keepTd) renderPanel(td);
+            refitReusedGlobe(keepMap, false);
+            setActive(plotIds[0]);
+            markViewApplied();
+            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
+        }
+
+        // The Copernicus overlay each Duo globe should carry, keyed by panel id, so
+        // it (re)applies every time that globe finishes loading (see the mapReady
+        // handler). Cleared whenever a non-Duo view is selected.
+        let _duoOverlays = {};
+
+        // Tell one Duo globe to show its overlay and tuck its Layers panel away.
+        // If Copernicus isn't set up the overlay fetch fails inside the globe, which
+        // posts {type:'overlaySetup'} back here → Jelly surfaces the setup help.
+        function applyDuoOverlay(panel, overlay) {
+            if (!panel || !panel.iframe || !panel.iframe.contentWindow) return;
+            try {
+                panel.iframe.contentWindow.postMessage({ type: 'setOverlay', overlay }, '*');
+                panel.iframe.contentWindow.postMessage({ type: 'collapseLayers' }, '*');
+            } catch (_) {}
+        }
+
+        // Duo: two globes stacked on the left (Chl-a over currents), the wider right
+        // column holding a backscatter plot above a salinity plot.
+        function applyDuo() {
+            _pendingGlobeFit = false;
+
+            // Keep the primary globe in place (avoids a reload); drop everything else,
+            // including the 3D view and any leftover second globe.
+            const keepMap = primaryMapPanel();
+            Object.values(panels).forEach(p => {
+                if (p === keepMap) return;
+                if (p.hostedEl) unmountHosted(p);
+                p.el.remove();
+                delete panels[p.id];
+            });
+
+            const topMap    = keepMap || createPanel('map',  { datasetId: datasetSelect.value || '' });
+            const bottomMap = createPanel('map2', { datasetId: datasetSelect.value || '' });
+            const bbp = createPanel('plot', stateFromPreset('preset_bbp'));
+            const sal = createPanel('plot', stateFromPreset('preset_sal'));
+
+            layoutTree = duoLayoutTree(topMap.id, bottomMap.id, bbp.id, sal.id);
+            _viewKind = 'duo'; _layoutPortrait = isPortrait();
+            plotIframe = bbp.iframe;
+            activePlotPanelId = bbp.id;
+
+            _bulkLoading = true;
+            clearTimeout(_bulkLoadTimer);
+            renderLayout();
+            renderPanel(bbp);
+            renderPanel(sal);
+            if (!keepMap) renderPanel(topMap);   // fresh top globe loads its map_view
+            renderPanel(bottomMap);              // second globe is always fresh
+            refitReusedGlobe(keepMap, false);
+            setActive(bbp.id);
+            markViewApplied();
+
+            // Chl-a on top, currents below. A freshly-loaded globe gets its overlay
+            // when it reports mapReady; a reused (already-loaded) top globe never
+            // reloads, so push its overlay straight away.
+            _duoOverlays = { [topMap.id]: 'chla', [bottomMap.id]: 'currents' };
+            if (keepMap) applyDuoOverlay(topMap, 'chla');
+
             _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
@@ -4318,6 +4494,30 @@
             refreshPanelPlaceholders();
         }
 
+        // Load an "extra" globe (one added beyond the primary gliderMap, e.g. via the
+        // panel "+" menu) into its own iframe. Independent of the shared DAC/dataset
+        // map bookkeeping, which stays tied to the primary globe.
+        function loadExtraMap(panel) {
+            const fileId = datasetSelect.value;
+            if (!fileId || !panel || !panel.iframe) return;
+            panel.iframe.classList.remove('hidden');
+            panel.iframe.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            refreshPanelPlaceholders();
+        }
+
+        // Load the Duo view's second globe (independent of the primary gliderMap, so
+        // it can hold its own Copernicus overlay). Mirrors loadMapImage but targets
+        // gliderMap2 and doesn't touch the shared DAC/dataset map bookkeeping.
+        function loadMap2Image() {
+            const fileId = datasetSelect.value;
+            if (!fileId) return;
+            const f = document.getElementById('gliderMap2');
+            if (!f) return;
+            f.classList.remove('hidden');
+            f.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+            refreshPanelPlaceholders();
+        }
+
         const resetInspectorState = () => {
             resetInspectorBtn.classList.add('hidden'); inspectorContainer.classList.add('hidden');
             document.getElementById('hxVal').textContent = '--'; document.getElementById('hyVal').textContent = '--';
@@ -4704,6 +4904,13 @@
                 iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             }
 
+            // Duo's second globe shares the dataset — reload it too (its overlay
+            // reapplies via the mapReady handler once it's back up).
+            if (Object.values(panels).some(p => p.type === 'map2')) loadMap2Image();
+
+            // Extra globes (added via the panel "+") follow the shared dataset too.
+            Object.values(panels).forEach(p => { if (p.type === 'map' && !p.hostedEl && p.iframe) loadExtraMap(p); });
+
             // Point every panel at the newly-selected dataset (shared-dataset
             // default). The active plot panel is rendered via updatePlot (toolbar
             // now reflects the new file's preset); the rest keep their own
@@ -5007,7 +5214,12 @@
         // Click a View button: full reset, then build that layout.
         function selectView(kind) {
             fullResetState();
-            if (kind === 'map') {
+            if (kind !== 'duo') _duoOverlays = {};   // leaving Duo → stop reapplying its overlays
+            if (kind === 'duo') {
+                applyDuo();
+            } else if (kind === 'biooptics') {
+                applyBioOptics();
+            } else if (kind === 'map') {
                 applyMapView();
             } else if (kind === 'overview') {
                 applyOverview();

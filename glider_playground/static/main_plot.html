@@ -317,10 +317,38 @@
             // Value on X, depth on Y, with the selection highlighted; capped to a
             // light point budget since SVG (not WebGL) draws these.
             const p = new URLSearchParams(window.location.search);
+            const mainXVar = p.get('x_var');   // colour var becomes this fetch's x_var below
             p.set('x_var', cVar);
             p.set('highlight_profile', 'true');
             p.set('max_points', '2500');
             ['multiview', 'theme', 'profile_sidebar', 'zXmin', 'zXmax', 'zYmin', 'zYmax'].forEach(k => p.delete(k));
+
+            // When the main plot is zoomed, grey the marginal points that fall
+            // outside the current view — the same treatment as a single-profile
+            // selection, but driven by the zoom window. The window lives in the
+            // main plot's x_var / depth space, so pass the main x_var name plus
+            // numeric (epoch-ms for dates) bounds and let the server flag in-view
+            // points via `in_selection`.
+            const z = _currentZoom;
+            if (z && mainXVar && z.xMin !== undefined && z.xMax !== undefined
+                    && z.yMin !== undefined && z.yMax !== undefined) {
+                const toMs = (s) => {
+                    if (typeof s === 'number') return s;
+                    const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
+                    return isNaN(t) ? Date.parse(s) : t;
+                };
+                const isXDate = plotData && plotData.is_x_dt;
+                const xlo = isXDate ? toMs(z.xMin) : Number(z.xMin);
+                const xhi = isXDate ? toMs(z.xMax) : Number(z.xMax);
+                const ylo = Number(z.yMin), yhi = Number(z.yMax);
+                if (isFinite(xlo) && isFinite(xhi) && isFinite(ylo) && isFinite(yhi)) {
+                    p.set('zoom_x_var', mainXVar);
+                    p.set('zoom_x_min', Math.min(xlo, xhi));
+                    p.set('zoom_x_max', Math.max(xlo, xhi));
+                    p.set('zoom_y_min', Math.min(ylo, yhi));
+                    p.set('zoom_y_max', Math.max(ylo, yhi));
+                }
+            }
 
             const seq = ++_profileFetchSeq;
             try {
@@ -736,6 +764,7 @@
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                 }
                 window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+                renderProfileSidebar();   // zoom cleared → drop the marginal greying
                 return false;
             });
 
@@ -765,6 +794,7 @@
                         window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                     }
                     window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+                    renderProfileSidebar();   // zoom cleared → drop the marginal greying
                     return;
                 }
 
@@ -800,7 +830,7 @@
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
-                _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
+                _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
             });
         }
 
@@ -1022,10 +1052,11 @@
                     // serializes on the server NETCDF lock and makes multiview zoom-out crawl in
                     // one panel at a time. The render above is the final state — report it done.
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+                    renderProfileSidebar();   // match the marginal greying to the synced view
                 } else {
                     // A true zoom-IN: the global downsample is too sparse for this narrower
                     // window, so fetch high-res data for it (triggerBgFetch reports completion).
-                    _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), 400);
+                    _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
                 }
             }
             
@@ -1045,6 +1076,7 @@
                     Plotly.relayout('plotDiv', { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true });
                 }
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: {} }, '*');
+                renderProfileSidebar();   // zoom cleared remotely → drop the marginal greying
                 return;
             }
 

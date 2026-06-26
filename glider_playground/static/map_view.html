@@ -1509,6 +1509,16 @@
                     if (currentsActive) deactivateCurrents();
                     setOverlayByKey(key);
                 }
+            } else if (event.data.type === 'collapseLayers') {
+                // Parent (e.g. the Duo view) tucking the Layers panel away after
+                // programmatically setting an overlay.
+                const panel = document.getElementById('layer-panel');
+                if (panel && !panel.classList.contains('collapsed')) {
+                    panel.classList.add('collapsed');
+                    const hdr = document.getElementById('layer-header');
+                    if (hdr) hdr.title = 'Show layers';
+                    fitColourBar();
+                }
             }
         });
     </script>
