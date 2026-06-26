@@ -512,6 +512,13 @@ def remove_file(file_id: str, *, delete_upload: bool = True) -> bool:
                             live_logic._save_marker(marker)
                     except Exception:
                         pass
+                    # Suppress it so the auto-downloader doesn't immediately
+                    # re-fetch the glider the user just deleted (binning =
+                    # "stop auto-downloading this one").
+                    try:
+                        live_logic._add_suppressed(fname)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         if should_delete:

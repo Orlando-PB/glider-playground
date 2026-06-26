@@ -1134,7 +1134,7 @@
                         <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
                         <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
                         <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
-                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top) with globe + 3D on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
+                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top) with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
                     </div>
                 </div>
 
@@ -3209,7 +3209,7 @@
             }
             return {
                 dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },
+                a: { dir: 'col', ratio: 2 / 3, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },  // globe 2/3, 3D 1/3
                 b: { leaf: true, panelId: plotId }
             };
         }
@@ -3235,7 +3235,24 @@
             }
             return {
                 dir: 'row', ratio: 0.24,
-                a: { dir: 'col', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },
+                a: { dir: 'col', ratio: 2 / 3, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } },  // globe 2/3, 3D 1/3
+                b: buildEqualTree(plotIds, 'col')
+            };
+        }
+
+        // Bio-optics: globe only (full height) in the left column — no 3D view —
+        // with the plots stacked alongside.
+        function bioopticsLayoutTree(plotIds, mapId) {
+            if (isPortrait()) {
+                return {
+                    dir: 'col', ratio: 0.6,
+                    a: buildEqualTree(plotIds, 'col'),
+                    b: { leaf: true, panelId: mapId }
+                };
+            }
+            return {
+                dir: 'row', ratio: 0.24,
+                a: { leaf: true, panelId: mapId },
                 b: buildEqualTree(plotIds, 'col')
             };
         }
@@ -3285,8 +3302,8 @@
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
             } else if (_viewKind === 'biooptics') {
-                if (!mapP || !tdP || !plotIds.length) return;
-                layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
+                if (!mapP || !plotIds.length) return;
+                layoutTree = bioopticsLayoutTree(plotIds, mapP.id);
             } else { // 'default'
                 if (!mapP || !tdP || plotIds.length !== 1) return;
                 layoutTree = defaultLayoutTree(plotIds[0], mapP.id, tdP.id);
@@ -3322,6 +3339,19 @@
                 delete panels[p.id];
             });
             return { map, td };
+        }
+
+        // Like keepGlobeAnd3D but drops the 3D view too (its stashed iframe is
+        // safely returned to the stash) — for views that show the globe alone.
+        function keepGlobe() {
+            const map = primaryMapPanel();
+            Object.values(panels).forEach(p => {
+                if (p === map) return;
+                if (p.hostedEl) unmountHosted(p);
+                p.el.remove();
+                delete panels[p.id];
+            });
+            return { map };
         }
 
         // Re-fit a reused (already-loaded) globe: whole-globe for Map view, else the
@@ -3408,8 +3438,8 @@
 
         // Bio-optics: temperature, then chlorophyll and backscatter each shown twice —
         // once surfacing the smallest values, once the largest — so both faint and
-        // intense features read clearly. Globe + 3D sit in a column on the left
-        // (same arrangement as Dashboard).
+        // intense features read clearly. The globe fills the whole left column on its
+        // own (no 3D view here).
         function applyBioOptics() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const presetOk = (key) => {
@@ -3426,9 +3456,8 @@
             if (specs.length === 0) return;
 
             _pendingGlobeFit = false;
-            const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
+            const { map: keepMap } = keepGlobe();   // globe only — no 3D in Bio-optics
             const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
-            const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
 
             // Same preset can appear twice (chl, bbp) with different draw orders.
             const plotIds = specs.map(spec => {
@@ -3437,7 +3466,7 @@
                 return createPanel('plot', s).id;
             });
 
-            layoutTree = dashboardLayoutTree(plotIds, map.id, td.id);
+            layoutTree = bioopticsLayoutTree(plotIds, map.id);
             _viewKind = 'biooptics'; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
 
@@ -3447,7 +3476,6 @@
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
-            if (!keepTd) renderPanel(td);
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
             markViewApplied();
@@ -4608,9 +4636,11 @@
 
         function renderFilesList() {
             filesList.innerHTML = '';
-            // Files we ourselves downloaded for the BODC section live in
-            // the dedicated Live list above — skip them here.
-            const userFiles = fileRecords.filter(f => !f.is_managed);
+            // Files we auto-downloaded show in the dedicated Live list above
+            // WHILE they're still live. Once a glider ages out of the live
+            // window (is_nrt false) it "graduates" to an installed file and
+            // appears here, where it stays — and stays deletable — until removed.
+            const userFiles = fileRecords.filter(f => !f.is_managed || !f.is_nrt);
             if (userFiles.length === 0) {
                 filesList.style.display = 'none';
                 filesEmpty.style.display = 'flex';

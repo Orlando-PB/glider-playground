@@ -37,11 +37,16 @@ AUTO_UPDATE_COOLDOWN = 300    # seconds — minimum gap between auto-update swee
 HTTP_TIMEOUT = 15
 
 MARKER_FILE = cache_logic.DATA_DIR / ".glider_playground_managed.json"
+# Gliders the user "binned": never auto-download these again until they ask
+# for one explicitly (a manual download clears the suppression).
+SUPPRESS_FILE = cache_logic.DATA_DIR / ".glider_playground_suppressed.json"
+SCANNER_INTERVAL = 1800       # seconds — background re-scan to pick up new gliders
 
 _lock = threading.RLock()
 _scan_cache: dict = {"at": 0.0, "data": None}
 _last_auto_update: float = 0.0
 _in_flight: set[str] = set()  # filenames currently downloading
+_scanner_started = False
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-dl")
 
 
@@ -63,6 +68,47 @@ def _save_marker(data: dict):
         MARKER_FILE.write_text(json.dumps(data, indent=2))
     except Exception:
         pass
+
+
+# ---------- suppressed (binned) list ----------
+
+def _load_suppressed() -> set:
+    """Filenames the user removed and that must not be auto-downloaded again."""
+    if not SUPPRESS_FILE.exists():
+        return set()
+    try:
+        data = json.loads(SUPPRESS_FILE.read_text())
+        return set(data) if isinstance(data, list) else set()
+    except Exception:
+        return set()
+
+
+def _save_suppressed(names: set):
+    try:
+        cache_logic.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        SUPPRESS_FILE.write_text(json.dumps(sorted(names), indent=2))
+    except Exception:
+        pass
+
+
+def _add_suppressed(filename: str):
+    with _lock:
+        s = _load_suppressed()
+        if filename not in s:
+            s.add(filename)
+            _save_suppressed(s)
+
+
+def _remove_suppressed(filename: str):
+    with _lock:
+        s = _load_suppressed()
+        if filename in s:
+            s.discard(filename)
+            _save_suppressed(s)
+
+
+def is_suppressed(filename: str) -> bool:
+    return filename in _load_suppressed()
 
 
 def is_managed(path: str | Path) -> bool:
@@ -206,12 +252,45 @@ def request_download(filename: str) -> dict:
     entry = next((e for e in listing if e["filename"] == filename), None)
     if entry is None:
         return {"status": "error", "message": "File not found in active listing"}
+    _remove_suppressed(filename)   # an explicit download un-bins the glider
     started = _enqueue_download(entry)
     return {"status": "queued" if started else "in_flight", "filename": filename}
 
 
+# ---------- background scanner ----------
+
+def _scanner_loop():
+    """Periodically re-scan the feed so newly-active gliders get auto-downloaded
+    even while the Files panel is closed. Cheap: one ERDDAP listing per pass,
+    and _maybe_auto_update's own cooldown still applies."""
+    while True:
+        time.sleep(SCANNER_INTERVAL)
+        try:
+            _maybe_auto_update(scan_cached(force=True))
+        except Exception:
+            pass
+
+
+def _ensure_background_scanner():
+    """Start the periodic scanner once (lazily, on first use of the feed)."""
+    global _scanner_started
+    with _lock:
+        if _scanner_started:
+            return
+        _scanner_started = True
+    threading.Thread(target=_scanner_loop, name="live-scanner", daemon=True).start()
+
+
 def _maybe_auto_update(listing: list[dict]):
-    """Re-download managed files when the server has a newer copy. Best-effort."""
+    """Keep the local copy in sync with the live feed (best-effort):
+
+      * auto-download every active glider we don't already have, and
+      * re-download a managed file when the server has a newer copy.
+
+    Gliders the user binned are skipped (suppressed). Files that age out of the
+    live window are intentionally KEPT — they become permanent installed copies
+    and only ever leave when the user deletes them.
+    """
     global _last_auto_update
     now = time.time()
     with _lock:
@@ -219,39 +298,29 @@ def _maybe_auto_update(listing: list[dict]):
             return
         _last_auto_update = now
         marker = _load_marker()
+        suppressed = _load_suppressed()
 
-    by_name = {e["filename"]: e for e in listing}
-
-    # 1) Re-download anything where server_mtime advanced.
-    for fname, info in marker.items():
-        entry = by_name.get(fname)
-        if not entry:
-            continue
-        if entry["server_mtime"] > float(info.get("server_mtime", 0)) + 1:
-            _enqueue_download(entry)
-
-    # 2) Prune managed files that have aged out (no longer in active listing).
-    for fname in list(marker.keys()):
-        if fname not in by_name:
-            target = cache_logic.DATA_DIR / fname
-            if target.exists():
-                # Check on-disk mtime — if the file itself is older than the
-                # active window, treat it as expired.
-                try:
-                    if (now - target.stat().st_mtime) > DAYS_ACTIVE * 86400:
-                        _remove_managed_file(fname)
-                except Exception:
-                    pass
+    for entry in listing:
+        fname = entry["filename"]
+        if fname in suppressed:
+            continue                       # user removed this one — leave it
+        info = marker.get(fname)
+        if info is None:
+            _enqueue_download(entry)        # new active glider → download it
+        elif entry["server_mtime"] > float(info.get("server_mtime", 0)) + 1:
+            _enqueue_download(entry)        # have it, but server has a newer copy
 
 
 # ---------- public API ----------
 
 def list_live(force_scan: bool = False) -> dict:
     """Combined live feed: server-listed active gliders + uploaded files."""
+    _ensure_background_scanner()
     listing = scan_cached(force=force_scan)
     _maybe_auto_update(listing)
 
     marker = _load_marker()
+    suppressed = _load_suppressed()
     with _lock:
         in_flight = set(_in_flight)
 
@@ -273,6 +342,7 @@ def list_live(force_scan: bool = False) -> dict:
             "managed": downloaded,
             "needs_update": downloaded and e["server_mtime"] > local_mtime + 1,
             "downloading": fname in in_flight,
+            "suppressed": fname in suppressed,
             "file_id": rid if rec else None,
             "status": (rec or {}).get("status") if rec else None,
             "progress": (rec or {}).get("progress") if rec else None,
@@ -312,8 +382,11 @@ def list_live(force_scan: bool = False) -> dict:
 
 
 def delete_managed(filename: str) -> bool:
-    """Delete a managed live file (only; refuses unknown/user-placed files)."""
+    """Delete a managed live file (only; refuses unknown/user-placed files).
+    Binning a glider also suppresses it so the auto-downloader leaves it alone
+    until the user explicitly downloads it again."""
     if filename not in _load_marker():
         return False
+    _add_suppressed(filename)
     _remove_managed_file(filename)
     return True
