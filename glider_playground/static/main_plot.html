@@ -590,7 +590,8 @@
                         { name: 'build + draw',    ms: tPainted - tRenderStart,     color: '#86efac',
                           header: true, children: buildDraw },
                     ];
-                    if (window.logPlotTiming) window.logPlotTiming('WebGL Plot', phases, tPainted - _gpClick);
+                    const ptNote = ((plotData.x && plotData.x.length) || 0).toLocaleString() + ' pts';
+                    if (window.logPlotTiming) window.logPlotTiming('WebGL Plot', phases, tPainted - _gpClick, ptNote);
                     else window.logRender && window.logRender('WebGL Plot', tPainted - _gpClick);
                 } catch (_) { /* never let logging break the render */ }
 
@@ -887,6 +888,7 @@
                 if (_originalPlotData) {
                     plotData = _originalPlotData;
                     Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                    if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                 }
                 window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
@@ -917,6 +919,7 @@
                     if (_originalPlotData) {
                         plotData = _originalPlotData;
                         Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                        if (window.logRedraw) window.logRedraw('zoom out (autorange)', (plotData.x && plotData.x.length) || 0);
                         window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                     }
                     window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
@@ -1045,6 +1048,7 @@
                 _suppressRelayout = true;
                 Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange))
                     .then(() => { _suppressRelayout = false; });
+                if (window.logRedraw) window.logRedraw('zoom (hi-res)', (newData.x && newData.x.length) || 0);
 
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max, plotted: newData.plotted }, '*');
 

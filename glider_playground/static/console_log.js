@@ -85,6 +85,21 @@
         return response;
     };
 
+    // Lightweight one-liner for plot re-draws that don't go through the full PLOT
+    // timing pipeline — zoom-in high-res swaps and zoom-out/reset. `points` is the
+    // count now on the plot, so you can watch it change as you zoom in and back out.
+    window.logRedraw = function (action, points, ms) {
+        const pts = (typeof points === 'number') ? points.toLocaleString() + ' pts' : '';
+        const t = (typeof ms === 'number') ? `  %c${(ms).toFixed(0)}ms` : '';
+        const styles = [
+            'background:#1e3a5f;color:#7ec8f7;font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px',
+            'color:#7ec8f7;font-weight:normal',
+            'color:#aac8e8',
+        ];
+        if (t) styles.push('color:#556');
+        console.log(`%c REDRAW %c ${action}  %c${pts}${t}`, ...styles);
+    };
+
     window.logRender = function (label, ms) {
         const seconds = (ms / 1000).toFixed(3);
         console.log(
@@ -113,7 +128,9 @@
     //   totalMs — overall click -> fully-painted time
     // Unaccounted = total - sum(phases); it surfaces time we didn't attribute to a
     // named phase (queueing, idle waiting, anything we forgot to measure).
-    window.logPlotTiming = function (label, phases, totalMs) {
+    //   note    — optional string shown in the collapsed header (e.g. point count),
+    //             kept out of the aligned columns so it never shifts the bars.
+    window.logPlotTiming = function (label, phases, totalMs, note) {
         const total = Math.max(0, totalMs);
         const sum = phases.reduce((s, p) => s + Math.max(0, p.ms), 0);
         const rows = phases.slice();
@@ -123,7 +140,7 @@
         const headerSecs = (total / 1000).toFixed(3);
 
         console.groupCollapsed(
-            `%c PLOT %c ${label}  %c${headerSecs}s`,
+            `%c PLOT %c ${label}  %c${headerSecs}s${note ? '  ·  ' + note : ''}`,
             'background:#14532d;color:#86efac;font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px',
             'color:#86efac;font-weight:normal',
             'color:#556'
