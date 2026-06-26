@@ -1,5 +1,6 @@
 import hashlib
 import json
+import struct
 import shutil
 import xarray as xr
 import numpy as np
@@ -46,6 +47,36 @@ def _floats_to_list(arr, sig=_PLOT_SIG_FIGS):
     obj = out.astype(object)
     obj[~np.isfinite(out)] = None
     return obj.tolist()
+
+
+# Numpy dtype codes for the binary plot container, all little-endian (every
+# deployment target — x86/ARM macOS, Raspberry Pi — is LE, so byte order is fixed).
+_BIN_DTYPES = {"f64": "<f8", "f32": "<f4", "u8": "|u1"}
+
+
+def _pack_plot_binary(meta, arrays):
+    """Serialize the bulk plot arrays as a binary container so the browser can map
+    them straight into TypedArrays instead of JSON.parse-ing ~500k numbers (the
+    cost that dominated the client). Also lets the server skip the
+    astype(object)/tolist + JSON text encode.
+
+    Layout: a uint32 LE header length, then a JSON header (all the scalar metadata
+    plus an `arrays` descriptor giving each array's dtype + length), then every
+    array's raw LE bytes concatenated in the order they appear in `arrays`. NaN is
+    preserved in the float arrays (Plotly's scattergl skips NaN points), so no
+    null-mapping is needed. f32 matches the float32 source precision; x is f64 so
+    datetime epoch-ms stays exact.
+    """
+    descr = {}
+    bufs = []
+    for name, arr, code in arrays:
+        a = np.ascontiguousarray(arr, dtype=_BIN_DTYPES[code])
+        descr[name] = {"dtype": code, "len": int(a.shape[0])}
+        bufs.append(a.tobytes())
+    header = dict(meta)
+    header["arrays"] = descr
+    hjson = json.dumps(header).encode("utf-8")
+    return b"".join([struct.pack("<I", len(hjson)), hjson, *bufs])
 
 # When LOW_MEMORY_MODE=true all preloaded arrays and CTD overlays are stored
 # on disk instead of kept permanently in RAM. Each request loads only what it
@@ -893,7 +924,7 @@ def _apply_direction_mask(data_dict, directions):
         return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None, timings=None):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None, timings=None, binary=False):
     # `timings` (optional dict) is filled in place with per-step ms so the endpoint
     # can surface a Server-Timing breakdown. perf_counter / dict writes are ~free.
     _tprev = time.perf_counter()
@@ -1138,38 +1169,56 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     # (xaxis.type='date') consumes ms-since-epoch directly, and ms even preserves
     # sub-second precision the old '%Y-%m-%d %H:%M:%S' format dropped. Nulls were
     # already removed by current_mask, so a plain tolist() is safe.
-    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
-    y_out = _floats_to_list(plot_y)
-
-    c_out = []
+    # Colour range — needed by both serializers, independent of array encoding.
     c_min, c_max = 0.0, 1.0
     if plot_c is not None:
-        c_out = _floats_to_list(plot_c)
         valid_c_for_scale = plot_c[plot_qc] if apply_qc else plot_c
         if len(valid_c_for_scale) > 0:
             c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
             c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
 
     units_map = _get_var_units(filepath)
-    _mark("serialize")
-    return {
-        "x": x_out,
-        "y": y_out,
-        "c": c_out,
+    meta = {
         "is_x_dt": bool(is_x_dt),
         "c_min": c_min,
         "c_max": c_max,
         "qc_applied": apply_qc,
-        "qc_pass": plot_qc.tolist() if apply_qc else [],
         "profile_highlight": bool(highlight_profile and selection_mask is not None),
-        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
         "stats": stats,
         "x_var": x_var,
         "y_var": y_var,
         "c_var": c_var,
         "x_units": units_map.get(x_var, ""),
         "y_units": units_map.get(y_var, ""),
-        "c_units": units_map.get(c_var, "") if c_var else ""
+        "c_units": units_map.get(c_var, "") if c_var else "",
+    }
+
+    if binary:
+        # x as f64 keeps datetime epoch-ms exact (and value-axis precision); y/c as
+        # f32 match the float32 source. qc_pass / in_selection ride along as bytes
+        # only when populated (highlight modes), mirroring the JSON path's [] default.
+        x_arr = (plot_x.astype('datetime64[ms]').astype('int64') if is_x_dt else plot_x)
+        arrays = [("x", x_arr, "f64"), ("y", plot_y, "f32")]
+        if plot_c is not None:
+            arrays.append(("c", plot_c, "f32"))
+        if apply_qc:
+            arrays.append(("qc_pass", plot_qc, "u8"))
+        if plot_sel is not None:
+            arrays.append(("in_selection", plot_sel, "u8"))
+        _mark("serialize")
+        return _pack_plot_binary(meta, arrays)
+
+    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
+    y_out = _floats_to_list(plot_y)
+    c_out = _floats_to_list(plot_c) if plot_c is not None else []
+    _mark("serialize")
+    return {
+        "x": x_out,
+        "y": y_out,
+        "c": c_out,
+        **meta,
+        "qc_pass": plot_qc.tolist() if apply_qc else [],
+        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
     }
 
 def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",

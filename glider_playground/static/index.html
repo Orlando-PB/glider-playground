@@ -2052,7 +2052,7 @@
             if (!panel) return;
             if (panel.type === 'plot') {
                 const s = panel.state;
-                if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; return; }
+                if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; panel._frameReady = false; return; }
                 panel.iframe.classList.remove('hidden');
                 const multiview = plotPanelCount() > 1 ? 1 : 0;
                 // Hand the iframe the click time (_gpt0) and this src-set time (_gpt1)
@@ -2061,7 +2061,16 @@
                 // else fall back to now so a stray reload doesn't show a huge delay.
                 const tSrc = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
                 const t0 = (_interactionTs && tSrc - _interactionTs < 2000) ? _interactionTs : tSrc;
-                panel.iframe.src = `/static/main_plot.html?${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}&_gpt0=${t0.toFixed(1)}&_gpt1=${tSrc.toFixed(1)}`;
+                const params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
+                // Warm reuse: once this iframe has loaded once, re-drive it in place with
+                // a 'replot' message (→ Plotly.react, reusing the WebGL context) instead
+                // of a full src navigation. _frameReady flips true on the first
+                // plotLoaded and back to false whenever the frame is blanked/reloaded.
+                if (panel._frameReady && panel.iframe.contentWindow) {
+                    panel.iframe.contentWindow.postMessage({ type: 'replot', params, gpt0: t0, gpt1: tSrc }, '*');
+                } else {
+                    panel.iframe.src = `/static/main_plot.html?${params}&_gpt0=${t0.toFixed(1)}&_gpt1=${tSrc.toFixed(1)}`;
+                }
             } else if (panel.type === 'map') {
                 if (!datasetSelect.value) return;
                 if (panel.hostedEl) loadMapImage();        // primary globe (stashed gliderMap)
@@ -2077,6 +2086,17 @@
         }
         // Back-compat alias used by older call sites.
         const renderPlotPanel = renderPanel;
+
+        // Blank a plot iframe AND clear its warm-reuse flag, so the next render goes
+        // through a full (cold) src load instead of posting a 'replot' message into a
+        // now-about:blank frame (which would silently vanish). Use this everywhere a
+        // plot iframe's src is cleared directly (abort-in-flight, live placeholder, …).
+        function blankPlotFrame(iframeEl) {
+            if (!iframeEl) return;
+            const owner = Object.values(panels).find(p => p.iframe === iframeEl);
+            if (owner) owner._frameReady = false;
+            iframeEl.src = '';
+        }
 
         // Does this panel currently have nothing to show? (no plot rendered, no
         // map/3D loaded, or a data list with no file selected). Used to drive a
@@ -2898,6 +2918,10 @@
 
             // Route plot messages to their owning panel.
             const srcPanel = panelByWindow(event.source);
+
+            // First successful draw → this iframe is warm and can be re-driven in place
+            // via a 'replot' message (Plotly.react) rather than a full src reload.
+            if (srcPanel && msg.type === 'plotLoaded') srcPanel._frameReady = true;
 
             // Ack that the active plot finished applying a colour-trim update —
             // releases the flow-control lock so the next slider value can be sent.
@@ -3973,7 +3997,7 @@
         // been clicked but isn't ready yet (still downloading / processing).
         function showLivePlaceholder(entry) {
             pendingActivateId = null;          // not a real record id yet
-            if (plotIframe) plotIframe.src = '';
+            if (plotIframe) blankPlotFrame(plotIframe);
             plotIframe?.classList.add('hidden');
             isPlotting = false; plotQueued = false;
             const iframe3D = document.getElementById('iframe3D');
@@ -4884,7 +4908,7 @@
             // so they don't try to reload it. Per-panel veils then show through.
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot' && p.iframe) {
-                    p.iframe.src = '';
+                    blankPlotFrame(p.iframe);
                     p.iframe.classList.add('hidden');
                     if (p.state) { p.state.datasetId = ''; p.state.zoomBounds = null; }
                 }
@@ -4932,7 +4956,7 @@
                 // covers the plot area, so the side panels would otherwise
                 // keep showing the old file's contents.
                 pendingActivateId = fileId;
-                if (plotIframe) plotIframe.src = '';
+                if (plotIframe) blankPlotFrame(plotIframe);
                 plotIframe?.classList.add('hidden');
                 isPlotting = false;
                 plotQueued = false;
@@ -4961,7 +4985,7 @@
             // Without this, swapping files while a slow request (e.g. CTD
             // interp) is loading can leave the UI stuck on "Fetching data..."
             // until the old fetch finishes.
-            if (plotIframe) plotIframe.src = '';
+            if (plotIframe) blankPlotFrame(plotIframe);
             isPlotting = false;
             plotQueued = false;
 

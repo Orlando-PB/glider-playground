@@ -129,12 +129,20 @@
         // Absolute (shared epoch-ms) timestamp for when this script began running.
         // The gap from the parent's src-set time (_gpt1) to here is browser
         // navigation + HTML/Plotly parse — the biggest cost the old RENDER log hid.
-        const _gpScriptStart = performance.timeOrigin + performance.now();
+        // `let`, not `const`: a warm reuse ('replot' message) re-seeds these so the
+        // PLOT log still measures click→painted without a fresh navigation.
+        let _gpScriptStart = performance.timeOrigin + performance.now();
         const _gpParams = new URLSearchParams(window.location.search);
         // Click time and src-set time handed down by the parent (index.html). Absent
         // when the iframe is opened directly — then we just start the clock here.
-        const _gpClick = parseFloat(_gpParams.get('_gpt0')) || _gpScriptStart;
-        const _gpSrcSet = parseFloat(_gpParams.get('_gpt1')) || _gpScriptStart;
+        let _gpClick = parseFloat(_gpParams.get('_gpt0')) || _gpScriptStart;
+        let _gpSrcSet = parseFloat(_gpParams.get('_gpt1')) || _gpScriptStart;
+        // True once this iframe has been re-driven in place (no navigation), so the
+        // timing log skips the stale Navigation/Resource entries from the first load.
+        let _reused = false;
+        // Plotly event handlers are attached once and persist across Plotly.react
+        // reuses; guard so a warm replot doesn't stack duplicate listeners.
+        let _handlersAttached = false;
 
         // Parse a Server-Timing header ("read;dur=120.5, filter;dur=8.2") into the
         // child rows under the "server" phase. The "other" remainder the logger adds
@@ -185,6 +193,11 @@
         });
 
         let _bgFetchController = null;
+        // Aborts a previous in-flight main-plot fetch when a warm 'replot' starts a new
+        // one. A src navigation used to cancel this implicitly by destroying the
+        // document; reuse keeps the document, so we cancel explicitly to stop a slow
+        // earlier fetch from drawing stale data over a newer plot.
+        let _mainFetchController = null;
         let _pendingBounds = null;
         let _originalPlotData = null;
         let _currentZoom = null;
@@ -606,7 +619,7 @@
             8: 'Phase 8', 9: 'Phase 9',
         };
 
-        const urlParams = new URLSearchParams(window.location.search);
+        let urlParams = new URLSearchParams(window.location.search);
         _multiview = (urlParams.get('multiview') === '1');
         _profileSidebar = (urlParams.get('profile_sidebar') === 'true');
         let plotData = null;
@@ -627,27 +640,70 @@
             return max;
         }
 
+        // Decode the binary plot container (see _pack_plot_binary on the server):
+        // a uint32 LE header length, a JSON header (scalars + an `arrays` layout
+        // descriptor), then each array's raw LE bytes in declared order. The arrays
+        // become TypedArrays — Plotly's scattergl consumes those directly and treats
+        // NaN as a gap, exactly as it did the old JSON nulls. Absent optional arrays
+        // (c with no colour var, qc_pass/in_selection outside highlight modes) default
+        // to [] so the rest of the code sees the same shape as the JSON path.
+        function parsePlotBinary(buf) {
+            const dv = new DataView(buf);
+            const headerLen = dv.getUint32(0, true);
+            const meta = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, 4, headerLen)));
+            const layout = meta.arrays || {};
+            delete meta.arrays;
+            meta.x = []; meta.y = []; meta.c = []; meta.qc_pass = []; meta.in_selection = [];
+            let off = 4 + headerLen;
+            for (const name of Object.keys(layout)) {
+                const { dtype, len } = layout[name];
+                // slice() copies into a fresh (aligned) ArrayBuffer, so a typed view is
+                // valid regardless of the header's byte length — and it's a memcpy, not
+                // a parse, so still ~free next to JSON.parse.
+                if (dtype === 'f64') { meta[name] = new Float64Array(buf.slice(off, off + len * 8)); off += len * 8; }
+                else if (dtype === 'f32') { meta[name] = new Float32Array(buf.slice(off, off + len * 4)); off += len * 4; }
+                else if (dtype === 'u8') { meta[name] = new Uint8Array(buf.slice(off, off + len)); off += len; }
+            }
+            return meta;
+        }
+
         async function initPlot() {
-            if (!window.location.search) return;
+            // urlParams is the live param set: the URL query on first load, or the
+            // 'replot' message's params on a warm reuse.
+            if (!urlParams.toString()) return;
 
             const now = () => performance.timeOrigin + performance.now();
             try {
                 // Strip our timing params before forwarding to the API (they're noise
                 // to the server and would bloat the cache key if it ever keyed on them).
-                const apiParams = new URLSearchParams(window.location.search);
+                const apiParams = new URLSearchParams(urlParams.toString());
                 apiParams.delete('_gpt0'); apiParams.delete('_gpt1');
+
+                // Ask for the binary payload: the browser maps the bulk arrays
+                // straight into TypedArrays instead of JSON.parse-ing ~500k numbers,
+                // which was the dominant client cost as plots stacked up in multiview.
+                apiParams.set('binary', '1');
 
                 const tFetchSent = now();
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();  // folded into PLOT log
                 const fetchUrl = `/api/plot_data?${apiParams.toString()}`;
-                const response = await fetch(fetchUrl);
+                if (_mainFetchController) _mainFetchController.abort();   // supersede a prior warm replot's fetch
+                _mainFetchController = new AbortController();
+                const response = await fetch(fetchUrl, { signal: _mainFetchController.signal });
                 const tFetchResolved = now();
                 // Server compute time (seconds) + per-step breakdown from the backend.
                 const serverHdr = response.headers && response.headers.get('X-Process-Time');
                 const serverMs = serverHdr ? parseFloat(serverHdr) * 1000 : 0;
                 const serverChildren = parseServerTiming(response.headers && response.headers.get('Server-Timing'));
 
-                plotData = await response.json();
+                // Binary on success; JSON when the server returned an error dict (or, as
+                // a safety net, if binary was somehow disabled).
+                const ctype = (response.headers && response.headers.get('Content-Type')) || '';
+                if (ctype.indexOf('application/octet-stream') !== -1) {
+                    plotData = parsePlotBinary(await response.arrayBuffer());
+                } else {
+                    plotData = await response.json();
+                }
                 const tJsonParsed = now();
 
                 if (plotData.error) throw new Error(plotData.error);
@@ -692,7 +748,10 @@
                         { name: 'parse',    ms: Math.max(0, tJsonParsed - absResponseEnd),    color: '#7ec8f7' },
                     ] : null;
 
-                    const loadParse = loadParseChildren();
+                    // On a warm reuse there's no navigation, so the Navigation/Resource
+                    // entries are stale (they describe the first load) — drop the
+                    // breakdown; the load+parse phase itself is ~0 (script-start re-seeded).
+                    const loadParse = _reused ? null : loadParseChildren();
                     const buildDraw = [
                         { name: 'traces', ms: (renderMarks.tBuilt || tRenderStart) - tRenderStart, color: '#86efac' },
                         { name: 'draw',   ms: tDrawn - (renderMarks.tBuilt || tRenderStart),       color: '#86efac' },
@@ -757,6 +816,9 @@
                 setTimeout(() => overlay.style.display = 'none', 300);
 
             } catch (err) {
+                // A newer replot superseded this fetch — its render is authoritative,
+                // so drop this one silently (don't flash an error over the new plot).
+                if (err && err.name === 'AbortError') return;
                 document.getElementById('loadingIcon').style.display = 'none';
                 document.getElementById('statusText').style.color = '#ef4444';
                 document.getElementById('statusText').textContent = err.message || "Failed to load plot data.";
@@ -831,6 +893,10 @@
                 const zx0 = urlParams.get('zXmin'), zx1 = urlParams.get('zXmax');
                 layout.xaxis.range = isXDate ? [Number(zx0), Number(zx1)] : [zx0, zx1];
                 layout.xaxis.autorange = false;
+            } else {
+                // Explicit so a Plotly.react reuse over a previously-zoomed div clears
+                // the old x-range instead of retaining it (newPlot autoranges anyway).
+                layout.xaxis.autorange = true;
             }
 
             if (yRange) {
@@ -973,8 +1039,16 @@
 
             // Returned so callers (initPlot) can await the actual WebGL draw, not just
             // the synchronous trace-building. The secondary work in .then (profile
-            // sidebar, hover wiring) is incidental and not awaited by the timing.
-            const drawDone = Plotly.newPlot('plotDiv', traces, layout, { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false }).then(function(plotDiv) {
+            // sidebar) is incidental and not awaited by the timing.
+            // Warm reuse (a 'replot' message re-drove this iframe in place) → Plotly.react
+            // keeps the existing WebGL context and shaders, which is the whole point of
+            // the reuse. A genuine first draw → newPlot. Same traces/layout/config either way.
+            const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false };
+            const _alreadyDrawn = !!document.getElementById('plotDiv')._fullLayout;
+            const drawDone = (_alreadyDrawn
+                ? Plotly.react('plotDiv', traces, layout, PLOT_CFG)
+                : Plotly.newPlot('plotDiv', traces, layout, PLOT_CFG)
+            ).then(function(plotDiv) {
                 applyCbar();
                 // Kick off the profile sidebar now (it paints concurrently with this
                 // plot) and hand the promise to initPlot so its fetch + draw time is
@@ -1014,19 +1088,25 @@
                     qc_applied: plotData.qc_applied,
                     stats: plotData.stats
                 }, '*');
-
-                plotDiv.on('plotly_hover', function(data){
-                    if (data.points.length > 0) {
-                        const pt = data.points[0];
-                        window.parent.postMessage({
-                            type: 'plotHover',
-                            point: { x: pt.x, y: pt.y, c: pt.customdata !== undefined ? pt.customdata : null }
-                        }, '*');
-                    }
-                });
             });
-            
+
             const plotDiv = document.getElementById('plotDiv');
+
+            // Plotly event handlers persist on the div across Plotly.react reuses, so
+            // attach them exactly once (a warm replot would otherwise stack duplicate
+            // listeners that each re-fire hover/zoom messages to the parent).
+            if (!_handlersAttached) {
+            _handlersAttached = true;
+
+            plotDiv.on('plotly_hover', function(data){
+                if (data.points.length > 0) {
+                    const pt = data.points[0];
+                    window.parent.postMessage({
+                        type: 'plotHover',
+                        point: { x: pt.x, y: pt.y, c: pt.customdata !== undefined ? pt.customdata : null }
+                    }, '*');
+                }
+            });
 
             // Explicit double-click reset — Plotly's autorange relayout event isn't always
             // reliably emitted after multiple Plotly.react calls (e.g. after Jelly overlays
@@ -1112,6 +1192,8 @@
                 clearTimeout(_pendingBounds);
                 _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
             });
+
+            }   // end if (!_handlersAttached)
 
             return drawDone;
         }
@@ -1213,6 +1295,33 @@
         window.addEventListener('message', function(event) {
             if (!event.data) return;
             const msg = event.data;
+
+            if (msg.type === 'replot') {
+                // Re-drive this already-loaded iframe with a fresh param set instead of
+                // a full src navigation. renderPlot's Plotly.react reuses the WebGL
+                // context, so we skip the HTML refetch + Plotly re-eval + context/shader
+                // rebuild a navigation pays (~190ms/plot). Reset all per-plot state so
+                // the new plot starts clean (no stale zoom / base record / in-flight fetch).
+                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+                clearTimeout(_pendingBounds);
+                urlParams = new URLSearchParams(msg.params || '');
+                _multiview = urlParams.get('multiview') === '1';
+                _profileSidebar = urlParams.get('profile_sidebar') === 'true';
+                _currentZoom = null; _originalPlotData = null; _suppressRelayout = false;
+                _cbarMin = null; _cbarMax = null;
+                _profileFetchSeq++;   // supersede any in-flight profile render
+                _reused = true;
+                if (typeof msg.gpt0 === 'number') _gpClick = msg.gpt0;
+                if (typeof msg.gpt1 === 'number') _gpSrcSet = msg.gpt1;
+                _gpScriptStart = performance.timeOrigin + performance.now();   // no nav → load+parse ~0
+                // Re-show the loading overlay for the brief fetch+draw (matches a reload).
+                const ov = document.getElementById('overlay');
+                if (ov) { ov.style.display = 'flex'; ov.style.opacity = '1'; }
+                document.getElementById('statusText').style.color = '';
+                document.getElementById('loadingIcon').style.display = '';
+                initPlot();
+                return;
+            }
 
             if (msg.type === 'setTheme') {
                 const t = msg.theme === 'light' ? 'light' : 'dark';

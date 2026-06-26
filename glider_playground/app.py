@@ -389,15 +389,18 @@ def api_plot_data(
     zoom_x_var: str = None,
     zoom_x_min: float = None, zoom_x_max: float = None,
     zoom_y_min: float = None, zoom_y_max: float = None,
+    binary: bool = False,
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
     # Per-step server timings, surfaced to the frontend's PLOT log as a Server-Timing
     # header so the "server" phase can be broken down (read / filter / serialize / ...).
     timings = {}
-    # The `-> dict` annotation makes FastAPI serialize straight to JSON bytes via
-    # pydantic, skipping the jsonable_encoder pass that dominates on big arrays.
-    # plot_logic returns plain lists (NaN already -> None) so this stays valid JSON.
+    # binary=True returns a packed octet-stream (uint32 header len + JSON header +
+    # raw LE typed arrays) so the browser skips JSON.parse of ~500k numbers and the
+    # server skips the astype(object)/tolist + JSON encode. The `-> dict` annotation
+    # still drives the JSON path (pydantic fast-paths plain lists straight to bytes);
+    # returning a Response short-circuits that and is passed through untouched.
     result = plot_logic.get_plot_data_json(
         _resolve_path(id), x_var, y_var, c_var,
         apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
@@ -407,13 +410,16 @@ def api_plot_data(
         max_points=max_points,
         zoom_x_var=zoom_x_var, zoom_x_min=zoom_x_min, zoom_x_max=zoom_x_max,
         zoom_y_min=zoom_y_min, zoom_y_max=zoom_y_max,
-        timings=timings,
+        timings=timings, binary=binary,
     )
-    if timings:
-        # e.g. "read;dur=120.5, filter;dur=8.2, serialize;dur=45.0"
-        response.headers["Server-Timing"] = ", ".join(
-            f"{k};dur={v:.1f}" for k, v in timings.items()
-        )
+    # e.g. "read;dur=120.5, filter;dur=8.2, serialize;dur=45.0"
+    server_timing = ", ".join(f"{k};dur={v:.1f}" for k, v in timings.items()) if timings else None
+    # A packed payload comes back as bytes; an error (or the JSON path) as a dict.
+    if isinstance(result, (bytes, bytearray)):
+        headers = {"Server-Timing": server_timing} if server_timing else None
+        return Response(content=bytes(result), media_type="application/octet-stream", headers=headers)
+    if server_timing:
+        response.headers["Server-Timing"] = server_timing
     return result
 
 
