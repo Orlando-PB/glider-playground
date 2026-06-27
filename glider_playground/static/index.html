@@ -5190,7 +5190,7 @@
                     </div>
                     <div class="file-card-actions">
                         ${f.status === 'error' || f.status === 'ready' ? `<button class="file-card-action" data-act="refresh" title="Reprocess this file"><span class="material-symbols-outlined text-[14px]">refresh</span></button>` : ''}
-                        ${!isServerMode ? `<button class="file-card-action danger" data-act="remove" title="Remove from list"><span class="material-symbols-outlined text-[14px]">delete</span></button>` : ''}
+                        ${(!isServerMode || f.status === 'error') ? `<button class="file-card-action danger" data-act="remove" title="Remove from list"><span class="material-symbols-outlined text-[14px]">delete</span></button>` : ''}
                     </div>
                 `;
                 filesList.appendChild(card);

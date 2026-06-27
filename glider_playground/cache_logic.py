@@ -405,10 +405,23 @@ def _refresh(rec: dict):
     """Detect on-disk changes / restart pending work."""
     p = Path(rec["path"])
     if not p.exists():
+        # The file was deleted from the data folder — drop the record (and its
+        # caches) automatically rather than leaving a dead "File no longer
+        # exists" card in the list. We only forget our own state here: the file
+        # is already gone, so there's nothing to unlink, and we leave the live
+        # marker/suppress lists untouched (that's remove_file's job for a
+        # user-initiated delete).
         with _lock:
-            if rec.get("status") != STATUS_ERROR:
-                rec.update(status=STATUS_ERROR, error="File no longer exists", progress=0)
-                _persist_locked()
+            if _registry.pop(rec["id"], None) is None:
+                return
+            rec["_removed"] = True
+            fut = rec.get("_future")
+            if fut is not None:
+                fut.cancel()
+            plot_logic.clear_preloaded(rec.get("path", ""))
+            _drop_payload_sidecar(rec["id"])
+            clear_plot_binary(rec["id"])
+            _persist_locked()
         return
     try:
         sig = _signature(p)

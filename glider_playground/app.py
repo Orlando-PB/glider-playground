@@ -467,6 +467,7 @@ def api_plot_data_bounds(
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
+    max_points: int = None,
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
@@ -479,6 +480,7 @@ def api_plot_data_bounds(
         profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
         ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc, highlight_profile=highlight_profile,
+        max_points=max_points,
     )
 
 

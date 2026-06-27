@@ -1250,7 +1250,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
                           view_x_min=None, view_x_max=None, view_y_min=None, view_y_max=None,
                           profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
-                          ctd_interpolate=False, ctd_qc=False, highlight_profile=False):
+                          ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None):
     if c_var == "None":
         c_var = ""
 
@@ -1408,15 +1408,21 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
+    # Honour the same point budget the initial load used (the user's Quality cap,
+    # split across open panels), so a zoom can never draw MORE points than the cap
+    # the user picked. Without this the zoom refetch defaulted to MAX_RENDER_POINTS
+    # and could blow past a smaller cap (e.g. 60k on the server) into 100k+ points.
+    render_cap = max_points if (max_points and max_points > 0) else MAX_RENDER_POINTS
+
     # Does this payload hold every raw point in the fetched box (no point dropped)?
     # The client records it so a further zoom-IN that stays inside this box can skip
     # refetching — there's no more detail to be had. Note the stride below uses FLOOR
     # division, so for total in [cap, 2*cap) step == 1 and nothing is actually dropped;
     # `complete` tracks the real stride, not just total <= cap, so it's honest there.
-    complete = total <= MAX_RENDER_POINTS
+    complete = total <= render_cap
 
-    if total > MAX_RENDER_POINTS:
-        step = total // MAX_RENDER_POINTS
+    if total > render_cap:
+        step = total // render_cap
         complete = step <= 1   # step of 1 keeps every point despite total > cap
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
