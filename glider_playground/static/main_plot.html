@@ -1270,7 +1270,11 @@
                     _currentZoom = null;
                     if (_originalPlotData) {
                         plotData = _originalPlotData;
-                        Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                        // See resetZoomToFull: suppress the resolved-range relayout this
+                        // react re-emits so it doesn't re-enter as a full-extent zoom.
+                        _suppressRelayout = true;
+                        Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
+                            .then(() => { _suppressRelayout = false; });
                         if (window.logRedraw) window.logRedraw('zoom out (autorange)', (plotData.x && plotData.x.length) || 0);
                         window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                     }
@@ -1385,15 +1389,22 @@
         // restoring the base downsampled record. Shared by Plotly's own double-click
         // and by a double-click landing on the point popup (which sits over the plot).
         function resetZoomToFull() {
-            _suppressRelayout = false;
             if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
             clearTimeout(_pendingBounds);
             _currentZoom = null;
             if (_originalPlotData) {
                 plotData = _originalPlotData;
-                Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                // Suppress the relayout this react emits: Plotly resolves the autoranged
+                // axes to concrete full-extent ranges and fires plotly_relayout with them,
+                // which the handler would otherwise read as a fresh zoom and kick off a
+                // full-dataset hi-res refetch — overriding the user's quality cap.
+                _suppressRelayout = true;
+                Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
+                    .then(() => { _suppressRelayout = false; });
                 if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+            } else {
+                _suppressRelayout = false;
             }
             window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
             renderProfileSidebar();   // zoom cleared → drop the marginal greying
