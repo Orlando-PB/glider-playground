@@ -478,6 +478,41 @@ def get_track_endpoint(filepath):
     return {"last_lat": float(lat[-1]), "last_lon": float(lon[-1])}
 
 
+def get_nearest_fix(filepath, time_ms):
+    """Nearest in-time GPS fix to ``time_ms`` (epoch milliseconds).
+
+    A clicked plot point carries a TIME but no position (LAT/LON are sparse —
+    fixed only at the surface). We match the requested time to the closest
+    sample that actually has a valid lat/lon, so the globe can pin where the
+    glider was around that moment. Returns ``{lat, lon, time, dt_seconds}`` or
+    an ``{error}`` dict.
+    """
+    try:
+        lat, lon, _pres, _temp = _read_lat_lon_pres_temp(filepath)
+        times = _read_track_times(filepath)  # epoch seconds, NaN where invalid
+    except Exception as e:
+        return {"error": str(e)}
+
+    n = min(len(lat), len(lon), len(times))
+    if n == 0:
+        return {"error": "No position data"}
+    lat, lon, times = lat[:n], lon[:n], times[:n]
+
+    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(times)
+    idx = np.flatnonzero(valid)
+    if idx.size == 0:
+        return {"error": "No position fixes"}
+
+    t_target = float(time_ms) / 1000.0
+    j = idx[int(np.argmin(np.abs(times[idx] - t_target)))]
+    return {
+        "lat": float(lat[j]),
+        "lon": float(lon[j]),
+        "time": float(times[j]) * 1000.0,
+        "dt_seconds": float(abs(times[j] - t_target)),
+    }
+
+
 def generate_map_image(filepath):
     t0 = time.time()
     try:

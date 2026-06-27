@@ -88,6 +88,38 @@
         #bgSpinner.active { opacity: 1; }
 
         .js-plotly-plot .plotly text { fill: var(--text-secondary) !important; }
+
+        /* Clicked-point readout — top-centre, mirrors the globe's coord bubble.
+           Shows the point's axes (time / depth / colour value) with a close (✕)
+           that also clears the matching blue pin on every open globe. */
+        #point-bubble {
+            display: none; position: absolute; top: 8px; left: 50%;
+            transform: translateX(-50%); z-index: 30;
+            align-items: flex-start; gap: 8px; padding: 6px 6px 6px 11px;
+            border-radius: 8px; color: var(--text-primary);
+            background: var(--anno-bg);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+            border: 1px solid var(--border);
+            max-width: calc(100% - 16px); box-sizing: border-box;
+        }
+        #point-bubble.visible { display: flex; }
+        #point-bubble .pin-dot {
+            flex: 0 0 auto; width: 9px; height: 9px; margin-top: 3px;
+            border-radius: 50%; background: #3b82f6; border: 1px solid rgba(255,255,255,0.7);
+        }
+        #point-rows { display: flex; flex-direction: column; gap: 1px; }
+        #point-rows .pr { display: flex; gap: 6px; white-space: nowrap; line-height: 1.35; font-size: 11px; }
+        #point-rows .pr-label { color: var(--text-muted); font-weight: 600; }
+        #point-rows .pr-val {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            user-select: text;
+        }
+        #point-close {
+            flex: 0 0 auto; width: 20px; height: 20px; border: none; border-radius: 5px;
+            cursor: pointer; background: transparent; color: var(--text-muted);
+            font-size: 13px; line-height: 1; padding: 0;
+        }
+        #point-close:hover { background: color-mix(in srgb, var(--text-primary) 14%, transparent); color: var(--text-primary); }
     </style>
     <script>
         (function() {
@@ -123,6 +155,13 @@
     <!-- Optional depth-profile marginal (value vs depth), an SVG mini-plot pinned to
          the left. Toggled by the Advanced "Profile" control (profile_sidebar param). -->
     <div id="profileDiv"></div>
+
+    <!-- Clicked-point readout (top-centre). Populated when a point is clicked. -->
+    <div id="point-bubble">
+        <span class="pin-dot"></span>
+        <div id="point-rows"></div>
+        <button id="point-close" type="button" title="Close">✕</button>
+    </div>
 
     <script>
         // --- Render timing ---------------------------------------------------
@@ -402,6 +441,26 @@
                 .some(k => { const v = urlParams.get(k); return v !== null && v !== ''; });
         }
 
+        // Convert an x-axis value (a Plotly date string from a relayout event, or a
+        // number) to epoch-ms in the SAME space as the plotted data. We use Plotly's
+        // own range→linear conversion (xaxis.r2l) rather than parsing the string
+        // ourselves: Plotly emits these date strings in its own timezone convention,
+        // and assuming UTC (appending 'Z') was an hour off whenever the build formats
+        // them in browser-local time — which made zoom bg-fetches request a window an
+        // hour away from what's on screen (so a sub-hour zoom showed no points).
+        function axisXToMs(v) {
+            if (typeof v === 'number') return v;
+            if (v === null || v === undefined) return NaN;
+            const gd = document.getElementById('plotDiv');
+            const xa = gd && gd._fullLayout && gd._fullLayout.xaxis;
+            if (xa && typeof xa.r2l === 'function') {
+                const m = xa.r2l(v);
+                if (typeof m === 'number' && isFinite(m)) return m;
+            }
+            const t = Date.parse(String(v).replace(' ', 'T') + 'Z');   // axis not ready yet
+            return isNaN(t) ? Date.parse(v) : t;
+        }
+
         // Per-point "is inside the current zoom window" flag, in the main plot's
         // (x_var, depth) space, or null when there's no zoom (→ no greying). Mirrors
         // the server's zoom_mask so the local marginal greys exactly as the fetch did.
@@ -409,11 +468,7 @@
             const z = _currentZoom;
             if (!z || z.xMin === undefined || z.xMax === undefined
                    || z.yMin === undefined || z.yMax === undefined) return null;
-            const toMs = (s) => {
-                if (typeof s === 'number') return s;
-                const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
-                return isNaN(t) ? Date.parse(s) : t;
-            };
+            const toMs = axisXToMs;
             const isXDate = !!src.is_x_dt;
             const xlo = isXDate ? toMs(z.xMin) : Number(z.xMin);
             const xhi = isXDate ? toMs(z.xMax) : Number(z.xMax);
@@ -506,11 +561,7 @@
             const z = _currentZoom;
             if (z && mainXVar && z.xMin !== undefined && z.xMax !== undefined
                     && z.yMin !== undefined && z.yMax !== undefined) {
-                const toMs = (s) => {
-                    if (typeof s === 'number') return s;
-                    const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
-                    return isNaN(t) ? Date.parse(s) : t;
-                };
+                const toMs = axisXToMs;
                 const isXDate = plotData && plotData.is_x_dt;
                 const xlo = isXDate ? toMs(z.xMin) : Number(z.xMin);
                 const xhi = isXDate ? toMs(z.xMax) : Number(z.xMax);
@@ -930,6 +981,10 @@
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
             }
 
+            // Keep the clicked-point marker across full redraws (theme / zoom-fetch /
+            // reset all rebuild via buildLayout); a relayout-only path leaves it be.
+            layout.shapes = pinShapes();
+
             return layout;
         }
 
@@ -1212,6 +1267,25 @@
                 _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
             });
 
+            // Click-to-inspect a point. hovermode is off (kept off for WebGL perf
+            // on huge scatters), so Plotly's own plotly_click doesn't fire — we do
+            // our own nearest-point hit test in pixel space instead. Plotly stops
+            // propagation on its drag layer, so (like the panelActivate hooks) we
+            // listen on document in the capture phase. handlePlotClick validates the
+            // click landed inside the drawing area; the move tolerance ignores drags.
+            let _ptDown = null;
+            const _PT_MOVE_TOL = 6;
+            document.addEventListener('pointerdown', (e) => {
+                _ptDown = { x: e.clientX, y: e.clientY };
+            }, true);
+            document.addEventListener('pointerup', (e) => {
+                const start = _ptDown; _ptDown = null;
+                if (!start) return;
+                if (e.target && e.target.closest && e.target.closest('#point-bubble')) return; // popup handles itself
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _PT_MOVE_TOL) return; // a drag/zoom
+                handlePlotClick(e.clientX, e.clientY);
+            }, true);
+
             }   // end if (!_handlersAttached)
 
             return drawDone;
@@ -1221,22 +1295,26 @@
             bgSpinner.classList.add('active'); 
             const params = new URLSearchParams(urlParams);
             
-            // Plotly emits datetime axis values as naive strings like
-            // '2026-04-25 10:08:25.6638'. The server's data is naive UTC, so
-            // we MUST parse these as UTC. `new Date(naiveString).getTime()`
-            // interprets them as *local* time, which silently shifts the
-            // bounds by the user's UTC offset and makes the bounds query
-            // match an offset window of data — visible as "missing points".
-            const parseAxisDateAsUTC = (s) => {
-                if (typeof s === 'number') return s;
-                // Convert "YYYY-MM-DD HH:MM:SS[.fff]" to ISO-8601 UTC.
-                const iso = String(s).replace(' ', 'T') + 'Z';
-                const t = Date.parse(iso);
-                return isNaN(t) ? Date.parse(s) : t;
-            };
             const isXDate = plotData.is_x_dt;
-            let xMinVal = isXDate ? parseAxisDateAsUTC(xMin) : Number(xMin);
-            let xMaxVal = isXDate ? parseAxisDateAsUTC(xMax) : Number(xMax);
+            let xMinVal, xMaxVal;
+            // For a datetime x-axis, read the visible window straight from the axis
+            // pixel scale (p2c) instead of parsing Plotly's emitted range strings.
+            // With numeric epoch-ms data, Plotly formats those range strings in the
+            // BROWSER'S LOCAL timezone, but the server's data is UTC — parsing them
+            // (as UTC or via r2l) shifted the fetched window by the local offset
+            // (e.g. BST = +1h), so a sub-hour zoom fetched an empty, hour-off window.
+            // p2c is pure linear math (pixels → data ms): no Date, no timezone, so it
+            // always matches the ms space the points were plotted in.
+            const _gd = document.getElementById('plotDiv');
+            const _xa = isXDate && _gd && _gd._fullLayout ? _gd._fullLayout.xaxis : null;
+            if (_xa && typeof _xa.p2c === 'function' && _xa._length) {
+                const a = Number(_xa.p2c(0)), b = Number(_xa.p2c(_xa._length));
+                xMinVal = Math.min(a, b); xMaxVal = Math.max(a, b);
+            } else {
+                xMinVal = isXDate ? axisXToMs(xMin) : Number(xMin);
+                xMaxVal = isXDate ? axisXToMs(xMax) : Number(xMax);
+            }
+
             let yMinVal = Number(yMin);
             let yMaxVal = Number(yMax);
 
@@ -1323,6 +1401,7 @@
                 // the new plot starts clean (no stale zoom / base record / in-flight fetch).
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
+                hidePointBubble();   // the old pin's point won't survive the new data
                 urlParams = new URLSearchParams(msg.params || '');
                 _multiview = urlParams.get('multiview') === '1';
                 _profileSidebar = urlParams.get('profile_sidebar') === 'true';
@@ -1354,6 +1433,13 @@
                 return;
             }
 
+            // Parent clearing the point popup (X pressed on a globe bubble, or a new
+            // selection made elsewhere). Independent of plotData, so handle it here.
+            if (msg.type === 'clearPointPopup') { hidePointBubble(); return; }
+
+            // A sibling plot picked a point — mirror it here by matching time.
+            if (msg.type === 'selectPointByTime') { selectPointByTime(msg.timeMs); return; }
+
             if (!plotData) return;
 
             if (msg.type === 'updateLimits') {
@@ -1368,12 +1454,9 @@
                 const invY = urlParams.get('invert_y') === 'true';
                 if (!hasX && !hasY) return;
 
-                // Parse an axis bound to a comparable number (ms for date axes).
-                const toNumX = (v) => {
-                    if (typeof v === 'number') return v;
-                    const t = Date.parse(String(v).replace(' ', 'T') + 'Z');
-                    return isNaN(t) ? Date.parse(v) : t;
-                };
+                // Parse an axis bound to a comparable number (ms for date axes), via
+                // Plotly's own conversion so it matches the plotted data's ms space.
+                const toNumX = axisXToMs;
                 const gl = _globalExtent || {};
 
                 // Numeric incoming x-range, for "is this a zoom-out?" comparisons.
@@ -1577,6 +1660,167 @@
                 window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
             }
         });
+
+        // ── Clicked-point popup ────────────────────────────────────────────
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        // Epoch-ms → "25 Apr 2026, 10:08:25 UTC". Data times are naive UTC, so we
+        // read the UTC fields explicitly (never the viewer's local timezone).
+        function fmtPlotTime(ms) {
+            const d = new Date(ms);
+            if (isNaN(d.getTime())) return String(ms);
+            const p = (n) => String(n).padStart(2, '0');
+            return `${p(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, `
+                 + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+        }
+
+
+        function _unitSuffix(u) {
+            u = (u || '').trim();
+            // '1' / 'dimensionless' are placeholder "no real unit" values that read
+            // as noise in the popup (e.g. "34.9295 1") — drop them.
+            if (!u || u === 'No units' || u === '1' || u === '1.0' || u.toLowerCase() === 'dimensionless') return '';
+            return ' ' + u;
+        }
+
+        function _fmtVal(v) {
+            if (v === null || v === undefined || Number.isNaN(v)) return '–';
+            const a = Math.abs(v);
+            if (a !== 0 && (a < 0.001 || a >= 1e6)) return v.toExponential(3);
+            return Number(v.toFixed(4)).toString();
+        }
+
+        function renderPointBubble(rows) {
+            const wrap = document.getElementById('point-rows');
+            if (!wrap) return;
+            wrap.innerHTML = '';
+            for (const [label, val] of rows) {
+                const r = document.createElement('div'); r.className = 'pr';
+                const l = document.createElement('span'); l.className = 'pr-label'; l.textContent = label;
+                const v = document.createElement('span'); v.className = 'pr-val'; v.textContent = val;
+                r.append(l, v); wrap.appendChild(r);
+            }
+            document.getElementById('point-bubble').classList.add('visible');
+        }
+
+        function hidePointBubble() {
+            const b = document.getElementById('point-bubble');
+            if (b) b.classList.remove('visible');
+            _pinPoint = null;
+            applyPinShape();
+        }
+
+        // The blue marker drawn on the clicked point. A Plotly circle shape anchored
+        // to the point's DATA coordinates with pixel sizing, so it stays glued to the
+        // point through zoom/pan (Plotly re-projects + clips it for us) and keeps a
+        // constant on-screen size. Mirrors the globe's blue pin (blue + white ring).
+        let _pinPoint = null;   // null or { x, y } in data coords
+        function pinShapes() {
+            if (!_pinPoint) return [];
+            const R = 5;   // px radius (≈ the globe's 11px dot)
+            return [{
+                type: 'circle', xref: 'x', yref: 'y',
+                xsizemode: 'pixel', ysizemode: 'pixel',
+                xanchor: _pinPoint.x, yanchor: _pinPoint.y,
+                x0: -R, x1: R, y0: -R, y1: R,
+                fillcolor: '#3b82f6', line: { color: '#ffffff', width: 2 },
+                layer: 'above',
+            }];
+        }
+        function applyPinShape() {
+            const gd = document.getElementById('plotDiv');
+            if (gd && gd._fullLayout) { try { Plotly.relayout(gd, { shapes: pinShapes() }); } catch (_) {} }
+        }
+
+        // Show the popup for data index `i` and ask the parent to pin its lat/lon
+        // (resolved from the point's TIME) on every open globe + sync the matching
+        // point onto sibling plots. `opts.silent` suppresses the outbound message —
+        // used when THIS popup was itself driven by a sibling's pick, so a near (but
+        // not exact) time match can't bounce back and cascade between plots.
+        function showPointPopup(i, opts) {
+            if (!plotData) return;
+            const xv = plotData.x[i], yv = plotData.y[i];
+            const cv = (plotData.c && plotData.c.length) ? plotData.c[i] : null;
+            const rows = [];
+            if (plotData.is_x_dt && typeof xv === 'number') {
+                rows.push(['Time', fmtPlotTime(xv)]);
+            } else {
+                rows.push([plotData.x_var || 'X', _fmtVal(xv) + _unitSuffix(plotData.x_units)]);
+            }
+            rows.push([plotData.y_var || 'Y', _fmtVal(yv) + _unitSuffix(plotData.y_units)]);
+            if (cv !== null && cv !== undefined && !Number.isNaN(cv)) {
+                rows.push([plotData.c_var || 'Value', _fmtVal(cv) + _unitSuffix(plotData.c_units)]);
+            }
+            renderPointBubble(rows);
+
+            // Drop the blue marker on the point (tracks zoom/pan via the layout shape).
+            _pinPoint = { x: xv, y: yv };
+            applyPinShape();
+
+            if (opts && opts.silent) return;   // driven by a sibling — don't echo back
+            const payload = { type: 'plotPointPick' };
+            if (plotData.is_x_dt && typeof xv === 'number' && isFinite(xv)) payload.timeMs = xv;
+            try { window.parent.postMessage(payload, '*'); } catch (_) {}
+        }
+
+        // A sibling plot was clicked: select OUR nearest point at the same time and
+        // show its values. Silent (never re-broadcast) so a slightly-off nearest
+        // match can't ping-pong between plots. Only time-axis plots can match; others
+        // clear any stale popup so the selection stays consistent across the board.
+        function selectPointByTime(timeMs) {
+            if (!plotData || !plotData.is_x_dt || typeof timeMs !== 'number') { hidePointBubble(); return; }
+            const xs = plotData.x;
+            let best = -1, bestD = Infinity;
+            for (let i = 0; i < xs.length; i++) {
+                const xv = xs[i];
+                if (xv === null || xv === undefined || Number.isNaN(xv)) continue;
+                const d = Math.abs(xv - timeMs);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best >= 0) showPointPopup(best, { silent: true });
+            else hidePointBubble();
+        }
+
+        // Nearest plotted point to a screen click, in pixel space. Returns when the
+        // click lands within HIT_TOL pixels of a point; otherwise does nothing (a
+        // click on truly empty plot area shouldn't open a popup). The radius is
+        // deliberately generous: zoomed out the points are dense so the nearest is
+        // always within a few px (so this changes nothing), but zoomed in they're
+        // sparse, and a wider radius lets you click at/near any rendered point.
+        const _HIT_TOL = 40;
+        function handlePlotClick(clientX, clientY) {
+            const gd = document.getElementById('plotDiv');
+            if (!gd || !gd._fullLayout || !plotData || !plotData.x || !plotData.x.length) return;
+            const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+            if (!xa || !ya || xa._offset === undefined) return;
+            const rect = gd.getBoundingClientRect();
+            const cx = clientX - rect.left, cy = clientY - rect.top;
+            // Ignore clicks outside the drawing area (axes, margins).
+            if (cx < xa._offset || cx > xa._offset + xa._length ||
+                cy < ya._offset || cy > ya._offset + ya._length) return;
+
+            const xs = plotData.x, ys = plotData.y, n = xs.length;
+            let best = -1, bestD = _HIT_TOL * _HIT_TOL;
+            for (let i = 0; i < n; i++) {
+                const xv = xs[i], yv = ys[i];
+                if (xv === null || yv === null || xv === undefined || yv === undefined) continue;
+                if (Number.isNaN(xv) || Number.isNaN(yv)) continue;
+                const sx = xa._offset + xa.c2p(xv);
+                const sy = ya._offset + ya.c2p(yv);
+                const dx = sx - cx, dy = sy - cy;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best >= 0) showPointPopup(best);
+        }
+
+        (function wirePointBubble() {
+            const closeBtn = document.getElementById('point-close');
+            if (closeBtn) closeBtn.addEventListener('click', () => {
+                hidePointBubble();
+                try { window.parent.postMessage({ type: 'plotPointClear' }, '*'); } catch (_) {}
+            });
+        })();
 
         // Plotly's responsive resize keeps the plot sized to its (shifted)
         // container; just re-pin the colour bar to the redrawn drawing area.

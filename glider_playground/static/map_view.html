@@ -147,7 +147,7 @@
             max-width: calc(100vw - 20px); box-sizing: border-box;
         }
         #coord-bubble.visible { display: flex; }
-        #coord-bubble .coord-pin { font-size: 15px; color: var(--accent); }
+        #coord-bubble .coord-pin { font-size: 15px; color: #3b82f6; }
         #coord-text {
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 11px; white-space: nowrap; user-select: text;
@@ -387,6 +387,13 @@
         let showDac = false;   // DAC arrows default to off, even when available; user toggles them on
         let _trackView = null;   // active track's {centreLat, centreLng, maxSpan} for re-fitting the camera
 
+        // The single blue "pinned point" — a clicked location on this globe, or one
+        // pushed in from another globe / a clicked plot point (see showPin/clearPin).
+        // Drawn as an HTML marker (like the live-glider dot, but blue and a touch
+        // smaller) in the same html layer as the position dots, plus the coord-bubble
+        // readout. Kept in sync across every open globe by the parent.
+        let _pinDot = null;   // null or {lat, lng, pin:true}
+
         function activeTrack() { return allTracks.find(t => t.id === activeId) || null; }
 
         // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass / ssh) ──
@@ -483,6 +490,9 @@
                     pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, live: false, active: false });
                 }
             }
+            // The blue pinned point rides in the same html layer so it re-applies
+            // automatically whenever the dots are refreshed (track switch, etc.).
+            if (_pinDot) pts.push(_pinDot);
             return pts;
         }
 
@@ -747,6 +757,11 @@
         // live deployment, grey for a historical one.
         function dotEl(d) {
             const el = document.createElement('div');
+            // Blue pinned point: same look as the live dot, blue and a touch smaller.
+            if (d.pin) {
+                el.style.cssText = 'width:11px;height:11px;border-radius:50%;background:#3b82f6;border:2px solid #fff;box-shadow:0 0 12px rgba(59,130,246,0.85);pointer-events:none;transform:translate(-50%,-50%);';
+                return el;
+            }
             const c = d.live ? '#ef4444' : '#9ca3af';
             const glow = d.live ? '0 0 12px rgba(239,68,68,0.8)' : '0 0 8px rgba(156,163,175,0.7)';
             const sz = d.live ? 14 : 10;
@@ -1063,7 +1078,13 @@
                     : nearestTrackAtScreen(e.clientX, e.clientY, 14);
                 if (pick) { selectTrack(pick); return; }
                 const geo = pickGlobeCoords(e.clientX, e.clientY);
-                if (geo) { showCoordBubble(geo); setCoordAim(true); }
+                if (geo) {
+                    showPin(geo.lat, geo.lng);
+                    setCoordAim(true);
+                    // Mirror the pin onto every other open globe (and clear any plot
+                    // point popup, since this is a new selection) via the parent.
+                    try { window.parent.postMessage({ type: 'coordPicked', lat: geo.lat, lng: _wrapLon(geo.lng) }, '*'); } catch (_) {}
+                }
             });
         }
 
@@ -1146,6 +1167,25 @@
             document.getElementById('coord-bubble').classList.add('visible');
         }
 
+        // Drop (or move) the blue pin: draw the dot + show the coord readout.
+        function showPin(lat, lng) {
+            if (typeof lat !== 'number' || typeof lng !== 'number') return;
+            _pinDot = { lat, lng, pin: true };
+            applyDots();
+            showCoordBubble({ lat, lng });
+        }
+
+        // Remove the blue pin and its readout from THIS globe (local only — the
+        // parent fans the clear out to the other globes / the plot popup).
+        function clearPin() {
+            _pinDot = null;
+            applyDots();
+            const bubble = document.getElementById('coord-bubble');
+            if (bubble) bubble.classList.remove('visible');
+            _lastCoord = null;
+            setCoordAim(false);
+        }
+
         // The string handed to the clipboard — plain signed decimal "lat, lon",
         // a format most piloting/GIS tools accept. Tweak once we know the target.
         function _coordCopyText() {
@@ -1157,9 +1197,10 @@
             const bubble = document.getElementById('coord-bubble');
             if (!bubble) return;
             document.getElementById('coord-close').addEventListener('click', () => {
-                bubble.classList.remove('visible');
-                _lastCoord = null;
-                setCoordAim(false);
+                clearPin();
+                // Tell the parent so the pin clears on every other globe and on the
+                // plot point popup too.
+                try { window.parent.postMessage({ type: 'coordCleared' }, '*'); } catch (_) {}
             });
             const copyBtn = document.getElementById('coord-copy');
             copyBtn.addEventListener('click', async () => {
@@ -1710,6 +1751,14 @@
                     // trigger a re-colour of the existing path (segColor reads theme on each call)
                     myGlobe.pathColor(myGlobe.pathColor());
                 }
+            } else if (event.data.type === 'pinCoord') {
+                // Another globe was clicked, or a plot point was picked — drop the
+                // blue pin here too so every globe shows the same spot.
+                if (typeof event.data.lat === 'number' && typeof event.data.lng === 'number') {
+                    showPin(event.data.lat, event.data.lng);
+                }
+            } else if (event.data.type === 'clearPin') {
+                clearPin();
             } else if (event.data.type === 'setDac') {
                 // Parent (e.g. Jelly) toggling the current arrows.
                 const want = event.data.show;

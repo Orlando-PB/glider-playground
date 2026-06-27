@@ -2975,6 +2975,26 @@
             if (syncTimeBtn) syncTimeBtn.addEventListener('click', () => toggleAlign());
         });
 
+        // ── Pinned-point sync helpers ───────────────────────────────────────
+        // Broadcast a message to every open globe iframe (optionally skipping the
+        // window it originated from), and likewise to every plot iframe.
+        function forEachMapFrame(cb, exceptWindow) {
+            Object.values(panels).forEach(p => {
+                if ((p.type === 'map' || p.type === 'map2') && p.iframe && p.iframe.contentWindow) {
+                    if (exceptWindow && p.iframe.contentWindow === exceptWindow) return;
+                    try { cb(p.iframe.contentWindow); } catch (_) {}
+                }
+            });
+        }
+        function forEachPlotFrame(cb, exceptId) {
+            Object.values(panels).forEach(p => {
+                if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
+                    if (exceptId && p.id === exceptId) return;
+                    try { cb(p.iframe.contentWindow); } catch (_) {}
+                }
+            });
+        }
+
         window.addEventListener('message', function(event) {
             const msg = event.data;
             if (!msg) return;
@@ -3037,6 +3057,61 @@
                     if (srcPanel.id !== activePanelId) setActive(srcPanel.id);
                     else pokeHighlight();
                 }
+                return;
+            }
+
+            // ── Shared "pinned point" across globes + the clicked plot ──
+            // A plot point was clicked: its own popup is already shown locally, so
+            // clear any OTHER plot's popup, then resolve the point's TIME to the
+            // nearest lat/lon and drop a blue pin on every open globe.
+            if (msg.type === 'plotPointPick') {
+                // Mirror the pick onto sibling plots. Match by TIME (the shared axis),
+                // but only across plots of the SAME dataset — a different dataset's
+                // nearest time would be unrelated. Plots that can't match (no time, or
+                // another dataset) just clear, so the selection stays consistent.
+                const srcId = srcPanel ? srcPanel.id : null;
+                const srcDs = (srcPanel && srcPanel.state && srcPanel.state.datasetId) || '';
+                Object.values(panels).forEach(p => {
+                    if (p.type !== 'plot' || !p.iframe || !p.iframe.contentWindow) return;
+                    if (srcId && p.id === srcId) return;
+                    const w = p.iframe.contentWindow;
+                    if (typeof msg.timeMs === 'number' && (!srcDs || p.state.datasetId === srcDs)) {
+                        try { w.postMessage({ type: 'selectPointByTime', timeMs: msg.timeMs }, '*'); } catch (_) {}
+                    } else {
+                        try { w.postMessage({ type: 'clearPointPopup' }, '*'); } catch (_) {}
+                    }
+                });
+                const dsId = (srcPanel && srcPanel.state && srcPanel.state.datasetId) || datasetSelect.value || '';
+                if (typeof msg.timeMs === 'number' && dsId) {
+                    fetch(`/api/nearest_fix?id=${encodeURIComponent(dsId)}&time=${msg.timeMs}`)
+                        .then(r => r.json())
+                        .then(d => {
+                            if (d && typeof d.lat === 'number' && typeof d.lon === 'number') {
+                                forEachMapFrame(w => w.postMessage({ type: 'pinCoord', lat: d.lat, lng: d.lon }, '*'));
+                            }
+                        })
+                        .catch(() => {});
+                } else if (msg.timeMs === undefined) {
+                    // Genuinely no time axis (e.g. a T-S diagram) → no resolvable
+                    // position; clear any stale globe pin so the two stay consistent.
+                    // (A missing dataset id with a time present leaves the pin alone.)
+                    forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
+                }
+                return;
+            }
+
+            // A globe was clicked: mirror the pin onto every OTHER globe and clear any
+            // plot point popup (a fresh, position-only selection supersedes it).
+            if (msg.type === 'coordPicked') {
+                forEachMapFrame(w => w.postMessage({ type: 'pinCoord', lat: msg.lat, lng: msg.lng }, '*'), event.source);
+                forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                return;
+            }
+
+            // X pressed on a globe bubble or the plot popup — clear the pin everywhere.
+            if (msg.type === 'coordCleared' || msg.type === 'plotPointClear') {
+                forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
+                forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
                 return;
             }
 

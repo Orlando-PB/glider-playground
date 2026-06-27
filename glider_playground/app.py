@@ -354,6 +354,13 @@ def api_location(id: str):
     return _cached_or_live(id, "location", spatial_logic.get_location_summary)
 
 
+@app.get("/api/nearest_fix")
+def api_nearest_fix(id: str, time: float):
+    """Closest GPS fix (lat/lon) to a given epoch-ms ``time`` — used to pin a
+    clicked plot point onto the globe. Not cached: the time varies per click."""
+    return spatial_logic.get_nearest_fix(_resolve_path(id), time)
+
+
 @app.get("/api/variables")
 def api_variables(id: str):
     cached = cache_logic.get_payload(id, "variables")
