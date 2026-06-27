@@ -2152,7 +2152,7 @@
                 // N plots get cap/N each. The server's stride downsample still spans the
                 // full record, so the extent (incl. endpoints) is preserved.
                 const nPlots = plotPanelCount();
-                const POINT_BUDGET = 200000;   // matches the server's MAX_RENDER_POINTS
+                const POINT_BUDGET = 100000;   // matches the server's MAX_RENDER_POINTS
                 let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
                 if (nPlots > 1) params += `&max_points=${Math.round(POINT_BUDGET / nPlots)}`;
                 // Warm reuse: once this iframe has loaded once, re-drive it in place with

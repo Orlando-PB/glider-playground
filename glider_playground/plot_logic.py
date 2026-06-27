@@ -13,8 +13,10 @@ import threading
 import time
 from pathlib import Path
 
-# Locked to 200k points max for optimal WebGL performance
-MAX_RENDER_POINTS = 200000
+# Max points sent to the WebGL plot. The on-screen draw cost scales with this, and
+# bg-fetch refines detail on zoom, so the zoomed-out view can decimate hard without
+# perceptible loss. 100k measured ~0.28s draw vs ~0.44s at 173k on the dev machine.
+MAX_RENDER_POINTS = 100000
 
 
 # Significant figures kept in the serialized plot arrays. The source sensor

@@ -702,6 +702,9 @@
         };
 
         let urlParams = new URLSearchParams(window.location.search);
+        // Marker opacity for the main data traces. Opaque (1.0) is the faster WebGL
+        // path; override with &marker_opacity=0.8 to A/B test draw timing on your GPU.
+        const MARKER_OPACITY = (() => { const v = parseFloat(urlParams.get('marker_opacity')); return (v >= 0 && v <= 1) ? v : 1.0; })();
         _multiview = (urlParams.get('multiview') === '1');
         _profileSidebar = (urlParams.get('profile_sidebar') === 'true');
         let plotData = null;
@@ -1092,7 +1095,7 @@
                     x: gx, y: gy, mode: 'markers', type: 'scattergl',
                     marker: {
                         size: plotConfig.defaultMarkerSize,
-                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: 0.8,
+                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: MARKER_OPACITY,
                         colorscale: gc.length && data.c ? effectiveColorscale : undefined,
                         cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
@@ -1106,7 +1109,10 @@
                 // data.x/data.c untouched for the running-mean trace below.
                 if (pc && orderActive) {
                     const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
-                    const order = pc.map((_, i) => i).sort((a, b) => {
+                    // Plain Array, not pc.map(): pc may be a Float32Array (binary path),
+                    // and a typed-array `order` would coerce the date-string x values to
+                    // NaN in the maps below → blank plot.
+                    const order = Array.from({ length: pc.length }, (_, i) => i).sort((a, b) => {
                         const va = pc[a], vb = pc[b];
                         const na = va === null || va === undefined, nb = vb === null || vb === undefined;
                         if (na && nb) return 0;
@@ -1123,7 +1129,7 @@
                     marker: {
                         size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
                         color: pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour),
-                        opacity: 0.8,
+                        opacity: MARKER_OPACITY,
                         colorscale: pc ? effectiveColorscale : undefined,
                         cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
                     },
