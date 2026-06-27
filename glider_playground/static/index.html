@@ -1311,6 +1311,19 @@
                             <option value="smallest">Smallest on top</option>
                         </select>
                     </div>
+                    <!-- Advanced only: render quality (max points sent to the WebGL plot) -->
+                    <div class="flex items-center gap-1 adv-only">
+                        <span class="text-[9px] text-gray-500 font-medium">Quality</span>
+                        <select id="quality" class="p-1.5 transition-all" title="Maximum number of points drawn. Higher = more detail but slower to load/draw; lower = faster. Auto picks 100k locally / 60k on the server. 'Full' sends every point. With multiple plots open the budget is split across them.">
+                            <option value="">Auto</option>
+                            <option value="5000">5k</option>
+                            <option value="20000">20k</option>
+                            <option value="60000">60k</option>
+                            <option value="100000">100k</option>
+                            <option value="200000">200k</option>
+                            <option value="full">Full</option>
+                        </select>
+                    </div>
                     <!-- Colour palette picker -->
                     <div class="relative" id="cmapContainer">
                         <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
@@ -1547,6 +1560,7 @@
         const invertYBtn = document.getElementById('invertYBtn');
         const profileSidebarBtn = document.getElementById('profileSidebarBtn');
         const drawOrderSelect = document.getElementById('drawOrder');
+        const qualitySelect = document.getElementById('quality');
         const applyQcBtn = document.getElementById('applyQcBtn');
         const highlightQcBtn = document.getElementById('highlightQcBtn');
         const filterTimeBtn = document.getElementById('filterTimeBtn');
@@ -2044,6 +2058,7 @@
                 ctdQc: ctdQcBtn.classList.contains('active'),
                 profileSidebar: profileSidebarBtn.classList.contains('active'),
                 drawOrder: drawOrderSelect.value || 'normal',
+                quality: qualitySelect.value || '',
                 cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
                 zoomBounds: currentZoomBounds,
                 preset: currentPreset,
@@ -2074,6 +2089,7 @@
                 updateToggleBtn(ctdQcBtn, !!s.ctdQc);
                 updateToggleBtn(profileSidebarBtn, !!s.profileSidebar);
                 drawOrderSelect.value = s.drawOrder || 'normal';
+                qualitySelect.value = s.quality || '';
                 currentZoomBounds = s.zoomBounds || null;
                 currentPreset = s.preset || '';
                 updatePresetUI();
@@ -2152,9 +2168,22 @@
                 // N plots get cap/N each. The server's stride downsample still spans the
                 // full record, so the extent (incl. endpoints) is preserved.
                 const nPlots = plotPanelCount();
-                const POINT_BUDGET = 100000;   // matches the server's MAX_RENDER_POINTS
+                // Auto point budget: 100k looks good locally; the Pi can't draw/ship
+                // much over 60k without feeling slow, so it gets a smaller default.
+                const POINT_BUDGET = isServerMode ? 60000 : 100000;
                 let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
-                if (nPlots > 1) params += `&max_points=${Math.round(POINT_BUDGET / nPlots)}`;
+                // The point budget — Auto's mode default or the Advanced "Quality" choice
+                // — is split across the open plot panels so the combined draw work (and
+                // thus wall-clock, since same-origin iframes draw serially on one main
+                // thread) stays ~constant no matter how many plots are open. 'full' is the
+                // exception: it sends a sentinel larger than any dataset so the server
+                // skips decimation entirely, per panel.
+                if (s.quality === 'full') {
+                    params += `&max_points=100000000`;
+                } else {
+                    const budget = s.quality ? Number(s.quality) : POINT_BUDGET;
+                    params += `&max_points=${Math.max(1, Math.round(budget / nPlots))}`;
+                }
                 // Warm reuse: once this iframe has loaded once, re-drive it in place with
                 // a 'replot' message (→ Plotly.react, reusing the WebGL context) instead
                 // of a full src navigation. _frameReady flips true on the first
@@ -4940,6 +4969,24 @@
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
         profileSidebarBtn.addEventListener('click', () => handleToggle(profileSidebarBtn, false));
         drawOrderSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
+        qualitySelect.addEventListener('change', () => {
+            resetPlotState(false);
+            const plots = Object.values(panels).filter(p => p.type === 'plot');
+            // Single plot: the normal active-panel re-plot path is enough.
+            if (plots.length <= 1) { updatePlot(); return; }
+            // Multiview: quality is a shared budget, so apply the new value to EVERY
+            // plot panel and re-render them all — each panel re-derives its split
+            // (budget / nPlots) in renderPanel, so the fractions stay correct.
+            _interactionTs = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
+            const q = qualitySelect.value || '';
+            const ap = activePlotPanel();
+            if (ap) ap.state = captureToolbarState();   // fold in any other live toolbar edits
+            plots.forEach(p => {
+                if (p.state) p.state.quality = q;
+                renderPlotPanel(p);
+            });
+            scheduleSaveLayout();
+        });
         filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
         
         applyQcBtn.addEventListener('click', () => {
@@ -5237,6 +5284,11 @@
         async function refreshFiles({ activate = false } = {}) {
             try {
                 const res = await fetch('/api/files');
+                // On the Pi the server can be briefly saturated by the background
+                // processing worker, so the reverse proxy returns a 502 with an HTML
+                // body. Bail quietly instead of letting res.json() throw a noisy
+                // "Unexpected token '<'" on every poll.
+                if (!res.ok) return;
                 const data = await res.json();
                 fileRecords = data.files || [];
             } catch (e) {
@@ -5317,7 +5369,10 @@
 
             const anyProcessing = fileRecords.some(f => f.status === 'processing' || f.status === 'pending');
             if (anyProcessing) {
-                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), 700);
+                // Poll less aggressively on the Pi: each /api/files re-scans the
+                // data dir and stats every file, which contends with the processing
+                // worker. 700ms is fine on a fast local box; 2.5s on the server.
+                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), isServerMode ? 2500 : 700);
             } else if (pollingTimer) {
                 clearInterval(pollingTimer);
                 pollingTimer = null;
@@ -5403,7 +5458,10 @@
                 gliderMap.classList.add('hidden');
                 mapEmptyText.classList.remove('hidden');
                 showProcessingOverlay(rec);
-                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), 700);
+                // Poll less aggressively on the Pi: each /api/files re-scans the
+                // data dir and stats every file, which contends with the processing
+                // worker. 700ms is fine on a fast local box; 2.5s on the server.
+                if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), isServerMode ? 2500 : 700);
             }
         }
 

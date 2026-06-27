@@ -113,6 +113,25 @@ def _release_memory():
     gc.collect()
     _malloc_trim()
 
+
+def _lower_worker_priority():
+    """Renice the calling (worker) thread so request-serving always wins the CPU.
+
+    On the Pi the processing worker runs heavy numpy (CTD prewarm, derivation)
+    that otherwise saturates the core and starves uvicorn — static files take
+    seconds and the proxy starts returning 502s. On Linux nice is per-thread, so
+    this only deprioritises the worker, not the server. setpriority is absolute
+    (unlike os.nice's relative increment) so it's safe to call once per file.
+    Skipped off-server: on macOS niceness is per-process, and the desktop/local
+    box has spare cores anyway, so we never want to slow it down.
+    """
+    if os.getenv("IS_SERVER") != "True":
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, 10)
+    except (AttributeError, OSError):
+        pass
+
 STATUS_PENDING = "pending"
 STATUS_PROCESSING = "processing"
 STATUS_READY = "ready"
@@ -418,13 +437,27 @@ def _scan_data_dir():
                 pass
 
 
+# The on-disk sweep (rglob the data dir + stat every registered file) only needs
+# to detect externally-added/changed files, which doesn't need sub-second latency.
+# The frontend polls list_files() every 700ms-2.5s while a file is processing, so
+# without this guard each poll re-scans the disk and contends with the worker on
+# the Pi. Live status still updates instantly: _public_view reads the rec dicts
+# the worker mutates in place, so we keep returning fresh progress between sweeps.
+_SCAN_INTERVAL_S = 3.0
+_last_scan = 0.0
+
+
 def list_files() -> list[dict]:
+    global _last_scan
     _load_once()
-    _scan_data_dir()
-    with _lock:
-        recs = list(_registry.values())
-    for rec in recs:
-        _refresh(rec)
+    now = time.monotonic()
+    if now - _last_scan >= _SCAN_INTERVAL_S:
+        _last_scan = now
+        _scan_data_dir()
+        with _lock:
+            recs = list(_registry.values())
+        for rec in recs:
+            _refresh(rec)
     with _lock:
         return [_public_view(r) for r in _registry.values()]
 
@@ -704,6 +737,7 @@ def _process(file_id: str):
         return
 
     is_server = os.getenv("IS_SERVER") == "True"
+    _lower_worker_priority()
     done_steps = set(rec.get("_done_steps") or [])
 
     def _is_done(step: str) -> bool:
