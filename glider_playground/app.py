@@ -404,12 +404,15 @@ def api_plot_data(
     # Cache the packed binary payload per (file signature + version + params): a hit
     # skips the entire read→filter→downsample→pack pipeline. Only the binary form is
     # cached (it's what we send); the JSON path is the rare error/fallback case.
-    cache_key = "|".join(str(v) for v in (
-        x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc, filter_time,
-        profile_num, cycle_num, cycle_var, sci_phases, direction_filter,
-        ctd_interpolate, ctd_qc, highlight_profile, max_points,
-        zoom_x_var, zoom_x_min, zoom_x_max, zoom_y_min, zoom_y_max,
-    )) if binary else None
+    cache_key = plot_logic.plot_cache_params_str(
+        x_var=x_var, y_var=y_var, c_var=c_var, apply_qc=apply_qc, qc_flags=qc_flags,
+        highlight_qc=highlight_qc, filter_time=filter_time, profile_num=profile_num,
+        cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=sci_phases,
+        direction_filter=direction_filter, ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
+        highlight_profile=highlight_profile, max_points=max_points,
+        zoom_x_var=zoom_x_var, zoom_x_min=zoom_x_min, zoom_x_max=zoom_x_max,
+        zoom_y_min=zoom_y_min, zoom_y_max=zoom_y_max,
+    ) if binary else None
     if cache_key is not None:
         hit = cache_logic.get_plot_binary(id, cache_key)
         if hit is not None:

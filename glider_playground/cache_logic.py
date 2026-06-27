@@ -155,6 +155,10 @@ STEP_CTD_CLEAN = "ctd_clean"
 STEP_CTD_INTERP = "ctd_interp"
 STEP_CTD_BOTH = "ctd_both"
 STEP_CTD_RECS = "ctd_recs"
+# Best-effort prewarm of the default plot payloads — deliberately NOT in ALL_STEPS
+# so "ready" never waits on it (the file is fully usable without it; a missing
+# prewarm just means the first click computes live, as before).
+STEP_PLOT_PREWARM = "plot_prewarm"
 ALL_STEPS = (STEP_PRELOAD, STEP_DERIVE, STEP_DATASET_INFO, STEP_PROFILES, STEP_SPATIAL,
              STEP_3D, STEP_CTD_CLEAN, STEP_CTD_INTERP, STEP_CTD_BOTH, STEP_CTD_RECS)
 
@@ -725,6 +729,125 @@ def _mark_step_done(rec: dict, step: str):
         _save_payload_sidecar(rec)
 
 
+# --- Default-plot prewarm -----------------------------------------------------
+#
+# These mirror the frontend's default first request so the prewarmed binary
+# lands under the exact key the browser will ask for. They MUST track the
+# index.html defaults:
+#   - x/y/c come from OceanPresets + findBest (prefer the _ADJUSTED variant).
+#   - apply_qc / filter_time follow QC presence (apply_qc on, filter_time off,
+#     when the file has any *_QC var; inverted otherwise) — see loadVariables.
+#   - ctd_interpolate / ctd_qc follow the file's recommended flags (recommendedCtd).
+#   - cycle_var is the auto-detected cycle variable (CycleProfile / /api/cycles).
+# A mismatch is harmless: the entry just won't be hit and the request computes
+# live, exactly as before. So this can never serve wrong data — worst case it's
+# wasted work.
+_PREWARM_X_CANDIDATES = ["TIME", "TIME_GPS"]
+_PREWARM_Y_CANDIDATES = ["PRES", "GLIDER_DEPTH", "DEPTH", "PRES_ENG"]
+# c-var lists per preset, same preference order as OceanPresets in index.html.
+_PREWARM_C_CANDIDATES = [
+    ["TEMP", "CONS_TEMP"],
+    ["PRAC_SALINITY", "ABS_SALINITY"],
+    ["DENSITY"],
+    ["CHLA"],
+    ["MOLAR_DOXY", "DOXY", "OXYSAT_DOXY", "DPHASE_DOXY", "TPHASE_DOXY", "BPHASE_DOXY", "FREQUENCY_DOXY"],
+    ["BBP700", "BBP532"],
+]
+
+
+def _resolve_first(candidates, var_set):
+    """Mirror of the frontend's findBest: first candidate present in the file,
+    preferring its _ADJUSTED variant."""
+    for v in candidates:
+        adj = f"{v}_ADJUSTED"
+        if adj in var_set:
+            return adj
+        if v in var_set:
+            return v
+    return None
+
+
+def _prewarm_default_plots(rec: dict):
+    """Pre-pack the binary plot payloads for the common default views so the first
+    click is a cache hit instead of a cold read→ctd→filter→pack. Runs after the
+    file is READY (so put_plot_binary will store) and is best-effort throughout."""
+    from . import cycle_profile_logic  # local import: avoids any import-order cycle
+
+    path = rec.get("path")
+    if not path or not Path(path).exists():
+        return
+    var_names = set(plot_logic._get_var_names(path) or [])
+    if not var_names:
+        return
+
+    x_var = _resolve_first(_PREWARM_X_CANDIDATES, var_names)
+    y_var = _resolve_first(_PREWARM_Y_CANDIDATES, var_names)
+    if not x_var or not y_var:
+        return
+
+    has_any_qc = any(n.endswith("_QC") for n in var_names)
+    apply_qc = has_any_qc
+    filter_time = not has_any_qc
+    qc_flags = "0,1,2,5,8"
+    ctd_interp = bool(rec.get("ctd_interp_recommended"))
+    ctd_qc = bool(rec.get("ctd_clean_recommended"))
+
+    try:
+        cyc = cycle_profile_logic.get_cycles(path)
+        cycle_var = cyc.get("cycle_var") if isinstance(cyc, dict) else None
+    except Exception:
+        cycle_var = None
+
+    is_server = os.getenv("IS_SERVER") == "True"
+    # Match the frontend's Auto budget: 60k on the server, 100k locally.
+    max_points = 60000 if is_server else 100000
+
+    c_vars = []
+    for cand in _PREWARM_C_CANDIDATES:
+        r = _resolve_first(cand, var_names)
+        if r and r not in c_vars:
+            c_vars.append(r)
+    if not c_vars:
+        return
+
+    # The frontend may or may not have loaded /api/cycles before firing its first
+    # plot, so the request key can carry cycle_var or omit it. With cycle_num=None
+    # the cycle_var changes nothing in the data, so we pack once and store under
+    # both keys — a guaranteed hit either way.
+    cycle_var_keys = [None] if cycle_var is None else [cycle_var, None]
+
+    for c_var in c_vars:
+        if _is_removed(rec):
+            return
+        try:
+            result = plot_logic.get_plot_data_json(
+                path, x_var, y_var, c_var,
+                apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=False,
+                filter_time=filter_time, profile_num=None,
+                cycle_num=None, cycle_var=cycle_var, sci_phases=None, direction_filter=None,
+                ctd_interpolate=ctd_interp, ctd_qc=ctd_qc, highlight_profile=False,
+                max_points=max_points, binary=True,
+            )
+        except Exception:
+            continue
+        if not isinstance(result, (bytes, bytearray)):
+            continue  # an error dict — skip (don't poison the cache)
+        data = bytes(result)
+        for cv in cycle_var_keys:
+            params_str = plot_logic.plot_cache_params_str(
+                x_var=x_var, y_var=y_var, c_var=c_var, apply_qc=apply_qc, qc_flags=qc_flags,
+                highlight_qc=False, filter_time=filter_time, profile_num=None,
+                cycle_num=None, cycle_var=cv, sci_phases="", direction_filter="",
+                ctd_interpolate=ctd_interp, ctd_qc=ctd_qc, highlight_profile=False,
+                max_points=max_points, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None,
+                zoom_y_min=None, zoom_y_max=None,
+            )
+            put_plot_binary(rec["id"], params_str, data)
+        _release_memory()
+        if is_server:
+            time.sleep(THROTTLE_PI_VARIABLES)
+
+
 def _process(file_id: str):
     rec = _registry.get(file_id)
     if rec is None:
@@ -927,6 +1050,17 @@ def _process(file_id: str):
              error="", processed_at=time.time())
         _save_payload_sidecar(rec)
         _release_memory()
+
+        # Best-effort: pre-pack the default plot payloads now that the file is READY
+        # (put_plot_binary only stores for ready files) so the first click is a cache
+        # hit. Failures here never affect the ready state.
+        if not _is_done(STEP_PLOT_PREWARM) and not _is_removed(rec):
+            try:
+                _prewarm_default_plots(rec)
+            except Exception:
+                traceback.print_exc()
+            _mark_step_done(rec, STEP_PLOT_PREWARM)
+            _release_memory()
     except Exception as e:
         if not _is_removed(rec):
             traceback.print_exc()

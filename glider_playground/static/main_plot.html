@@ -360,7 +360,12 @@
             const plotDiv = document.getElementById('plotDiv');
             if (!plotDiv) return;
             const left = _profileSidebar ? SIDEBAR_W : 0;
-            const right = cbarActive() ? CBAR_W : 0;
+            // Reserve the colour-bar gutter for EVERY multiview plot, not just the
+            // ones currently showing a bar. A plot with no colour data (solid/black/
+            // discrete cmap, or no c var) would otherwise keep its full width and run
+            // ~43px further right than its colour'd siblings, so stacked synced plots
+            // wouldn't line up. The gutter just sits empty when there's no bar.
+            const right = _multiview ? CBAR_W : 0;
             const wantLeft = left + 'px';
             const wantWidth = `calc(100% - ${left + right}px)`;
             let changed = false;
@@ -725,6 +730,24 @@
             return max;
         }
 
+        // Numeric x extent of the plotted data — epoch-ms for a date axis (whose x
+        // values are 'YYYY-MM-DD HH:MM:SS' naive-UTC strings, which getSafeMin/Max
+        // can't compare), raw numbers for a value axis. Uses the first/last non-null
+        // points; min/max covers a reversed (descending) array. Returns {min,max},
+        // which may be non-finite if every point is null. Shared by buildLayout (to
+        // pre-pad the initial range to the union) and the post-render extent report,
+        // so the two can't drift — a past divergence left date axes un-padded.
+        function xDataExtent(xs, isDt) {
+            if (!isDt) return { min: getSafeMin(xs), max: getSafeMax(xs) };
+            let first = null, last = null;
+            for (let i = 0; i < xs.length; i++) { if (xs[i] !== null) { first = xs[i]; break; } }
+            for (let i = xs.length - 1; i >= 0; i--) { if (xs[i] !== null) { last = xs[i]; break; } }
+            if (first === null) return { min: Infinity, max: -Infinity };
+            const a = new Date(first.replace(' ', 'T') + 'Z').getTime();
+            const b = new Date(last.replace(' ', 'T') + 'Z').getTime();
+            return { min: Math.min(a, b), max: Math.max(a, b) };
+        }
+
         // Decode the binary plot container (see _pack_plot_binary on the server):
         // a uint32 LE header length, a JSON header (scalars + an `arrays` layout
         // descriptor), then each array's raw LE bytes in declared order. The arrays
@@ -945,11 +968,13 @@
                 // Tight margins so stacked plots pack close in multiview. Top is
                 // mostly empty space; bottom only needs to fit the x tick labels
                 // (plus the axis title when there is one, i.e. non-datetime x).
-                // With the colour bar active, tighten the right margin so the plot
-                // sits snug against it (the strip itself provides the breathing room).
-                // A date x-axis needs only one row of ticks (see tickformatstops), so
-                // its bottom margin is tighter than a labelled value axis.
-                margin: { l: 60, r: cbarActive() ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
+                // In multiview, tighten the right margin so the plot sits snug against
+                // the colour-bar gutter (the reserved strip provides the breathing
+                // room). This is keyed on _multiview, NOT on whether THIS plot has a
+                // bar, so every synced plot keeps an identical plotting box and their
+                // x-axes line up when stacked. A date x-axis needs only one row of
+                // ticks (see tickformatstops), so its bottom margin is tighter.
+                margin: { l: 60, r: _multiview ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false,
@@ -998,12 +1023,13 @@
                 // padding and so caused a visible layout shift the moment sync drove
                 // the union range on load), pin an explicit range with the SAME side
                 // padding the union uses. A plot that already spans the full timeline
-                // then matches the union exactly → no shift. Setting it explicitly also
-                // clears any stale range on a Plotly.react reuse over a zoomed div.
-                // Only time (date) axes get synced, so only they need to pre-match the
-                // union padding; value x-axes keep Plotly's own autorange.
-                const xMin = getSafeMin(plotData.x), xMax = getSafeMax(plotData.x);
-                if (isXDate && isFinite(xMin) && isFinite(xMax) && xMax > xMin) {
+                // then matches the union exactly → the on-load union drive is a no-op
+                // (caught by the <0.1%-of-span skip in updateLimits) → no nudge.
+                // Setting it explicitly also clears any stale range on a Plotly.react
+                // reuse over a zoomed div, and keeps the same tight 1.5% padding on
+                // value x-axes (Plotly's own autorange padding is looser).
+                const { min: xMin, max: xMax } = xDataExtent(plotData.x, plotData.is_x_dt);
+                if (isFinite(xMin) && isFinite(xMax) && xMax > xMin) {
                     const pad = (xMax - xMin) * SIDE_PAD_FRAC;
                     layout.xaxis.range = [xMin - pad, xMax + pad];
                     layout.xaxis.autorange = false;
@@ -1176,30 +1202,12 @@
                 // folded into this plot's PLOT timing instead of logging on its own.
                 const _profilePromise = renderProfileSidebar();
                 if (marks) marks.profilePromise = _profilePromise;
-                let xMin, xMax;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
-
-                if (plotData.is_x_dt) {
-                    // x values are 'YYYY-MM-DD HH:MM:SS' strings (naive UTC). Convert
-                    // the endpoints to epoch-ms so multiview align-X and bgFetch
-                    // comparisons work in numeric space. min/max of the endpoints also
-                    // covers a reversed (descending) array.
-                    const xs = plotData.x;
-                    let first = null, last = null;
-                    for (let i = 0; i < xs.length; i++) { if (xs[i] !== null) { first = xs[i]; break; } }
-                    for (let i = xs.length - 1; i >= 0; i--) { if (xs[i] !== null) { last = xs[i]; break; } }
-                    if (first !== null) {
-                        const a = new Date(first.replace(' ', 'T') + 'Z').getTime();
-                        const b = new Date(last.replace(' ', 'T') + 'Z').getTime();
-                        xMin = Math.min(a, b); xMax = Math.max(a, b);
-                    } else {
-                        xMin = Infinity; xMax = -Infinity;
-                    }
-                } else {
-                    xMin = getSafeMin(plotData.x);
-                    xMax = getSafeMax(plotData.x);
-                }
+                // Epoch-ms (date) / raw (value) x extent — the SAME basis buildLayout
+                // pads from, so the parent's union range and each plot's initial range
+                // agree and the on-load sync drives no visible nudge.
+                const { min: xMin, max: xMax } = xDataExtent(plotData.x, plotData.is_x_dt);
 
                 _globalExtent = { xMin, xMax, yMin, yMax };
 
@@ -1790,13 +1798,18 @@
             if (!isFinite(xForPixel) || !isFinite(_pinPoint.y)) { pin.classList.remove('visible'); return; }
             const sx = xa._offset + xa.c2p(xForPixel);
             const sy = ya._offset + ya.c2p(_pinPoint.y);
-            // Clip to the drawing area — Plotly used to clip the shape for us.
+            // Clip to the drawing area — Plotly used to clip the shape for us. Done in
+            // plotDiv-internal coords (what _offset/c2p return), before shifting below.
             if (sx < xa._offset || sx > xa._offset + xa._length ||
                 sy < ya._offset || sy > ya._offset + ya._length) {
                 pin.classList.remove('visible'); return;
             }
-            pin.style.left = sx + 'px';
-            pin.style.top = sy + 'px';
+            // #point-pin is a body-level sibling of plotDiv, so its coords are relative
+            // to the page, not the plot. plotDiv itself is shifted right when the depth
+            // profile sidebar is open (and resized for the colour bar) — add its offset
+            // so the marker lands on the point, not SIDEBAR_W px to its left.
+            pin.style.left = (sx + gd.offsetLeft) + 'px';
+            pin.style.top = (sy + gd.offsetTop) + 'px';
             pin.classList.add('visible');
         }
         // Back-compat name: callers just want the pin re-rendered at its current point.

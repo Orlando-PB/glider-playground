@@ -80,6 +80,28 @@ def _pack_plot_binary(meta, arrays):
     hjson = json.dumps(header).encode("utf-8")
     return b"".join([struct.pack("<I", len(hjson)), hjson, *bufs])
 
+def plot_cache_params_str(*, x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc,
+                          filter_time, profile_num, cycle_num, cycle_var, sci_phases,
+                          direction_filter, ctd_interpolate, ctd_qc, highlight_profile,
+                          max_points, zoom_x_var, zoom_x_min, zoom_x_max,
+                          zoom_y_min, zoom_y_max):
+    """The output-affecting params, serialized into the binary plot-cache key.
+
+    Shared by the /api/plot_data endpoint (building the key from the request) and
+    the processing-time prewarm (building the key it stores under), so the two can
+    never drift — a prewarmed entry is only useful if its key byte-for-byte matches
+    the key the endpoint computes for the same request. The order and str() coercion
+    here ARE the cache contract; changing them invalidates existing entries (bump
+    CACHE_VERSION if you do).
+    """
+    return "|".join(str(v) for v in (
+        x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc, filter_time,
+        profile_num, cycle_num, cycle_var, sci_phases, direction_filter,
+        ctd_interpolate, ctd_qc, highlight_profile, max_points,
+        zoom_x_var, zoom_x_min, zoom_x_max, zoom_y_min, zoom_y_max,
+    ))
+
+
 # When LOW_MEMORY_MODE=true all preloaded arrays and CTD overlays are stored
 # on disk instead of kept permanently in RAM. Each request loads only what it
 # needs, uses it, then the memory is freed. Full prewarming still happens — it
