@@ -103,6 +103,19 @@
             max-width: calc(100% - 16px); box-sizing: border-box;
         }
         #point-bubble.visible { display: flex; }
+        /* Clicked-point marker. A DOM overlay (not a Plotly layout shape): updating
+           layout.shapes on every click forced a relayout that re-created the
+           scattergl WebGL context each time, leaking contexts until the browser
+           reclaimed them and the points' canvas went blank. This div is repositioned
+           from the axis pixel scale on every redraw instead — no Plotly calls. */
+        #point-pin {
+            display: none; position: absolute; z-index: 25; pointer-events: none;
+            width: 10px; height: 10px; border-radius: 50%;
+            transform: translate(-50%, -50%);
+            background: #3b82f6; border: 2px solid #ffffff;
+            box-shadow: 0 0 2px rgba(0,0,0,0.4);
+        }
+        #point-pin.visible { display: block; }
         #point-bubble .pin-dot {
             flex: 0 0 auto; width: 9px; height: 9px; margin-top: 3px;
             border-radius: 50%; background: #3b82f6; border: 1px solid rgba(255,255,255,0.7);
@@ -141,6 +154,7 @@
     <div id="bgSpinner"></div>
 
     <div id="plotDiv"></div>
+    <div id="point-pin"></div>
 
     <div id="cbar" aria-hidden="true">
         <div id="cbarBar"></div>
@@ -1007,9 +1021,10 @@
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
             }
 
-            // Keep the clicked-point marker across full redraws (theme / zoom-fetch /
-            // reset all rebuild via buildLayout); a relayout-only path leaves it be.
-            layout.shapes = pinShapes();
+            // The clicked-point marker is a DOM overlay (#point-pin), not a layout
+            // shape — see positionPin. It's re-projected on plotly_afterplot, so it
+            // survives these full redraws without us seeding any shapes here.
+            layout.shapes = [];
 
             return layout;
         }
@@ -1198,6 +1213,11 @@
             // listeners that each re-fire hover/zoom messages to the parent).
             if (!_handlersAttached) {
             _handlersAttached = true;
+
+            // Re-project the clicked-point overlay marker after every redraw (zoom,
+            // pan, autorange, zoom-fetch react, theme rebuild, resize) so it stays
+            // glued to its data point. Cheap: a no-op when nothing is pinned.
+            plotDiv.on('plotly_afterplot', positionPin);
 
             plotDiv.on('plotly_hover', function(data){
                 if (data.points.length > 0) {
@@ -1737,27 +1757,44 @@
             applyPinShape();
         }
 
-        // The blue marker drawn on the clicked point. A Plotly circle shape anchored
-        // to the point's DATA coordinates with pixel sizing, so it stays glued to the
-        // point through zoom/pan (Plotly re-projects + clips it for us) and keeps a
-        // constant on-screen size. Mirrors the globe's blue pin (blue + white ring).
+        // The blue marker on the clicked point, drawn as a DOM overlay (#point-pin)
+        // rather than a Plotly layout shape. We deliberately avoid Plotly.relayout
+        // here: replacing layout.shapes on every click forced a relayout that
+        // re-created the scattergl WebGL context, leaking contexts until the browser
+        // reclaimed them and the data canvas blanked (axes + JS hit-testing survived,
+        // so it still "picked" points — the bug being fixed). Instead we store the
+        // point's DATA coords and project them to pixels with the axis c2p on every
+        // redraw (positionPin is wired to plotly_afterplot), so the dot stays glued
+        // to the point through zoom/pan with zero Plotly calls.
         let _pinPoint = null;   // null or { x, y } in data coords
-        function pinShapes() {
-            if (!_pinPoint) return [];
-            const R = 5;   // px radius (≈ the globe's 11px dot)
-            return [{
-                type: 'circle', xref: 'x', yref: 'y',
-                xsizemode: 'pixel', ysizemode: 'pixel',
-                xanchor: _pinPoint.x, yanchor: _pinPoint.y,
-                x0: -R, x1: R, y0: -R, y1: R,
-                fillcolor: '#3b82f6', line: { color: '#ffffff', width: 2 },
-                layer: 'above',
-            }];
-        }
-        function applyPinShape() {
+        function positionPin() {
+            const pin = document.getElementById('point-pin');
+            if (!pin) return;
             const gd = document.getElementById('plotDiv');
-            if (gd && gd._fullLayout) { try { Plotly.relayout(gd, { shapes: pinShapes() }); } catch (_) {} }
+            if (!_pinPoint || !gd || !gd._fullLayout) { pin.classList.remove('visible'); return; }
+            const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+            if (!xa || !ya || xa._offset === undefined || typeof xa.c2p !== 'function') {
+                pin.classList.remove('visible'); return;
+            }
+            // Date axes plot in epoch-ms; convert a stored string x the same way the
+            // click hit-test does so the projection matches the plotted position.
+            const xv = _pinPoint.x;
+            const xForPixel = (plotData && plotData.is_x_dt && typeof xv === 'string')
+                ? new Date(xv.replace(' ', 'T') + 'Z').getTime() : xv;
+            if (!isFinite(xForPixel) || !isFinite(_pinPoint.y)) { pin.classList.remove('visible'); return; }
+            const sx = xa._offset + xa.c2p(xForPixel);
+            const sy = ya._offset + ya.c2p(_pinPoint.y);
+            // Clip to the drawing area — Plotly used to clip the shape for us.
+            if (sx < xa._offset || sx > xa._offset + xa._length ||
+                sy < ya._offset || sy > ya._offset + ya._length) {
+                pin.classList.remove('visible'); return;
+            }
+            pin.style.left = sx + 'px';
+            pin.style.top = sy + 'px';
+            pin.classList.add('visible');
         }
+        // Back-compat name: callers just want the pin re-rendered at its current point.
+        function applyPinShape() { positionPin(); }
 
         // Show the popup for data index `i` and ask the parent to pin its lat/lon
         // (resolved from the point's TIME) on every open globe + sync the matching
