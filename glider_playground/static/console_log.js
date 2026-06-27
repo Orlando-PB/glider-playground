@@ -132,7 +132,14 @@
     //             kept out of the aligned columns so it never shifts the bars.
     //   detail  — optional string printed as a dim line inside the group (e.g. the
     //             request's filter params, for debugging "why so few points?").
-    window.logPlotTiming = function (label, phases, totalMs, note, detail) {
+    //   opts    — optional { badge, badgeBg, badgeColor } to relabel/recolour the
+    //             header chip (defaults to the green "PLOT" badge). Lets other
+    //             pipelines (e.g. overlays) reuse this same breakdown view.
+    window.logPlotTiming = function (label, phases, totalMs, note, detail, opts) {
+        opts = opts || {};
+        const badge = opts.badge || 'PLOT';
+        const badgeBg = opts.badgeBg || '#14532d';
+        const badgeColor = opts.badgeColor || '#86efac';
         const total = Math.max(0, totalMs);
         const sum = phases.reduce((s, p) => s + Math.max(0, p.ms), 0);
         const rows = phases.slice();
@@ -142,9 +149,9 @@
         const headerSecs = (total / 1000).toFixed(3);
 
         console.groupCollapsed(
-            `%c PLOT %c ${label}  %c${headerSecs}s${note ? '  ·  ' + note : ''}`,
-            'background:#14532d;color:#86efac;font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px',
-            'color:#86efac;font-weight:normal',
+            `%c ${badge} %c ${label}  %c${headerSecs}s${note ? '  ·  ' + note : ''}`,
+            `background:${badgeBg};color:${badgeColor};font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px`,
+            `color:${badgeColor};font-weight:normal`,
             'color:#556'
         );
         if (detail) console.log(`%c${detail}`, 'color:#9aa6b8');

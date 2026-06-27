@@ -856,13 +856,23 @@
         function buildOverlayMesh(data, ov, opacity = OVERLAY_OPACITY) {
             const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
                 ? data.half_deg : OVERLAY_HALF_DEG_DEFAULT;
+            // Two input shapes: scalar overlays arrive as parallel Float32Arrays
+            // (lat/lon/val) from the binary payload; currents still pass an array
+            // of [lat,lng,val] triples via currentsSpeedData. Read cell k from
+            // whichever is present.
+            const flat = !!data.val;
+            const latA = data.lat, lonA = data.lon, valA = data.val;
             const pts = data.points;
-            const positions = new Float32Array(pts.length * 4 * 3);
-            const colors = new Float32Array(pts.length * 4 * 3);
-            const index = new Uint32Array(pts.length * 6);
+            const n = flat ? valA.length : pts.length;
+            const positions = new Float32Array(n * 4 * 3);
+            const colors = new Float32Array(n * 4 * 3);
+            const index = new Uint32Array(n * 6);
             let vi = 0, ci = 0, ii = 0, base = 0;
 
-            for (const [lat, lng, val] of pts) {
+            for (let k = 0; k < n; k++) {
+                let lat, lng, val;
+                if (flat) { lat = latA[k]; lng = lonA[k]; val = valA[k]; }
+                else { const t = pts[k]; lat = t[0]; lng = t[1]; val = t[2]; }
                 const c = overlayColor01(ov, val, data.p10, data.p90);
                 // 4 corners, placed on the globe via getCoords so the patch
                 // follows the curvature exactly.
@@ -1280,15 +1290,20 @@
         }
 
         // Draw whatever activeOverlay points at (rebuilding the mesh), or nothing.
+        // Returns the mesh-build time in ms (0 if nothing was drawn) so callers
+        // can fold the draw cost into the unified overlay timing log.
         function applyOverlay() {
+            let drawMs = 0;
             if (myGlobe && activeOverlay && overlayCache[activeOverlay]) {
                 try {
                     if (typeof THREE === 'undefined') throw new Error('3D library (THREE) failed to load');
                     disposeOverlayMesh();
                     const ov = overlayByKey[activeOverlay];
                     const d = overlayCache[activeOverlay];
+                    const _tDraw = performance.now();
                     overlayMesh = buildOverlayMesh(d, ov);
                     myGlobe.scene().add(overlayMesh);
+                    drawMs = performance.now() - _tDraw;
                     setOverlayBar(ov, d.p10, d.p90, d.date);
                 } catch (err) {
                     console.error('[overlay] render failed:', err);
@@ -1302,6 +1317,66 @@
             document.getElementById('chla-bar').classList.toggle('visible', !!activeOverlay && !!overlayCache[activeOverlay]);
             fitColourBar();
             updateOverlayButtons();
+            return drawMs;
+        }
+
+        // One collapsed, expandable log for a full overlay load: header shows the
+        // total click→drawn time; expand for the phase breakdown (locate region,
+        // download, maths, transfer, parse, draw). Reuses the plot-timing renderer.
+        //   T       — marks gathered in loadOverlay (perf.now() timestamps + server _timing)
+        //   drawMs  — mesh-build time from applyOverlay
+        function logOverlayTiming(key, T, drawMs) {
+            const toMs = (s) => (typeof s === 'number' ? s * 1000 : 0);
+            const sp = T.serverPhases || {};
+            const total = T.drawn - T.start;
+            const serverMs = T.serverTime || 0;                 // X-Process-Time header
+            const network = Math.max(0, (T.fetched - T.start) - serverMs);
+            const parse = Math.max(0, T.parsed - T.fetched);
+
+            // Server-side phases nest under one "server" bar (= X-Process-Time);
+            // logPlotTiming adds an "·other" child for the gzip/serialise remainder.
+            const children = [];
+            if (sp.locate != null) children.push({ name: 'locate region', ms: toMs(sp.locate), color: '#c4a8f5' });
+            if (sp.prep != null)   children.push({ name: 'prepare bbox · date', ms: toMs(sp.prep), color: '#c4a8f5' });
+            if (!sp.cache_hit) {
+                children.push({ name: 'download field', ms: toMs(sp.download), color: '#f7b955' });
+                children.push({ name: 'extract · maths', ms: toMs(sp.extract), color: '#7ec8f7' });
+            }
+
+            // >1 server-side open attempt means a dataset/date miss fell back —
+            // its cost is folded into "download"; flag it so a fat bar reads right.
+            const dl = children.find((c) => c.name === 'download field');
+            if (dl && sp.attempts > 1) dl.name = `download field (${sp.attempts} attempts)`;
+
+            const phases = [
+                { name: sp.cache_hit ? 'server (cached)' : 'server', ms: serverMs, color: '#c4a8f5', children },
+                { name: 'network transfer', ms: network, color: '#7ec8f7' },
+                { name: 'parse JSON', ms: parse, color: '#7ec8f7' },
+                { name: 'build mesh · draw', ms: drawMs, color: '#86efac' },
+            ];
+            const note = T.note || `${T.cells.toLocaleString()} cells · ${T.date}`;
+            window.logPlotTiming('Overlay · ' + key, phases, total, note, null,
+                { badge: 'OVERLAY', badgeBg: '#3b1f6e', badgeColor: '#c4a8f5' });
+        }
+
+        // Decode the packed overlay payload (see overlay_logic.pack_overlay_response):
+        // uint32 LE header length, JSON header, then lat/lon/val as raw LE float32.
+        // Mirrors parsePlotBinary in main_plot.html.
+        function decodeOverlayBinary(buf) {
+            const dv = new DataView(buf);
+            const headerLen = dv.getUint32(0, true);
+            const meta = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, 4, headerLen)));
+            const layout = meta.arrays || {};
+            delete meta.arrays;
+            let off = 4 + headerLen;
+            for (const name of Object.keys(layout)) {
+                const { dtype, len } = layout[name];
+                // slice() copies into a fresh aligned buffer, so the typed view is
+                // valid regardless of the header's byte length (still a memcpy, not a parse).
+                if (dtype === 'f32') { meta[name] = new Float32Array(buf.slice(off, off + len * 4)); off += len * 4; }
+                else if (dtype === 'f64') { meta[name] = new Float64Array(buf.slice(off, off + len * 8)); off += len * 8; }
+            }
+            return meta;
         }
 
         async function loadOverlay(key) {
@@ -1310,26 +1385,44 @@
 
             overlayLoading = key;
             updateOverlayButtons();
+            // Marks for the unified OVERLAY timing log (see logOverlayTiming).
+            const T = { start: performance.now(), cells: 0 };
             try {
-                const t0 = performance.now();
+                // The full breakdown is logged below, so skip the generic
+                // "API /api/overlay" one-liner to keep it to a single log.
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
                 const res = await fetch(`/api/overlay?id=${encodeURIComponent(fileId)}&var=${key}`);
-                const data = await res.json();
+                T.fetched = performance.now();
+                const hdr = res.headers && res.headers.get('X-Process-Time');
+                T.serverTime = hdr ? parseFloat(hdr) * 1000 : 0;   // server wall time (ms)
+                // Success is a binary octet-stream; an error falls back to JSON.
+                const ct = (res.headers.get('Content-Type') || '');
+                const data = ct.indexOf('application/json') !== -1
+                    ? await res.json()
+                    : decodeOverlayBinary(await res.arrayBuffer());
+                T.parsed = performance.now();
                 if (!res.ok || data.error) {
                     showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
                     return;
                 }
-                if (!Array.isArray(data.points) || data.points.length === 0) {
+                if (!data.val || !data.n) {
                     showOverlayError('No ' + overlayByKey[key].label + ' data for this region/date');
                     return;
                 }
                 overlayCache[key] = data;
                 activeOverlay = key;   // newly fetched field becomes the active one
-                console.log(`[${key}] ${data.points.length} cells in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
+                T.serverPhases = data._timing || null;
+                T.cells = data.n;
+                T.date = data.date;
             } catch (err) {
                 showOverlayError(err.message || 'Failed to load overlay');
             } finally {
                 if (overlayLoading === key) overlayLoading = null;
-                applyOverlay();
+                const drawMs = applyOverlay();
+                if (T.cells) {
+                    T.drawn = performance.now();
+                    logOverlayTiming(key, T, drawMs);
+                }
             }
         }
 
@@ -1607,18 +1700,23 @@
             currentsMesh = null;
         }
 
+        // Returns the build time in ms (speed mesh + flow-particle setup, not the
+        // per-frame animation) so loadCurrents can fold it into the timing log.
         function applyCurrents() {
+            let drawMs = 0;
             disposeCurrents();
             if (!(currentsActive && currentsData && myGlobe)) {
                 if (!activeOverlay) document.getElementById('chla-bar').classList.remove('visible');
                 updateCurrentsButton();
-                return;
+                return drawMs;
             }
             try {
+                const _tDraw = performance.now();
                 const speedData = currentsSpeedData(currentsData);
                 currentsMesh = buildOverlayMesh(speedData, CURRENTS_DEF, CUR_MESH_OPACITY);
                 myGlobe.scene().add(currentsMesh);
                 initFlowParticles(currentsData);
+                drawMs = performance.now() - _tDraw;
                 startFlow();
                 setOverlayBar(CURRENTS_DEF, 0, Math.max(currentsData.speed_p90, 0.05), currentsData.date);
                 document.getElementById('chla-bar').classList.add('visible');
@@ -1630,6 +1728,7 @@
                 showOverlayError('Could not draw currents', err.message);
             }
             updateCurrentsButton();
+            return drawMs;
         }
 
         function deactivateCurrents() {
@@ -1643,10 +1742,15 @@
             if (!fileId) return;
             currentsLoading = true;
             updateCurrentsButton();
+            const T = { start: performance.now(), cells: 0 };
             try {
-                const t0 = performance.now();
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
                 const res = await fetch(`/api/currents?id=${encodeURIComponent(fileId)}`);
+                T.fetched = performance.now();
+                const hdr = res.headers && res.headers.get('X-Process-Time');
+                T.serverTime = hdr ? parseFloat(hdr) * 1000 : 0;
                 const data = await res.json();
+                T.parsed = performance.now();
                 if (!res.ok || data.error) {
                     showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
                     return;
@@ -1657,12 +1761,19 @@
                 }
                 currentsData = data;
                 currentsActive = true;
-                console.log(`[currents] ${data.nlat}x${data.nlon} grid in ${(performance.now() - t0).toFixed(0)}ms (${data.date})`);
+                T.serverPhases = data._timing || null;
+                T.cells = data.nlat * data.nlon;
+                T.date = data.date;
+                T.note = `${data.nlat}×${data.nlon} grid · ${data.date}`;
             } catch (err) {
                 showOverlayError(err.message || 'Failed to load currents');
             } finally {
                 currentsLoading = false;
-                applyCurrents();
+                const drawMs = applyCurrents();
+                if (T.cells) {
+                    T.drawn = performance.now();
+                    logOverlayTiming('currents', T, drawMs);
+                }
             }
         }
 

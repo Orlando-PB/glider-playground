@@ -8,8 +8,10 @@ products from which we take the surface level. The map view draws the returned
 point grid as coloured cells on the globe.
 """
 
+import json
 import logging
 import re
+import struct
 import time
 from datetime import datetime, timedelta
 
@@ -51,6 +53,18 @@ CURRENTS: dict = {"dataset": _DS_CUR, "variables": ["uo", "vo"]}
 _CACHE: dict = {}
 _MAX_CACHE = 24
 
+
+def warm_up() -> None:
+    """Pre-import copernicusmarine so the first overlay request doesn't pay its
+    ~2s cold-import cost inline (it otherwise lands as unattributed "other" time
+    on the first overlay of a session). Safe to call from a background thread at
+    startup; a missing/broken package is ignored here — the real fetch re-imports
+    and surfaces any error to the user."""
+    try:
+        import copernicusmarine  # noqa: F401
+    except Exception:
+        pass
+
 # Keep the cell grid under this per side so the globe stays responsive. The
 # satellite CHL-a grid is 1/24° (≈4 km), so 800 keeps a box of up to ~33° per
 # side at full native resolution — in particular a cos(lat)-widened box at high
@@ -91,7 +105,7 @@ def fetch_overlay(
 
     return _fetch_cached(
         var, lat_min, lat_max, lon_min, lon_max, target_date,
-        lambda cm, lo, la, lo2, la2, d: _fetch(cm, spec, lo, la, lo2, la2, d),
+        lambda cm, lo, la, lo2, la2, d, tm: _fetch(cm, spec, lo, la, lo2, la2, d, tm),
         size_of=lambda r: f"{len(r['points'])} points",
     )
 
@@ -122,8 +136,11 @@ def fetch_currents(
 def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, size_of):
     """Shared bbox-pad + date-default + session-cache wrapper around a fetch run.
 
-    `runner(cm, min_lat, max_lat, min_lon, max_lon, date_str)` does the actual
-    Copernicus call and returns a result dict (or {"error": ...}).
+    `runner(cm, min_lat, max_lat, min_lon, max_lon, date_str, timing)` does the
+    actual Copernicus call and returns a result dict (or {"error": ...}). It
+    accumulates per-phase seconds into `timing` (download/extract) across *every*
+    attempt — failed opens, date-cap retries and fallback datasets included — so
+    a wrong-dataset miss shows up under "download" rather than as "other".
     """
     try:
         import copernicusmarine
@@ -142,6 +159,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     # is ~0.7 MB gzipped and the fetch is sub-second beyond the open handshake —
     # see the overlay size audit. A larger deployment expands the box to cover
     # itself plus a small margin; a point/small deployment still gets the full box.
+    t_prep = time.time()   # bbox padding + date defaulting (server prep)
     TARGET = 12.0   # degrees of latitude per side for a typical deployment
     MARGIN = 2.0    # extra context when the deployment already exceeds TARGET
     lat_c = (lat_min + lat_max) / 2.0
@@ -163,20 +181,30 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     else:
         date_str = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
 
+    prep = time.time() - t_prep
+
     key = _cache_key(var, min_lat, max_lat, min_lon, max_lon, date_str)
     if key in _CACHE:
         logger.info("Overlay %s cache hit for %s", var, date_str)
         print(f"[{var}] Cache hit for {date_str}", flush=True)
-        return _CACHE[key]
+        # Don't mutate the cached object — hand back a shallow copy whose
+        # `_timing` reflects *this* (cache-hit) request, not the original fetch.
+        out = dict(_CACHE[key])
+        out["_timing"] = {"prep": prep, "cache_hit": True}
+        return out
 
     print(f"[{var}] Fetching for date={date_str} bbox=({min_lat:.1f},{min_lon:.1f})-({max_lat:.1f},{max_lon:.1f})", flush=True)
+    timing = {"download": 0.0, "extract": 0.0, "attempts": 0}
     t0 = time.time()
-    result = runner(copernicusmarine, min_lat, max_lat, min_lon, max_lon, date_str)
+    result = runner(copernicusmarine, min_lat, max_lat, min_lon, max_lon, date_str, timing)
     elapsed = time.time() - t0
     if "error" in result:
         print(f"[{var}] Fetch failed in {elapsed:.1f}s: {result['error']}", flush=True)
     else:
         print(f"[{var}] Fetch OK in {elapsed:.1f}s — {size_of(result)}, date={result['date']}", flush=True)
+        # Attach the accumulated download/extract phases plus prep for the client.
+        timing["prep"] = prep
+        result["_timing"] = timing
         if len(_CACHE) >= _MAX_CACHE:
             _CACHE.pop(next(iter(_CACHE)))
         _CACHE[key] = result
@@ -184,24 +212,59 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     return result
 
 
+def pack_overlay_response(result: dict) -> bytes:
+    """Pack a successful scalar-overlay result into the binary container the map
+    view decodes — the same layout as the plot binary so the frontend reuses the
+    same decode path:
+
+        uint32 LE  header length
+        JSON       header: scalar metadata (date/p10/p90/half_deg/units/n/_timing)
+                   plus an `arrays` descriptor {lat,lon,val: {dtype, len}}
+        bytes      lat, lon, val as raw little-endian float32, concatenated
+
+    This replaces a ~100k-element JSON list of [lat,lng,val] triples: the server
+    skips the JSON text encode and the browser maps the bytes straight into
+    Float32Arrays instead of JSON.parse-ing hundreds of thousands of numbers.
+    """
+    pts = np.ascontiguousarray(result["points"], dtype=np.float32)
+    n = int(pts.shape[0])
+    header = {
+        "date": result["date"],
+        "p10": result["p10"],
+        "p90": result["p90"],
+        "half_deg": result["half_deg"],
+        "units": result.get("units", ""),
+        "n": n,
+        "_timing": result.get("_timing"),
+        "arrays": {
+            "lat": {"dtype": "f32", "len": n},
+            "lon": {"dtype": "f32", "len": n},
+            "val": {"dtype": "f32", "len": n},
+        },
+    }
+    hjson = json.dumps(header).encode("utf-8")
+    body = b"".join(np.ascontiguousarray(pts[:, i]).tobytes() for i in range(3))
+    return b"".join([struct.pack("<I", len(hjson)), hjson, body])
+
+
 # ---------- internals ----------
 
-def _fetch(cm, spec, min_lat, max_lat, min_lon, max_lon, date_str):
+def _fetch(cm, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing):
     """Try each candidate scalar dataset; cap the date to its max on overrun."""
     return _try_datasets(
         spec["datasets"],
         lambda dataset_id, d: _open_and_extract(
-            cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, d),
+            cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, d, timing),
         date_str,
     )
 
 
-def _fetch_currents(cm, min_lat, max_lat, min_lon, max_lon, date_str):
+def _fetch_currents(cm, min_lat, max_lat, min_lon, max_lon, date_str, timing):
     """Fetch the uo/vo current grid, with the same auth/bounds handling."""
     return _try_datasets(
         [CURRENTS["dataset"]],
         lambda dataset_id, d: _open_and_extract_vec(
-            cm, dataset_id, min_lat, max_lat, min_lon, max_lon, d),
+            cm, dataset_id, min_lat, max_lat, min_lon, max_lon, d, timing),
         date_str,
     )
 
@@ -244,7 +307,7 @@ def _try_datasets(dataset_ids, open_fn, date_str):
     }
 
 
-def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str):
+def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     logger.info("Fetching %s from %s for %s", spec["variable"], dataset_id, date_str)
     print(f"[{spec['variable']}] open_dataset {dataset_id} …", flush=True)
     t0 = time.time()
@@ -262,30 +325,52 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
         # Only pull the shallowest level of the 3D model grid.
         kwargs["minimum_depth"] = 0.0
         kwargs["maximum_depth"] = 1.0
-    ds = cm.open_dataset(**kwargs)
-    print(f"[{spec['variable']}] open_dataset done in {time.time()-t0:.1f}s", flush=True)
-    return _extract(ds, spec["variable"], date_str, demean=spec.get("demean", False))
+    # Time the open even when it raises (wrong-dataset / out-of-range miss), so a
+    # failed attempt's network cost is still attributed to "download".
+    try:
+        ds = cm.open_dataset(**kwargs)
+    finally:
+        if timing is not None:
+            timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
+            timing["attempts"] = timing.get("attempts", 0) + 1
+    t_open = time.time() - t0
+    print(f"[{spec['variable']}] open_dataset done in {t_open:.1f}s", flush=True)
+    t1 = time.time()
+    result = _extract(ds, spec["variable"], date_str, demean=spec.get("demean", False))
+    if timing is not None:
+        timing["extract"] = timing.get("extract", 0.0) + (time.time() - t1)
+    return result
 
 
-def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str):
+def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     variables = CURRENTS["variables"]
     logger.info("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
     print(f"[currents] open_dataset {dataset_id} …", flush=True)
     t0 = time.time()
-    ds = cm.open_dataset(
-        dataset_id=dataset_id,
-        variables=variables,
-        minimum_latitude=min_lat,
-        maximum_latitude=max_lat,
-        minimum_longitude=min_lon,
-        maximum_longitude=max_lon,
-        start_datetime=f"{date_str}T00:00:00",
-        end_datetime=f"{date_str}T23:59:59",
-        minimum_depth=0.0,
-        maximum_depth=1.0,
-    )
-    print(f"[currents] open_dataset done in {time.time()-t0:.1f}s", flush=True)
-    return _extract_vec(ds, variables, date_str)
+    try:
+        ds = cm.open_dataset(
+            dataset_id=dataset_id,
+            variables=variables,
+            minimum_latitude=min_lat,
+            maximum_latitude=max_lat,
+            minimum_longitude=min_lon,
+            maximum_longitude=max_lon,
+            start_datetime=f"{date_str}T00:00:00",
+            end_datetime=f"{date_str}T23:59:59",
+            minimum_depth=0.0,
+            maximum_depth=1.0,
+        )
+    finally:
+        if timing is not None:
+            timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
+            timing["attempts"] = timing.get("attempts", 0) + 1
+    t_open = time.time() - t0
+    print(f"[currents] open_dataset done in {t_open:.1f}s", flush=True)
+    t1 = time.time()
+    result = _extract_vec(ds, variables, date_str)
+    if timing is not None:
+        timing["extract"] = timing.get("extract", 0.0) + (time.time() - t1)
+    return result
 
 
 def _is_auth_error(msg: str) -> bool:
@@ -360,10 +445,14 @@ def _extract(ds, variable: str, date_str: str, demean: bool = False) -> dict:
     p10 = float(np.percentile(flat, 10))
     p90 = float(np.percentile(flat, 90))
 
-    points = [
-        [round(float(la), 4), round(float(lo), 4), round(float(v), 5)]
-        for la, lo, v in zip(lat_grid[mask], lon_grid[mask], flat)
-    ]
+    # Pack [lat, lng, value] as a float32 (n, 3) array, fully vectorised — this
+    # skips the old per-cell Python list build (the slow part of "extract" for a
+    # 100k+ cell field) and gives the route a typed array it can ship as raw
+    # bytes instead of a giant JSON list. float32 matches the source precision.
+    points = np.empty((int(np.count_nonzero(mask)), 3), dtype=np.float32)
+    points[:, 0] = np.round(lat_grid[mask], 4)
+    points[:, 1] = np.round(lon_grid[mask], 4)
+    points[:, 2] = np.round(flat, 5)
     logger.info("Overlay %s: %d points for %s (p10=%.3f p90=%.3f, stride=%d)",
                 variable, len(points), date_str, p10, p90, stride)
 

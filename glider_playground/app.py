@@ -35,6 +35,13 @@ app = FastAPI()
 # big vendor bundles are cached immutably, so their compression only matters once).
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
+# Warm the heavy copernicusmarine import in the background at startup, so the
+# first overlay request doesn't pay its ~2s cold-import cost inline (that import
+# happens before the per-phase timers, so it otherwise shows up as unattributed
+# "other" time on the very first overlay). Daemon thread; failures are harmless.
+import threading as _threading
+_threading.Thread(target=overlay_logic.warm_up, name="cm-warmup", daemon=True).start()
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -520,20 +527,36 @@ def api_overlay(id: str, var: str):
     if var not in overlay_logic.OVERLAYS:
         raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
 
+    t_loc = time.time()
     loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
     if not loc or "error" in loc:
         raise HTTPException(status_code=404, detail="No spatial data for this file")
 
     rec = cache_logic.get_record(id)
     target_date = _overlay_target_date(rec)
+    locate = time.time() - t_loc
 
-    return overlay_logic.fetch_overlay(
+    result = overlay_logic.fetch_overlay(
         var,
         lat_min=loc["lat_min"],
         lat_max=loc["lat_max"],
         lon_min=loc["lon_min"],
         lon_max=loc["lon_max"],
         target_date=target_date,
+    )
+    # An error comes back as a plain dict → JSON (the rare fallback path).
+    if "error" in result:
+        return result
+    # Resolving the glider's bbox/date is part of this request's wall time, so
+    # report it alongside the fetch's own phases for the unified client log.
+    if isinstance(result.get("_timing"), dict):
+        result["_timing"]["locate"] = locate
+    # Ship the cell grid as a packed binary payload (uint32 header len + JSON
+    # header + raw LE float32 lat/lon/val) so the browser skips JSON.parse of a
+    # ~100k-element list and the server skips the JSON text encode.
+    return Response(
+        content=overlay_logic.pack_overlay_response(result),
+        media_type="application/octet-stream",
     )
 
 
