@@ -1408,8 +1408,16 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
     is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
 
+    # Does this payload hold every raw point in the fetched box (no point dropped)?
+    # The client records it so a further zoom-IN that stays inside this box can skip
+    # refetching — there's no more detail to be had. Note the stride below uses FLOOR
+    # division, so for total in [cap, 2*cap) step == 1 and nothing is actually dropped;
+    # `complete` tracks the real stride, not just total <= cap, so it's honest there.
+    complete = total <= MAX_RENDER_POINTS
+
     if total > MAX_RENDER_POINTS:
         step = total // MAX_RENDER_POINTS
+        complete = step <= 1   # step of 1 keeps every point despite total > cap
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
         plot_qc = plot_qc[::step]
@@ -1442,5 +1450,8 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         "c_units": units_map.get(c_var, "") if c_var else "",
         # Count of valid points within the zoomed view (pre-downsample), so the
         # stats card can show "Points in view" while the user is zoomed in.
-        "plotted": int(plotted)
+        "plotted": int(plotted),
+        # True when this payload is the complete (un-decimated) set for its fetched
+        # box, so the client can skip a redundant refetch on a deeper zoom-in.
+        "complete": bool(complete),
     }

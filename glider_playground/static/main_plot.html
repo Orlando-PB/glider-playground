@@ -1246,21 +1246,7 @@
             // Explicit double-click reset — Plotly's autorange relayout event isn't always
             // reliably emitted after multiple Plotly.react calls (e.g. after Jelly overlays
             // re-render the plot), so we handle the dbl-click directly to guarantee zoom-out.
-            plotDiv.on('plotly_doubleclick', function() {
-                _suppressRelayout = false;
-                if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
-                clearTimeout(_pendingBounds);
-                _currentZoom = null;
-                if (_originalPlotData) {
-                    plotData = _originalPlotData;
-                    Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
-                    if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
-                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
-                }
-                window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
-                renderProfileSidebar();   // zoom cleared → drop the marginal greying
-                return false;
-            });
+            plotDiv.on('plotly_doubleclick', function() { resetZoomToFull(); return false; });
 
             plotDiv.on('plotly_relayout', function(eventData) {
                 if (_suppressRelayout) return;
@@ -1325,7 +1311,13 @@
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
-                _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
+                // Fast path: the current chunk already holds every raw point in this
+                // window (it came back complete and we're zooming further in), so a
+                // refetch + WebGL redraw would buy nothing. Plotly has already clipped
+                // the axes — just refresh the stat/marginal and skip the fetch.
+                if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
+                    _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
+                }
             });
 
             // Click-to-inspect a point. hovermode is off (kept off for WebGL perf
@@ -1334,22 +1326,161 @@
             // propagation on its drag layer, so (like the panelActivate hooks) we
             // listen on document in the capture phase. handlePlotClick validates the
             // click landed inside the drawing area; the move tolerance ignores drags.
+            //
+            // The pick fires immediately for a snappy single click. To stop a
+            // double-click (Plotly's zoom-out) from leaving a marker, the second click
+            // removes the marker IF this same double-click's first click just placed one
+            // (tracked via _lastUpDidPick) — a pre-existing marker is left alone so it
+            // survives a zoom-out. Detection window matches Plotly's ~300ms double-click.
             let _ptDown = null;
+            let _lastUpT = 0, _lastUpPos = null, _lastUpOnBubble = false, _lastUpDidPick = false;
             const _PT_MOVE_TOL = 6;
+            const _DBL_MS = 300;     // single/double-click discrimination window (≈ Plotly's)
+            const _DBL_DIST = 14;    // max px between two clicks to count as a double
             document.addEventListener('pointerdown', (e) => {
                 _ptDown = { x: e.clientX, y: e.clientY };
             }, true);
             document.addEventListener('pointerup', (e) => {
                 const start = _ptDown; _ptDown = null;
                 if (!start) return;
-                if (e.target && e.target.closest && e.target.closest('#point-bubble')) return; // popup handles itself
                 if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _PT_MOVE_TOL) return; // a drag/zoom
-                handlePlotClick(e.clientX, e.clientY);
+
+                const now = performance.now();
+                const isDouble = _lastUpPos && (now - _lastUpT) < _DBL_MS &&
+                    Math.hypot(e.clientX - _lastUpPos.x, e.clientY - _lastUpPos.y) < _DBL_DIST;
+                const onBubble = !!(e.target && e.target.closest && e.target.closest('#point-bubble'));
+                const prevOnBubble = _lastUpOnBubble;
+                _lastUpT = now; _lastUpPos = { x: e.clientX, y: e.clientY }; _lastUpOnBubble = onBubble;
+
+                if (isDouble) {
+                    // A double-click → zoom out, not a pick. If this gesture's first click
+                    // just dropped a marker, remove it (and clear the synced pins); a
+                    // marker placed earlier is left in place. Plotly fires its own
+                    // plotly_doubleclick only when BOTH clicks hit its drag layer; if
+                    // either landed on the popup (which overlays the plot), it won't — so
+                    // we zoom out ourselves in that case.
+                    if (_lastUpDidPick) {
+                        hidePointBubble();
+                        try { window.parent.postMessage({ type: 'plotPointClear' }, '*'); } catch (_) {}
+                    }
+                    _lastUpDidPick = false;
+                    if (onBubble || prevOnBubble) resetZoomToFull();
+                    return;
+                }
+
+                // Single click on the popup → leave its own controls (close button,
+                // selecting value text) untouched; don't treat it as a plot pick.
+                if (onBubble) { _lastUpDidPick = false; return; }
+
+                // Single click on the plot → pick immediately.
+                _lastUpDidPick = handlePlotClick(e.clientX, e.clientY);
             }, true);
 
             }   // end if (!_handlersAttached)
 
             return drawDone;
+        }
+
+        // Reset the plot to its full extent (the double-click "zoom out" action),
+        // restoring the base downsampled record. Shared by Plotly's own double-click
+        // and by a double-click landing on the point popup (which sits over the plot).
+        function resetZoomToFull() {
+            _suppressRelayout = false;
+            if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
+            clearTimeout(_pendingBounds);
+            _currentZoom = null;
+            if (_originalPlotData) {
+                plotData = _originalPlotData;
+                Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
+                window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
+            }
+            window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+            renderProfileSidebar();   // zoom cleared → drop the marginal greying
+        }
+
+        // A zoom window in numeric space (epoch-ms for date x, raw otherwise), with
+        // bounds canonicalised lo<=hi. Returns null if any bound can't be resolved.
+        function _numViewBox(xMin, xMax, yMin, yMax) {
+            const isDt = !!(plotData && plotData.is_x_dt);
+            let xlo = isDt ? axisXToMs(xMin) : Number(xMin);
+            let xhi = isDt ? axisXToMs(xMax) : Number(xMax);
+            let ylo = Number(yMin), yhi = Number(yMax);
+            if (xlo > xhi) { const t = xlo; xlo = xhi; xhi = t; }
+            if (ylo > yhi) { const t = ylo; ylo = yhi; yhi = t; }
+            if (![xlo, xhi, ylo, yhi].every(isFinite)) return null;
+            return { xlo, xhi, ylo, yhi };
+        }
+
+        // True when the current chunk already holds every raw point inside `box`:
+        // it was returned complete (un-decimated) and `box` sits within its fetched
+        // box. Such a zoom-IN gains no detail from a refetch, so we can skip it.
+        function _chunkCovers(box) {
+            if (!box || !plotData || !plotData._complete || !plotData._fetchBox) return false;
+            const fb = plotData._fetchBox;
+            return box.xlo >= fb.xMin && box.xhi <= fb.xMax &&
+                   box.ylo >= fb.yMin && box.yhi <= fb.yMax;
+        }
+
+        // Walk the points inside a numeric view box to (a) count them for the "Points
+        // in view" stat and (b), when there's a colour channel, stretch the colour
+        // scale to the in-view 0.1–99.9 percentiles — exactly what a hi-res refetch
+        // does server-side, so a skipped fetch ends up colour-identical. The trace and
+        // colour bar are restyled in place (a cheap uniform update, no data rebuild),
+        // and the new range + count are returned for the parent's slider/stat. Date x
+        // is compared as ISO strings (which sort lexicographically) to avoid per-point
+        // Date parsing; colour percentiles honour the QC mask like the server does.
+        function _autoColourInView(box) {
+            const xs = plotData.x, ys = plotData.y, cs = plotData.c, n = ys.length;
+            const hasC = !!(cs && cs.length);
+            const qc = (plotData.qc_applied && plotData.qc_pass && plotData.qc_pass.length === n)
+                ? plotData.qc_pass : null;
+            let inX;
+            if (plotData.is_x_dt) {
+                const pad = k => String(k).padStart(2, '0');
+                const toStr = ms => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; };
+                const sLo = toStr(box.xlo), sHi = toStr(box.xhi);
+                inX = i => xs[i] >= sLo && xs[i] <= sHi;
+            } else {
+                inX = i => xs[i] >= box.xlo && xs[i] <= box.xhi;
+            }
+            const vals = hasC ? [] : null;
+            let cnt = 0;
+            for (let i = 0; i < n; i++) {
+                if (xs[i] === null || ys[i] === null) continue;
+                if (ys[i] < box.ylo || ys[i] > box.yhi || !inX(i)) continue;
+                cnt++;
+                if (hasC) {
+                    const c = cs[i];
+                    if (c !== null && c === c && (!qc || qc[i])) vals.push(c);   // c===c rejects NaN
+                }
+            }
+            let cMin = plotData.c_min, cMax = plotData.c_max;
+            if (hasC && vals.length) {
+                vals.sort((a, b) => a - b);
+                const q = p => vals[Math.min(vals.length - 1, Math.max(0, Math.round(p * (vals.length - 1))))];
+                cMin = q(0.001); cMax = q(0.999);                  // 0.1th / 99.9th percentile
+                if (cMin === cMax) { cMin = vals[0]; cMax = vals[vals.length - 1]; }
+                const traceIdx = colouredTraceIdx();
+                Plotly.restyle('plotDiv', { 'marker.cmin': [cMin], 'marker.cmax': [cMax] }, [traceIdx]);
+                _cbarMin = cMin; _cbarMax = cMax; applyCbar();
+            }
+            return { plotted: cnt, cMin, cMax };
+        }
+
+        // Skip a redundant hi-res refetch when the current chunk already covers the
+        // requested zoom box at full detail. Still does the in-view colour auto-stretch
+        // (and updates the stat + marginal) so the result matches a real refetch — just
+        // without the server round-trip or WebGL data rebuild. Returns true when it took
+        // over so the caller fetches nothing.
+        function _skipFetchIfCovered(xMin, xMax, yMin, yMax) {
+            const box = _numViewBox(xMin, xMax, yMin, yMax);
+            if (!_chunkCovers(box)) return false;
+            const r = _autoColourInView(box);
+            window.parent.postMessage({ type: 'bgFetchComplete',
+                cMin: r.cMin, cMax: r.cMax, plotted: r.plotted }, '*');
+            renderProfileSidebar();
+            return true;
         }
 
         async function triggerBgFetch(xMin, xMax, yMin, yMax) {
@@ -1429,6 +1560,13 @@
 
                 plotData = newData;
                 plotData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
+                // Remember whether this chunk is the full raw set for its (padded)
+                // fetched box, and the box itself in numeric ms/value space. A later
+                // zoom-IN that lands inside this box, on a complete chunk, needs no
+                // refetch — see _chunkCovers / the relayout + updateLimits fast paths.
+                plotData._complete = !!newData.complete;
+                plotData._fetchBox = { xMin: xMinVal - xPad, xMax: xMaxVal + xPad,
+                                       yMin: yMinVal - yPad, yMax: yMaxVal + yPad };
 
                 const zoom = _currentZoom;
                 const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
@@ -1626,9 +1764,12 @@
                     // one panel at a time. The render above is the final state — report it done.
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                     renderProfileSidebar();   // match the marginal greying to the synced view
-                } else {
-                    // A true zoom-IN: the global downsample is too sparse for this narrower
-                    // window, so fetch high-res data for it (triggerBgFetch reports completion).
+                } else if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
+                    // A true zoom-IN whose detail we don't already hold: the global
+                    // downsample is too sparse for this narrower window, so fetch
+                    // high-res data for it (triggerBgFetch reports completion). If the
+                    // current chunk already covers it at full detail, _skipFetchIfCovered
+                    // handled the stat/marginal and we fetch nothing.
                     _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
                 }
             }
@@ -1877,16 +2018,20 @@
         // always within a few px (so this changes nothing), but zoomed in they're
         // sparse, and a wider radius lets you click at/near any rendered point.
         const _HIT_TOL = 40;
+        // Returns true if it placed a point marker, false otherwise (no plot, click
+        // outside the drawing area, or no point within the hit radius) — the pointer
+        // handler uses this to know whether a follow-up double-click should remove the
+        // marker this click just dropped.
         function handlePlotClick(clientX, clientY) {
             const gd = document.getElementById('plotDiv');
-            if (!gd || !gd._fullLayout || !plotData || !plotData.x || !plotData.x.length) return;
+            if (!gd || !gd._fullLayout || !plotData || !plotData.x || !plotData.x.length) return false;
             const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
-            if (!xa || !ya || xa._offset === undefined) return;
+            if (!xa || !ya || xa._offset === undefined) return false;
             const rect = gd.getBoundingClientRect();
             const cx = clientX - rect.left, cy = clientY - rect.top;
             // Ignore clicks outside the drawing area (axes, margins).
             if (cx < xa._offset || cx > xa._offset + xa._length ||
-                cy < ya._offset || cy > ya._offset + ya._length) return;
+                cy < ya._offset || cy > ya._offset + ya._length) return false;
 
             const xs = plotData.x, ys = plotData.y, n = xs.length;
             const isXDate = !!plotData.is_x_dt;
@@ -1906,7 +2051,8 @@
                 const d = dx * dx + dy * dy;
                 if (d < bestD) { bestD = d; best = i; }
             }
-            if (best >= 0) showPointPopup(best);
+            if (best >= 0) { showPointPopup(best); return true; }
+            return false;
         }
 
         (function wirePointBubble() {
