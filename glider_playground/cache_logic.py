@@ -79,7 +79,8 @@ DATA_DIR = _resolve_data_dir()
 # invalidated (e.g. new QC algorithm, changed map generation, etc.).
 # v9: Backscatter
 # v10: binary plot payloads + on-demand plot-payload cache
-CACHE_VERSION = "10"
+# v11: revert datetime x to string format (epoch-ms caused timezone display bugs)
+CACHE_VERSION = "11"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

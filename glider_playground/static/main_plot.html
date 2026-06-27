@@ -479,9 +479,21 @@
             const xs = src.x, ys = src.y, n = src.y.length;
             const sel = new Array(n);
             let any = false;
-            for (let i = 0; i < n; i++) {
-                const inside = xs[i] >= xMin && xs[i] <= xMax && ys[i] >= yMin && ys[i] <= yMax;
-                sel[i] = inside; if (inside) any = true;
+            if (isXDate) {
+                // x values are 'YYYY-MM-DD HH:MM:SS' strings; ISO format sorts
+                // lexicographically, so convert the epoch-ms bounds to the same format.
+                const pad = n => String(n).padStart(2, '0');
+                const toStr = ms => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; };
+                const xMinS = toStr(xMin), xMaxS = toStr(xMax);
+                for (let i = 0; i < n; i++) {
+                    const inside = xs[i] >= xMinS && xs[i] <= xMaxS && ys[i] >= yMin && ys[i] <= yMax;
+                    sel[i] = inside; if (inside) any = true;
+                }
+            } else {
+                for (let i = 0; i < n; i++) {
+                    const inside = xs[i] >= xMin && xs[i] <= xMax && ys[i] >= yMin && ys[i] <= yMax;
+                    sel[i] = inside; if (inside) any = true;
+                }
             }
             return any ? sel : null;   // nothing in view → treat as no greying
         }
@@ -719,6 +731,20 @@
                 if (dtype === 'f64') { meta[name] = new Float64Array(buf.slice(off, off + len * 8)); off += len * 8; }
                 else if (dtype === 'f32') { meta[name] = new Float32Array(buf.slice(off, off + len * 4)); off += len * 4; }
                 else if (dtype === 'u8') { meta[name] = new Uint8Array(buf.slice(off, off + len)); off += len; }
+            }
+            // Datetime x was packed as epoch-ms f64; convert to 'YYYY-MM-DD HH:MM:SS'
+            // strings so Plotly receives the same naive-UTC format as the JSON path.
+            if (meta.is_x_dt && meta.x instanceof Float64Array) {
+                const fa = meta.x;
+                const pad = n => String(n).padStart(2, '0');
+                const strs = new Array(fa.length);
+                for (let i = 0; i < fa.length; i++) {
+                    const ms = fa[i];
+                    if (!isFinite(ms)) { strs[i] = null; continue; }
+                    const d = new Date(ms);
+                    strs[i] = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+                }
+                meta.x = strs;
             }
             return meta;
         }
@@ -1134,17 +1160,18 @@
                 let yMax = getSafeMax(plotData.y);
 
                 if (plotData.is_x_dt) {
-                    // x is now UTC epoch-ms numbers (see plot_logic), so the extent is
-                    // just the first and last non-null endpoints — no Date parsing, and
-                    // these are already in the same UTC-ms space as toNumX so the
-                    // multiview align-X / bgFetch comparisons stay consistent. min/max
-                    // of the endpoints also covers a reversed (descending) array.
+                    // x values are 'YYYY-MM-DD HH:MM:SS' strings (naive UTC). Convert
+                    // the endpoints to epoch-ms so multiview align-X and bgFetch
+                    // comparisons work in numeric space. min/max of the endpoints also
+                    // covers a reversed (descending) array.
                     const xs = plotData.x;
                     let first = null, last = null;
                     for (let i = 0; i < xs.length; i++) { if (xs[i] !== null) { first = xs[i]; break; } }
                     for (let i = xs.length - 1; i >= 0; i--) { if (xs[i] !== null) { last = xs[i]; break; } }
                     if (first !== null) {
-                        xMin = Math.min(first, last); xMax = Math.max(first, last);
+                        const a = new Date(first.replace(' ', 'T') + 'Z').getTime();
+                        const b = new Date(last.replace(' ', 'T') + 'Z').getTime();
+                        xMin = Math.min(a, b); xMax = Math.max(a, b);
                     } else {
                         xMin = Infinity; xMax = -Infinity;
                     }
@@ -1742,8 +1769,9 @@
             const xv = plotData.x[i], yv = plotData.y[i];
             const cv = (plotData.c && plotData.c.length) ? plotData.c[i] : null;
             const rows = [];
-            if (plotData.is_x_dt && typeof xv === 'number') {
-                rows.push(['Time', fmtPlotTime(xv)]);
+            if (plotData.is_x_dt && xv != null) {
+                const ms = typeof xv === 'number' ? xv : new Date(xv.replace(' ', 'T') + 'Z').getTime();
+                rows.push(['Time', fmtPlotTime(ms)]);
             } else {
                 rows.push([plotData.x_var || 'X', _fmtVal(xv) + _unitSuffix(plotData.x_units)]);
             }
@@ -1759,7 +1787,10 @@
 
             if (opts && opts.silent) return;   // driven by a sibling — don't echo back
             const payload = { type: 'plotPointPick' };
-            if (plotData.is_x_dt && typeof xv === 'number' && isFinite(xv)) payload.timeMs = xv;
+            if (plotData.is_x_dt && xv != null) {
+                const ms = typeof xv === 'number' ? xv : new Date(xv.replace(' ', 'T') + 'Z').getTime();
+                if (isFinite(ms)) payload.timeMs = ms;
+            }
             try { window.parent.postMessage(payload, '*'); } catch (_) {}
         }
 
@@ -1773,8 +1804,10 @@
             let best = -1, bestD = Infinity;
             for (let i = 0; i < xs.length; i++) {
                 const xv = xs[i];
-                if (xv === null || xv === undefined || Number.isNaN(xv)) continue;
-                const d = Math.abs(xv - timeMs);
+                if (xv === null || xv === undefined) continue;
+                const xms = typeof xv === 'number' ? xv : new Date(xv.replace(' ', 'T') + 'Z').getTime();
+                if (!isFinite(xms)) continue;
+                const d = Math.abs(xms - timeMs);
                 if (d < bestD) { bestD = d; best = i; }
             }
             if (best >= 0) showPointPopup(best, { silent: true });
@@ -1800,12 +1833,18 @@
                 cy < ya._offset || cy > ya._offset + ya._length) return;
 
             const xs = plotData.x, ys = plotData.y, n = xs.length;
+            const isXDate = !!plotData.is_x_dt;
             let best = -1, bestD = _HIT_TOL * _HIT_TOL;
             for (let i = 0; i < n; i++) {
                 const xv = xs[i], yv = ys[i];
                 if (xv === null || yv === null || xv === undefined || yv === undefined) continue;
-                if (Number.isNaN(xv) || Number.isNaN(yv)) continue;
-                const sx = xa._offset + xa.c2p(xv);
+                if (Number.isNaN(yv)) continue;
+                // Plotly's c2p on a date axis expects epoch-ms; convert strings.
+                const xForPixel = (isXDate && typeof xv === 'string')
+                    ? new Date(xv.replace(' ', 'T') + 'Z').getTime()
+                    : xv;
+                if (!isFinite(xForPixel)) continue;
+                const sx = xa._offset + xa.c2p(xForPixel);
                 const sy = ya._offset + ya.c2p(yv);
                 const dx = sx - cx, dy = sy - cy;
                 const d = dx * dx + dy * dy;

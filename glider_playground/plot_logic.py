@@ -1208,7 +1208,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         _mark("serialize")
         return _pack_plot_binary(meta, arrays)
 
-    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
+    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
     y_out = _floats_to_list(plot_y)
     c_out = _floats_to_list(plot_c) if plot_c is not None else []
     _mark("serialize")
@@ -1394,9 +1394,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         if plot_sel is not None:
             plot_sel = plot_sel[::step]
 
-    # Epoch-ms (UTC) for datetime x, matching get_plot_data_json — a zoom bg-fetch
-    # replaces plotData with this chunk, so the x format must stay identical.
-    x_out = plot_x.astype('datetime64[ms]').astype('int64').tolist() if is_x_dt else _floats_to_list(plot_x)
+    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
     y_out = _floats_to_list(plot_y)
 
     c_out, c_min, c_max = [], 0.0, 1.0
