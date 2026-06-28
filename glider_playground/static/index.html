@@ -1124,10 +1124,39 @@
 
         /* Advanced-only controls: hidden unless nav has .adv-open */
         #mainNav:not(.adv-open) .adv-only { display: none !important; }
+
+        /* Transient "link copied" banner shown by the Share button. */
+        #shareToast {
+            position: fixed;
+            left: 50%;
+            bottom: 28px;
+            transform: translate(-50%, 12px);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 14px;
+            border-radius: 8px;
+            background: var(--bg-elevated, #1f2430);
+            color: #ffffff;
+            border: 1px solid var(--border, rgba(255,255,255,0.12));
+            box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+            font-size: 12.5px;
+            font-weight: 500;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .18s ease, transform .18s ease;
+            white-space: nowrap;
+        }
+        #shareToast.show { opacity: 1; transform: translate(-50%, 0); }
+        #shareToast .material-symbols-outlined { font-size: 17px; }
+        #shareToast.ok .material-symbols-outlined { color: #34d399; }
+        #shareToast.err .material-symbols-outlined { color: #f87171; }
     </style>
 </head>
 <body class="overflow-hidden">
     <div id="customTooltip"></div>
+    <div id="shareToast" role="status" aria-live="polite"></div>
 
     <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
         <div class="toolbar-row">
@@ -1144,6 +1173,9 @@
                 </button>
                 <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download plot as PNG">
                     <span class="material-symbols-outlined text-[14px]">download</span>
+                </button>
+                <button id="shareBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Copy a link to this exact view to your clipboard" aria-label="Share this view">
+                    <span class="material-symbols-outlined text-[14px]">share</span>
                 </button>
             </div>
             <div class="toolbar-main">
@@ -2854,6 +2886,148 @@
         }
         function clearSavedLayout() { try { localStorage.removeItem(LAYOUT_KEY); } catch (_) {} }
 
+        // ---- Shareable view links ----
+        // A share link carries everything that defines "what's shown": the active
+        // file, the full dashboard layout (same snapshot we persist to
+        // localStorage), and a couple of view toggles. We pack it into a URL-safe
+        // base64 blob in the ?s= query param so a link round-trips the view to
+        // anyone with the same file loaded.
+        const SHARE_PARAM = 's';
+        const SHARE_VERSION = 1;
+        // Holds the decoded payload from an incoming link, consumed once during boot.
+        let _sharedBoot = null;
+
+        function b64urlEncode(str) {
+            return btoa(unescape(encodeURIComponent(str)))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        }
+        function b64urlDecode(str) {
+            const pad = str.length % 4 ? '='.repeat(4 - (str.length % 4)) : '';
+            return decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/') + pad)));
+        }
+
+        // The basename of a file record's on-disk path. This is stable across
+        // machines for the *same* underlying file — most importantly for BODC live
+        // gliders (everyone's copy has the same filename) but also for an identical
+        // .nc two people each uploaded — even though each local instance assigns its
+        // own internal file id.
+        function fileBasename(rec) {
+            return rec ? (rec.path || rec.name || '').split(/[\\/]/).pop() : '';
+        }
+
+        function buildSharePayload() {
+            const rec = fileById(datasetSelect.value);
+            return {
+                v: SHARE_VERSION,
+                // `file` is the exact local id — matches instantly on the same box
+                // and on the shared web server (where ids are global). `fileKey`
+                // is the portable fallback for local-to-local sharing, and `live`
+                // flags a BODC glider the recipient can auto-download if missing.
+                file: datasetSelect.value || '',
+                fileKey: fileBasename(rec),
+                fileName: rec ? rec.name : '',
+                live: !!(rec && rec.is_managed && rec.is_nrt),
+                align: alignTimeAxes,
+                theme: getCurrentTheme(),
+                layout: serializeLayout(),
+            };
+        }
+
+        function buildShareUrl() {
+            const blob = b64urlEncode(JSON.stringify(buildSharePayload()));
+            const url = new URL(window.location.href);
+            url.searchParams.set(SHARE_PARAM, blob);
+            return url.toString();
+        }
+
+        // Read an incoming ?s= link (if any) into _sharedBoot and scrub the param
+        // from the address bar, so a reload doesn't keep re-applying the link and
+        // the URL stays clean. Runs synchronously before the dashboard is built.
+        function readShareFromUrl() {
+            let raw = null;
+            try { raw = new URLSearchParams(window.location.search).get(SHARE_PARAM); } catch (_) {}
+            if (raw) {
+                try {
+                    const data = JSON.parse(b64urlDecode(raw));
+                    if (data && data.v === SHARE_VERSION) {
+                        _sharedBoot = data;
+                        // We owe this link its file if it named one in any form.
+                        _shareFilePending = !!(data.file || data.fileKey);
+                    }
+                } catch (e) { console.warn('Ignoring malformed share link:', e); }
+            }
+            if (raw) {
+                try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete(SHARE_PARAM);
+                    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+                } catch (_) {}
+            }
+        }
+
+        let _shareToastTimer = null;
+        function showShareToast(message, ok = true) {
+            const el = document.getElementById('shareToast');
+            if (!el) return;
+            el.className = ok ? 'ok' : 'err';
+            el.innerHTML = `<span class="material-symbols-outlined">${ok ? 'check_circle' : 'error'}</span>${escapeHtmlSafe(message)}`;
+            // Restart the animation cleanly even on rapid repeat clicks.
+            void el.offsetWidth;
+            el.classList.add('show');
+            clearTimeout(_shareToastTimer);
+            _shareToastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+        }
+
+        async function shareCurrentView() {
+            const ok = await copyToClipboard(buildShareUrl());
+            showShareToast(ok ? 'Link copied to clipboard' : 'Could not copy link', ok);
+        }
+
+        // True while an incoming link still owes us its file (it named one we
+        // haven't matched yet). Kept alive across the async BODC scan so a shared
+        // live glider can be auto-downloaded the moment the live list arrives.
+        let _shareFilePending = false;
+
+        // Try to honour the file an incoming share link asked for. Resolution
+        // order, most to least specific:
+        //   1. exact local id        — same machine, or the shared web server
+        //   2. same file by basename — both have the identical .nc (esp. a live
+        //                              glider that landed under a different id)
+        //   3. download from BODC    — a live glider the recipient doesn't have
+        // Returns true once it has taken over file selection (so the caller skips
+        // its normal cookie/first-ready fallback).
+        async function resolveSharedFile() {
+            if (!_shareFilePending) return false;
+            const want = _sharedBoot || {};
+
+            if (want.file && fileById(want.file)) {
+                _shareFilePending = false;
+                await selectFile(want.file);
+                return true;
+            }
+            if (want.fileKey) {
+                const rec = fileRecords.find(f => fileBasename(f) === want.fileKey);
+                if (rec) {
+                    _shareFilePending = false;
+                    await selectFile(rec.id);
+                    return true;
+                }
+            }
+            if (want.live && want.fileKey && _liveData) {
+                const entry = (_liveData.active || []).find(x => x.filename === want.fileKey);
+                if (entry) {
+                    _shareFilePending = false;
+                    await openLiveByFilename(want.fileKey);
+                    return true;
+                }
+            }
+            // Can't get a non-live file we don't have — give up so we fall back to
+            // the recipient's own files. A live glider stays pending: the BODC scan
+            // may still surface it, and refreshLive() retries this then.
+            if (!want.live) _shareFilePending = false;
+            return false;
+        }
+
         // Validate a tree: every leaf references a known panel, no dangling panels.
         function treeLeafIds(node, acc) {
             if (!node) return acc;
@@ -2925,6 +3099,29 @@
         }
 
         function initPanels() {
+            // An incoming share link wins over both the saved dashboard and the
+            // default — it carries the exact view someone wanted to send. We also
+            // apply its view toggles and persist it, so a subsequent reload (the
+            // ?s= param is already scrubbed) keeps showing the shared view.
+            if (_sharedBoot && _sharedBoot.layout) {
+                // The sharer's internal file id is meaningless on another machine
+                // (we re-resolve the file by basename / BODC). Drop it from every
+                // panel so nothing renders against a phantom id; handleDatasetChange
+                // re-points each panel at the recipient's resolved file on load.
+                try {
+                    Object.values(_sharedBoot.layout.panels || {}).forEach(pd => {
+                        if (pd && pd.state && 'datasetId' in pd.state) pd.state.datasetId = '';
+                    });
+                } catch (_) {}
+            }
+            if (_sharedBoot && _sharedBoot.layout && buildFromSnapshot(_sharedBoot.layout)) {
+                if (typeof _sharedBoot.align === 'boolean') {
+                    alignTimeAxes = _sharedBoot.align;
+                    try { localStorage.setItem(ALIGN_KEY, alignTimeAxes ? 'true' : 'false'); } catch (_) {}
+                }
+                try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(serializeLayout())); } catch (_) {}
+                return;
+            }
             // Restore the saved dashboard if present; otherwise build the default.
             // Every tile is a rearrangeable panel; activation comes from
             // 'panelActivate' messages posted by each panel iframe.
@@ -3004,11 +3201,19 @@
             return `&theme=${encodeURIComponent(getCurrentTheme())}`;
         }
         document.addEventListener('DOMContentLoaded', () => {
+            // A shared link can carry the sharer's theme; honour it before the
+            // first paint so the recipient lands on the same look.
+            if (_sharedBoot && (_sharedBoot.theme === 'light' || _sharedBoot.theme === 'dark')) {
+                applyTheme(_sharedBoot.theme, true);
+            }
             applyTheme(getCurrentTheme(), false);
             const tb = document.getElementById('themeToggle');
             if (tb) tb.addEventListener('click', () => {
                 applyTheme(getCurrentTheme() === 'light' ? 'dark' : 'light');
             });
+
+            const shareBtn = document.getElementById('shareBtn');
+            if (shareBtn) shareBtn.addEventListener('click', () => shareCurrentView());
 
             const advancedToggle = document.getElementById('advancedToggle');
             const mainNav = document.getElementById('mainNav');
@@ -4220,6 +4425,9 @@
                 _liveData = await res.json();
                 renderLive(_liveData);
                 await resolvePendingOpen();
+                // A share link may have asked for a live glider we didn't have at
+                // boot; now that the BODC list is in, download & open it.
+                await resolveSharedFile();
             } catch (e) {
                 console.error('Live fetch failed:', e);
                 liveList.innerHTML = `<div class="file-card-empty">Failed to reach server.</div>`;
@@ -4408,6 +4616,15 @@
             // view to it (placeholder while it's not ready, plot once it is).
             const fn = card.dataset.bodc;
             if (!fn) return;
+            await openLiveByFilename(fn);
+            closeFilesPanel();
+        });
+
+        // Open a BODC live glider by its (stable) filename: if we already have a
+        // record, hand straight to selectFile; otherwise download it first, show a
+        // placeholder, and let resolvePendingOpen() finish the hand-off once the
+        // record appears. Used by both the live-card click and shared links.
+        async function openLiveByFilename(fn) {
             const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
             if (!entry || _liveDeleting.has(fn)) return;
 
@@ -4416,21 +4633,18 @@
                 // the processing overlay and polls until it is.
                 await refreshFiles();
                 await selectFile(entry.file_id);
-                closeFilesPanel();
                 return;
             }
             // No record yet: must download first. Queue the open, show a
-            // placeholder immediately, start the download, and close the panel
-            // so the swap is visible. resolvePendingOpen() finishes the hand-off
-            // to selectFile once the record appears.
+            // placeholder immediately, start the download. resolvePendingOpen()
+            // finishes the hand-off to selectFile once the record appears.
             _livePendingOpen = fn;
             if (!entry.downloading && !_liveOptimistic.has(fn)) {
                 await bodcDownload(fn);
             }
             showLivePlaceholder(entry);
-            closeFilesPanel();
             scheduleLivePoll();
-        });
+        }
 
         async function bodcDelete(fn) {
             const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
@@ -5334,7 +5548,10 @@
                 }
             }
 
-            if (activate) {
+            if (activate && !(await resolveSharedFile())) {
+                // No share link took over selection — fall back to the last-used
+                // file, then the first ready one. (A shared *live* glider we don't
+                // have yet stays pending; refreshLive() opens it once BODC responds.)
                 const saved = getCookie(COOKIE_FILE);
                 let target = saved && fileById(saved) ? saved : null;
                 if (!target) {
@@ -6000,6 +6217,7 @@
         }
 
 
+        readShareFromUrl();   // decode any ?s= link & scrub it before we build the view
         initPanels();
         init();
 

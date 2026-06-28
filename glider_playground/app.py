@@ -49,6 +49,92 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+# ---------- SEO (server deployment only) ----------
+# These tags are injected into index.html and the robots/sitemap routes are only
+# meaningful for the public deployment at glider-playground.co.uk. Local (pip)
+# and desktop installs run on 127.0.0.1, so injecting canonical/OG/sitemap there
+# would be noise — IS_SERVER gates all of it (see cli.py / the publish workflow).
+SITE_URL = "https://glider-playground.co.uk"
+SEO_TITLE = "Glider Playground — OG1 Glider Data Viewer | National Oceanography Centre"
+SEO_DESCRIPTION = (
+    "A free tool for exploring OG1 glider data, from the National Oceanography "
+    "Centre. View, plot and map ocean glider profiles and trajectories in your "
+    "browser."
+)
+
+# Built once on first request, then served from memory. The OG image is the
+# dashboard screenshot (1600x847, ~1.9:1 — the size link previews want).
+_SEO_HEAD = f"""\
+    <meta name="description" content="{SEO_DESCRIPTION}">
+    <meta name="keywords" content="OG1, glider data viewer, ocean glider, OG1 data viewer, National Oceanography Centre, NOC OG1, glider playground, ocean data tool, oceanography">
+    <meta name="author" content="National Oceanography Centre">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="{SITE_URL}/">
+    <!-- Open Graph (link previews on Slack, Teams, Discord, Facebook, etc.) -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Glider Playground">
+    <meta property="og:title" content="{SEO_TITLE}">
+    <meta property="og:description" content="{SEO_DESCRIPTION}">
+    <meta property="og:url" content="{SITE_URL}/">
+    <meta property="og:image" content="{SITE_URL}/static/dashboard.webp">
+    <meta property="og:image:type" content="image/webp">
+    <meta property="og:image:width" content="1600">
+    <meta property="og:image:height" content="847">
+    <meta property="og:image:alt" content="The Glider Playground dashboard showing OG1 glider data plots and a map">
+    <meta property="og:locale" content="en_GB">
+    <!-- Twitter / X large-image card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{SEO_TITLE}">
+    <meta name="twitter:description" content="{SEO_DESCRIPTION}">
+    <meta name="twitter:image" content="{SITE_URL}/static/dashboard.webp">
+    <meta name="twitter:image:alt" content="The Glider Playground dashboard showing OG1 glider data plots and a map">
+    <!-- Structured data: helps search engines understand this is a web app/tool -->
+    <script type="application/ld+json">
+    {{
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Glider Playground",
+      "alternateName": "OG1 Glider Data Viewer",
+      "url": "{SITE_URL}/",
+      "description": "{SEO_DESCRIPTION}",
+      "applicationCategory": "ScientificApplication",
+      "operatingSystem": "Any",
+      "browserRequirements": "Requires JavaScript",
+      "image": "{SITE_URL}/static/dashboard.webp",
+      "isAccessibleForFree": true,
+      "offers": {{"@type": "Offer", "price": "0", "priceCurrency": "GBP"}},
+      "creator": {{
+        "@type": "Organization",
+        "name": "National Oceanography Centre",
+        "url": "https://www.noc.ac.uk/"
+      }}
+    }}
+    </script>
+"""
+
+_seo_html_cache: str | None = None
+
+
+def _is_server() -> bool:
+    return os.getenv("IS_SERVER") == "True"
+
+
+def _index_html() -> str:
+    """index.html with SEO tags injected (server mode) — cached after first build."""
+    global _seo_html_cache
+    if _seo_html_cache is None:
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # Use an SEO-rich <title> for search results / link previews; the in-app
+        # UI doesn't rely on the tab title, so this is safe to override.
+        html = html.replace(
+            "<title>Glider Playground</title>",
+            f"<title>{SEO_TITLE}</title>\n{_SEO_HEAD.rstrip()}",
+            1,
+        )
+        _seo_html_cache = html
+    return _seo_html_cache
+
+
 # Vendor bundles are immutable (version is baked into the filename, e.g.
 # plotly-gl2d-2.32.0.min.js) so they can be cached forever — important since the
 # plot iframe reloads them on every re-plot. Our own source (HTML + the small
@@ -102,7 +188,41 @@ def _cached_or_live(file_id: str, key: str, compute):
 
 @app.get("/")
 def read_root():
+    # Inject SEO tags only for the public deployment; local/desktop installs get
+    # the unmodified file straight from disk.
+    if _is_server():
+        return Response(content=_index_html(), media_type="text/html")
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    if _is_server():
+        body = (
+            "User-agent: *\n"
+            "Allow: /\n"
+            "# API and per-file data endpoints aren't useful to index.\n"
+            "Disallow: /api/\n"
+            f"\nSitemap: {SITE_URL}/sitemap.xml\n"
+        )
+    else:
+        # Local/desktop install on 127.0.0.1 — nothing to crawl.
+        body = "User-agent: *\nDisallow: /\n"
+    return Response(content=body, media_type="text/plain")
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    if not _is_server():
+        raise HTTPException(status_code=404, detail="Not found")
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url>\n    <loc>{SITE_URL}/</loc>\n"
+        "    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n"
+        "</urlset>\n"
+    )
+    return Response(content=body, media_type="application/xml")
 
 
 @app.get("/api/config")
