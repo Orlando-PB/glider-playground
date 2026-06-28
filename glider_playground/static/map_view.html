@@ -1003,17 +1003,16 @@
                 };
             }
 
-            box.classList.add('visible');
-            clearTimeout(showOverlayError._t);
-            // Give a bit longer to read/act when there's a command or sign-in to do.
-            const setupAction = cmd || setup === 'login';
-            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), setupAction ? 15000 : 7000);
-
             // A command in the hint (install) or a login-required signal means this
-            // is a one-time Copernicus setup issue rather than a transient failure —
-            // let the parent surface it through Jelly (with an in-app sign-in form)
-            // so it's noticeable and actionable even with the globe closed.
+            // is a one-time Copernicus setup issue rather than a transient failure.
+            const setupAction = cmd || setup === 'login';
+            clearTimeout(showOverlayError._t);
+
             if (setupAction) {
+                // Setup help is surfaced through Jelly (with an in-app sign-in form)
+                // so it's noticeable and actionable even with the globe closed —
+                // don't also show the in-globe toast, which only doubles up on it.
+                box.classList.remove('visible');
                 try {
                     window.parent && window.parent.postMessage({
                         type: 'overlaySetup',
@@ -1023,6 +1022,10 @@
                         setup: setup || (cmd ? 'install' : '')
                     }, '*');
                 } catch (_) {}
+            } else {
+                // A transient/one-off failure: show it in-globe and auto-dismiss.
+                box.classList.add('visible');
+                showOverlayError._t = setTimeout(() => box.classList.remove('visible'), 7000);
             }
         }
 

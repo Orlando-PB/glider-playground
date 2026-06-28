@@ -28,7 +28,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-desktop = ["pywebview"]
+# The desktop build bundles copernicusmarine so the downloadable app can fetch
+# overlays out of the box — frozen-app users have no terminal to `pip install`
+# it themselves, so it has to ship inside the bundle (see the .spec collect_all).
+desktop = ["pywebview", "copernicusmarine"]
 
 [project.scripts]
 glider-playground = "glider_playground.cli:main"

@@ -31,12 +31,18 @@ datas += copy_metadata("glider-playground")
 hiddenimports = collect_submodules("uvicorn") + collect_submodules("glider_playground")
 
 # Scientific / IO libraries that ship data files or use lazy/plugin imports
-# PyInstaller's static analysis won't see on its own.
-for mod in ("xarray", "netCDF4", "h5netcdf", "gsw"):
+# PyInstaller's static analysis won't see on its own. copernicusmarine is
+# bundled here so overlays work in the downloadable app without the user having
+# to `pip install` it from a terminal they don't have; it pulls a heavy tail of
+# deps (zarr/dask/boto3) so collect_all is needed to follow its lazy imports.
+for mod in ("xarray", "netCDF4", "h5netcdf", "gsw", "copernicusmarine"):
     d, b, h = collect_all(mod)
     datas += d
     binaries += b
     hiddenimports += h
+
+# copernicusmarine reads its own version via importlib.metadata at import time.
+datas += copy_metadata("copernicusmarine")
 
 # The webview backend ships native loader libraries (e.g. WebView2 on Windows).
 wd, wb, wh = collect_all("webview")
