@@ -966,7 +966,7 @@
             return '';
         }
 
-        function showOverlayError(msg, hint) {
+        function showOverlayError(msg, hint, setup) {
             const box = document.getElementById('chla-err');
             document.getElementById('chla-err-msg').textContent = msg || 'Could not load overlay';
             document.getElementById('chla-err-hint').textContent = hint || '';
@@ -1005,19 +1005,22 @@
 
             box.classList.add('visible');
             clearTimeout(showOverlayError._t);
-            // Give a bit longer to read/copy when there's a command to act on.
-            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), cmd ? 15000 : 7000);
+            // Give a bit longer to read/act when there's a command or sign-in to do.
+            const setupAction = cmd || setup === 'login';
+            showOverlayError._t = setTimeout(() => box.classList.remove('visible'), setupAction ? 15000 : 7000);
 
-            // A command in the hint means this is a one-time Copernicus setup issue
-            // (install / login) rather than a transient failure — let the parent
-            // surface it through Jelly so it's noticeable even with the globe closed.
-            if (cmd) {
+            // A command in the hint (install) or a login-required signal means this
+            // is a one-time Copernicus setup issue rather than a transient failure —
+            // let the parent surface it through Jelly (with an in-app sign-in form)
+            // so it's noticeable and actionable even with the globe closed.
+            if (setupAction) {
                 try {
                     window.parent && window.parent.postMessage({
                         type: 'overlaySetup',
                         message: msg || 'Could not load Copernicus overlay',
                         hint: hint || '',
-                        command: cmd
+                        command: cmd,
+                        setup: setup || (cmd ? 'install' : '')
                     }, '*');
                 } catch (_) {}
             }
@@ -1402,7 +1405,7 @@
                     : decodeOverlayBinary(await res.arrayBuffer());
                 T.parsed = performance.now();
                 if (!res.ok || data.error) {
-                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
+                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint, data.setup);
                     return;
                 }
                 if (!data.val || !data.n) {
@@ -1752,7 +1755,7 @@
                 const data = await res.json();
                 T.parsed = performance.now();
                 if (!res.ok || data.error) {
-                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint);
+                    showOverlayError(data.error || `Request failed (${res.status})`, data.hint, data.setup);
                     return;
                 }
                 if (!data.u || !data.nlat) {

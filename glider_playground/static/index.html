@@ -1094,6 +1094,26 @@
         }
         .jelly-download-btn:hover { background: var(--accent-hover); }
         .jelly-download-btn .material-symbols-outlined { font-size: 16px; }
+        /* In-app Copernicus Marine sign-in form inside a Jelly bubble. */
+        .jelly-login { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+        .jelly-login-input {
+            padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+            background: var(--bg-input, rgba(0,0,0,0.25)); color: var(--text-primary);
+            font-size: 11px; outline: none;
+        }
+        .jelly-login-input:focus { border-color: var(--accent); }
+        .jelly-login-input:disabled { opacity: 0.6; }
+        .jelly-login-btn {
+            padding: 7px 8px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--accent); color: #fff; font-size: 11px; font-weight: 600;
+        }
+        .jelly-login-btn:hover { background: var(--accent-hover); }
+        .jelly-login-btn:disabled { opacity: 0.6; cursor: default; }
+        .jelly-login-status { font-size: 10px; color: var(--text-muted); min-height: 12px; }
+        .jelly-login-status.ok { color: #34d399; }
+        .jelly-login-status.err { color: #f87171; }
+        .jelly-login-link { font-size: 10px; color: var(--accent); text-decoration: none; align-self: flex-start; }
+        .jelly-login-link:hover { text-decoration: underline; }
 
         /* ---------- Misc ---------- */
         .grab-handle { touch-action: none; }
@@ -3036,7 +3056,7 @@
             // A Copernicus overlay failed because copernicusmarine isn't installed
             // or logged in — surface the one-time setup help through Jelly.
             if (msg.type === 'overlaySetup') {
-                notifyCopernicusSetup(msg.message, msg.hint, msg.command);
+                notifyCopernicusSetup(msg.message, msg.hint, msg.command, msg.setup);
                 return;
             }
 
@@ -5911,13 +5931,72 @@
         // The globe iframe posts {type:'overlaySetup'} when a Copernicus overlay
         // fails because copernicusmarine isn't installed / logged in. Surface it
         // once through Jelly with the copyable setup command.
-        function notifyCopernicusSetup(msg, hint, command) {
+        function notifyCopernicusSetup(msg, hint, command, setup) {
             if (_copernicusNotified) return;
             _copernicusNotified = true;
             const text = (msg || 'Copernicus overlays need a quick one-time setup.')
                 + (hint ? `\n\n${hint}` : '');
             const div = notifyJelly(text, { open: true });
-            if (div && command) appendCommandBlock(div, command);
+            if (setup === 'login') appendCopernicusLoginForm(div);
+            else if (div && command) appendCommandBlock(div, command);
+        }
+
+        // In-app Copernicus Marine sign-in. Desktop builds bundle copernicusmarine
+        // but the user has no terminal copy to run `login`, so collect their
+        // account details here and POST them to the backend, which validates them
+        // online and persists them to ~/.copernicusmarine. On success overlays work
+        // immediately (no restart) — the user just re-toggles the layer to retry.
+        function appendCopernicusLoginForm(parent) {
+            if (!parent) return;
+            const form = document.createElement('form');
+            form.className = 'jelly-login';
+            form.innerHTML = `
+                <input type="text" autocomplete="username" placeholder="Copernicus username" class="jelly-login-input" />
+                <input type="password" autocomplete="current-password" placeholder="Password" class="jelly-login-input" />
+                <button type="submit" class="jelly-login-btn">Sign in</button>
+                <div class="jelly-login-status"></div>
+                <a href="https://data.marine.copernicus.eu/register" target="_blank" rel="noopener" class="jelly-login-link">Need an account? Register free</a>
+            `;
+            const [userInput, passInput] = form.querySelectorAll('.jelly-login-input');
+            const btn = form.querySelector('.jelly-login-btn');
+            const status = form.querySelector('.jelly-login-status');
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = userInput.value.trim();
+                const password = passInput.value;
+                if (!username || !password) {
+                    status.className = 'jelly-login-status err';
+                    status.textContent = 'Enter your username and password.';
+                    return;
+                }
+                btn.disabled = true;
+                status.className = 'jelly-login-status';
+                status.textContent = 'Signing in…';
+                let data;
+                try {
+                    const res = await fetch('/api/copernicus/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password }),
+                    });
+                    data = await res.json();
+                } catch (_) {
+                    data = { status: 'error', message: 'Could not reach the app server.' };
+                }
+                if (data && data.status === 'success') {
+                    status.className = 'jelly-login-status ok';
+                    status.textContent = 'Signed in! Re-toggle the overlay to load it.';
+                    passInput.value = '';
+                    userInput.disabled = passInput.disabled = btn.disabled = true;
+                    // Allow a fresh note if a later overlay still fails for some reason.
+                    _copernicusNotified = false;
+                } else {
+                    btn.disabled = false;
+                    status.className = 'jelly-login-status err';
+                    status.textContent = (data && data.message) || 'Sign-in failed.';
+                }
+            });
+            parent.appendChild(form);
         }
 
 

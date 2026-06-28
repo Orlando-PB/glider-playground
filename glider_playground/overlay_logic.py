@@ -14,10 +14,54 @@ import re
 import struct
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# The copernicusmarine toolbox stores credentials in a single file under the
+# user's home dir, independent of the Python environment — so a login done in any
+# terminal/env, or via login() below, is visible to the bundled desktop app too.
+_CONFIG_DIR = Path.home() / ".copernicusmarine"
+_CREDENTIALS_FILE = _CONFIG_DIR / ".copernicusmarine-credentials"
+
+
+def credentials_present() -> bool:
+    """True if a Copernicus Marine credentials file exists for this user."""
+    return _CREDENTIALS_FILE.is_file()
+
+
+def login(username: str, password: str) -> dict:
+    """Validate the given Copernicus Marine credentials online and, if valid,
+    persist them to ~/.copernicusmarine so every subsequent overlay fetch is
+    authenticated. No terminal and no restart needed — open_dataset reads the
+    credentials file per call, so a fresh login is picked up immediately. Returns
+    {"status": "success"} or {"status": "error", "message": ...}."""
+    username = (username or "").strip()
+    password = password or ""
+    if not username or not password:
+        return {"status": "error", "message": "Username and password are required"}
+    try:
+        import copernicusmarine
+    except ImportError:
+        return {"status": "error", "message": "copernicusmarine package is not installed"}
+    try:
+        # check_credentials_valid=True verifies online before writing: invalid
+        # creds return False and leave any existing file untouched.
+        ok = copernicusmarine.login(
+            username=username,
+            password=password,
+            force_overwrite=True,
+            check_credentials_valid=True,
+        )
+    except Exception as exc:
+        logger.warning("Copernicus login error: %s", exc)
+        return {"status": "error", "message": f"Login failed: {exc}"}
+    if not ok:
+        return {"status": "error", "message": "Invalid Copernicus Marine username or password"}
+    logger.info("Copernicus Marine credentials saved for %s", username)
+    return {"status": "success"}
 
 # Satellite ocean-colour: near-real-time (last ~1y) then multi-year reprocessed.
 _DS_CHL_NRT = "cmems_obs-oc_glo_bgc-plankton_nrt_l4-gapfree-multi-4km_P1D"
@@ -26,9 +70,12 @@ _DS_CHL_MY = "cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D"
 # Surface currents: eastward (uo) + northward (vo) velocity, analysis/forecast.
 _DS_CUR = "cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m"
 
-# Sea level anomaly (DUACS L4 altimetry): near-real-time then reprocessed multi-year.
+# Sea level anomaly (DUACS L4 altimetry): higher-res near-real-time first, then
+# the coarser near-real-time and reprocessed multi-year products as fallbacks for
+# older dates the 0.125deg NRT product doesn't cover.
 # `sla` is the height anomaly relative to the 20-year mean — this is the quantity
 # Copernicus users plot, not the model `zos` (height above geoid) we showed before.
+_DS_SLA_NRT_HI = "cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D"
 _DS_SLA_NRT = "cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.25deg_P1D"
 _DS_SLA_MY = "cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.25deg_P1D"
 
@@ -41,7 +88,7 @@ OVERLAYS: dict[str, dict] = {
     "o2":       {"datasets": ["cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m"],     "variable": "o2",     "surface": True},
     "ph":       {"datasets": ["cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m"],     "variable": "ph",     "surface": True},
     "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"],     "variable": "phyc",   "surface": True},
-    "ssh":      {"datasets": [_DS_SLA_NRT, _DS_SLA_MY], "variable": "sla",   "surface": False, "demean": True},
+    "ssh":      {"datasets": [_DS_SLA_NRT_HI, _DS_SLA_NRT, _DS_SLA_MY], "variable": "sla", "surface": False, "demean": True},
 }
 
 # Currents is a vector field (uo, vo) rather than a single scalar, so it gets its
@@ -148,6 +195,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
         return {
             "error": "copernicusmarine package is not installed",
             "hint": "Run: pip install copernicusmarine",
+            "setup": "install",
         }
 
     # Fetch a ~12° (TARGET) box of latitude centred on the deployment, and a
@@ -283,7 +331,8 @@ def _try_datasets(dataset_ids, open_fn, date_str):
             if _is_auth_error(msg):
                 return {
                     "error": "Copernicus Marine authentication failed",
-                    "hint": "Run 'copernicusmarine login' in your terminal, then restart Glider Playground",
+                    "hint": "Enter your Copernicus Marine account details to sign in.",
+                    "setup": "login",
                 }
 
             # If our date is beyond the dataset's range, retry at its actual max.
@@ -303,7 +352,8 @@ def _try_datasets(dataset_ids, open_fn, date_str):
 
     return {
         "error": f"Could not retrieve data: {last_err}",
-        "hint": "Ensure you are logged in: run 'copernicusmarine login' in your terminal",
+        "hint": "If this is a sign-in problem, enter your Copernicus Marine details below.",
+        "setup": "login",
     }
 
 

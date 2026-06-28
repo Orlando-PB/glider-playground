@@ -492,6 +492,22 @@ def api_overlays():
     return {"overlays": list(overlay_logic.OVERLAYS.keys())}
 
 
+@app.get("/api/copernicus/status")
+def api_copernicus_status():
+    """Whether Copernicus Marine credentials are set up on this machine."""
+    return {"logged_in": overlay_logic.credentials_present()}
+
+
+@app.post("/api/copernicus/login")
+async def api_copernicus_login(request: Request):
+    """Validate + persist Copernicus Marine credentials entered in the app, so
+    overlays work without running 'copernicusmarine login' in a terminal."""
+    if os.getenv("IS_SERVER") == "True":
+        raise HTTPException(status_code=403, detail="Copernicus login not available in server mode")
+    body = await request.json()
+    return overlay_logic.login(body.get("username"), body.get("password"))
+
+
 # A glider whose last fix is within this many days is treated as "live": its
 # overlay uses the most recent available Copernicus field rather than the exact
 # last-fix date, so an active deployment always sees the freshest ocean state.
