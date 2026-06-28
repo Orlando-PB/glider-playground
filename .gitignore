@@ -11,3 +11,5 @@
 /packaging/app_icon.ico
 .env
 /testing/
+# Private server-only deploy assets (analytics plugin, secrets). Never publish.
+/deploy/

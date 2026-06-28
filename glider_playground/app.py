@@ -114,6 +114,11 @@ _SEO_HEAD = f"""\
 
 _seo_html_cache: str | None = None
 
+# HTML snippets contributed by server-only plugins (see _load_server_plugins),
+# injected into the served index.html. Empty on every non-server / non-plugin
+# install, so this is a no-op for pip/desktop users.
+_PLUGIN_BODY: list[str] = []
+
 
 def _is_server() -> bool:
     return os.getenv("IS_SERVER") == "True"
@@ -131,6 +136,10 @@ def _index_html() -> str:
             f"<title>{SEO_TITLE}</title>\n{_SEO_HEAD.rstrip()}",
             1,
         )
+        # Let server plugins (e.g. the private analytics beacon) inject markup
+        # right before </body>.
+        if _PLUGIN_BODY:
+            html = html.replace("</body>", "\n".join(_PLUGIN_BODY) + "\n</body>", 1)
         _seo_html_cache = html
     return _seo_html_cache
 
@@ -719,6 +728,47 @@ def api_currents(id: str):
         lon_max=loc["lon_max"],
         target_date=target_date,
     )
+
+
+# ---------- server-only plugins ----------
+
+def _load_server_plugins() -> None:
+    """Load optional, private server-only extensions.
+
+    These live *outside* this package (and outside the public repo / PyPI
+    release) so the deployment can add things like usage analytics without that
+    code shipping to local/desktop/pip users. Each .py file in the plugins dir
+    may define ``register(app)`` to add routes and/or a ``BEACON_HTML`` string
+    injected into index.html. Loaded only in server mode; absence is the normal
+    case (so pip/desktop installs do nothing here and pay no overhead).
+
+    Plugins dir: $GP_PLUGINS_DIR, else ~/.glider_playground/plugins.
+    """
+    if not _is_server():
+        return
+    import glob
+    import importlib.util
+
+    plugin_dir = os.getenv("GP_PLUGINS_DIR") or os.path.expanduser(
+        "~/.glider_playground/plugins"
+    )
+    for path in sorted(glob.glob(os.path.join(plugin_dir, "*.py"))):
+        name = os.path.splitext(os.path.basename(path))[0]
+        try:
+            spec = importlib.util.spec_from_file_location(f"gp_plugin_{name}", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "register"):
+                mod.register(app)
+            snippet = getattr(mod, "BEACON_HTML", "")
+            if snippet:
+                _PLUGIN_BODY.append(snippet)
+            logger.info("Loaded server plugin: %s", name)
+        except Exception:
+            logger.exception("Failed to load server plugin %s", path)
+
+
+_load_server_plugins()
 
 
 if __name__ == "__main__":
