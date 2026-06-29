@@ -471,7 +471,7 @@ def api_map_all():
         tracks.append({
             "id": fid,
             "name": rec.get("name"),
-            "path": _downsample_path(path, 800),
+            "path": _downsample_path(path, 500 if plot_logic._LOW_MEMORY else 800),
             "dac": payload.get("dac") or [],
             "last_lat": rec.get("last_lat"),
             "last_lon": rec.get("last_lon"),

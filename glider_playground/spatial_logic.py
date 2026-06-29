@@ -17,7 +17,9 @@ from netCDF4 import Dataset
 
 from . import plot_logic
 
-MAX_POINTS = 5000
+# Desktop/RAM mode keeps the active globe track detailed; server/low-memory
+# mode renders far fewer points per track so the globe stays fast.
+MAX_POINTS = 1000 if plot_logic._LOW_MEMORY else 5000
 BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 100.0
 GEO_GAP_THRESHOLD_SEC = 2 * 86400.0   # 2 days
