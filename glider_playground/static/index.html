@@ -661,6 +661,12 @@
         .gp-panel.active.idle .gp-add.show { display: none; }
         .gp-panel.active.idle .gp-panel-header { opacity: 0; }
         .gp-panel-body { position: absolute; inset: 0; overflow: hidden; border-radius: 3px; }
+        /* While the active file is downloading/processing the centred progress
+           overlay is shown. Hide EVERY panel's content (plots, stats, map, 3D) —
+           not just the active one — so nothing peeks out behind/around the
+           overlay when multiple panels are open. The panel's plot-bg background
+           stays, giving the overlay a clean backdrop. */
+        #panelHost.gp-processing .gp-panel-body { visibility: hidden; }
         .gp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block; background: var(--plot-bg); }
         .gp-frame.hidden { display: none; }
         .gp-panel-label {
@@ -3354,16 +3360,33 @@
                 return;
             }
 
-            // A globe was clicked: mirror the pin onto every OTHER globe and clear any
-            // plot point popup (a fresh, position-only selection supersedes it).
+            // A globe was clicked: mirror the pin onto every OTHER globe. If the click
+            // landed on the ACTIVE glider's path (onPath), resolve the TIME at that
+            // spot — show it in every globe's bubble and mark the matching point on
+            // each open plot. An open-ocean click is position-only, so it just clears
+            // any stale plot popup (a fresh selection supersedes it).
             if (msg.type === 'coordPicked') {
                 forEachMapFrame(w => w.postMessage({ type: 'pinCoord', lat: msg.lat, lng: msg.lng }, '*'), event.source);
-                forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                const onPathDs = msg.onPath ? (datasetSelect.value || '') : '';
+                if (onPathDs) {
+                    fetch(`/api/nearest_fix_by_coord?id=${encodeURIComponent(onPathDs)}&lat=${msg.lat}&lon=${msg.lng}`)
+                        .then(r => r.json())
+                        .then(d => {
+                            if (d && typeof d.time === 'number') {
+                                forEachMapFrame(w => w.postMessage({ type: 'pinTime', timeMs: d.time }, '*'));
+                                forEachPlotFrame(w => w.postMessage({ type: 'selectPointByTime', timeMs: d.time }, '*'));
+                            }
+                        })
+                        .catch(() => {});
+                } else {
+                    forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                }
                 return;
             }
 
-            // X pressed on a globe bubble or the plot popup — clear the pin everywhere.
-            if (msg.type === 'coordCleared' || msg.type === 'plotPointClear') {
+            // X pressed on a globe bubble or the plot popup, or 'x' pressed anywhere —
+            // clear the pin/marker everywhere.
+            if (msg.type === 'coordCleared' || msg.type === 'plotPointClear' || msg.type === 'clearAllPicks') {
                 forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
                 forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
                 return;
@@ -4418,6 +4441,11 @@
         async function refreshLive({ force = false } = {}) {
             if (_liveInFlight) { scheduleLivePoll(); return; }
             _liveInFlight = true;
+            // The spinning refresh icon + the "Scanning…" header are the scan
+            // indicator. BODC re-checks every file in one call, so there's nothing
+            // per-file to convey — and the old grey-out/lock just dimmed every card
+            // on each background poll for no real benefit (clicks are delegated, so
+            // a mid-scan re-render is safe).
             liveRefreshIcon.style.animation = 'spin 1s linear infinite';
             if (!_liveData) liveScannedAt.textContent = 'Scanning…';
             try {
@@ -5346,6 +5374,7 @@
 
         let fileRecords = [];               // last response from /api/files
         let _lastReadyIds = '';             // signature of ready-file ids, to detect set changes for the globe
+        let _lastFileSigs = {};             // id -> "mtime:size", to detect in-place content updates (live gliders)
         let pollingTimer = null;            // active when any file is processing
         let pendingActivateId = null;       // file we want to load once it's ready
         let _ctdDefaultsAppliedFor = null;  // file id whose CTD defaults were applied
@@ -5494,9 +5523,13 @@
         function showProcessingOverlay(rec) {
             if (!rec) {
                 processingOverlay.classList.add('hidden');
+                panelHost.classList.remove('gp-processing');
                 return;
             }
             processingOverlay.classList.remove('hidden');
+            // Blank every open panel, not just the active plot iframe, so no
+            // sibling plot/stats panel overlaps the centred progress overlay.
+            panelHost.classList.add('gp-processing');
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
             plotIframe?.classList.add('hidden');
@@ -5513,6 +5546,7 @@
 
         function hideProcessingOverlay() {
             processingOverlay.classList.add('hidden');
+            panelHost.classList.remove('gp-processing');
         }
 
         async function refreshFiles({ activate = false } = {}) {
@@ -5538,14 +5572,48 @@
             renderLivePlaceholders();
 
             // When the set of ready files changes (one finished processing, was
-            // added, or removed), tell the already-loaded globe to rebuild its
-            // context tracks so newly-processed gliders appear / removed ones go.
-            const readySig = fileRecords.filter(f => f.status === 'ready').map(f => f.id).sort().join(',');
+            // added, or removed) OR a ready file's content changes (a live glider
+            // re-processed in place — same id, new fixes), tell the already-loaded
+            // globe to rebuild its context tracks. Folding mtime/size into the
+            // signature is what catches the in-place update: keying on id alone
+            // leaves the globe drawing its stale cached path for live gliders.
+            const readySig = fileRecords.filter(f => f.status === 'ready')
+                .map(f => `${f.id}:${f.mtime}:${f.size}`).sort().join(',');
             if (readySig !== _lastReadyIds) {
                 _lastReadyIds = readySig;
                 if (currentMapDataset && gliderMap.src && gliderMap.src.includes('map_view.html')) {
                     try { gliderMap.contentWindow.postMessage({ type: 'refreshTracks' }, '*'); } catch (_) {}
                 }
+            }
+
+            // Same idea for the data plot(s) and 3D view: a live glider that
+            // re-processes in place keeps its id but gets a new mtime/size, so any
+            // open plot/3D panel showing it is now stale. Diff each ready file's
+            // content signature against the last time we saw it *ready* and
+            // re-render only the affected panels in place.
+            //
+            // We only record/compare the signature on 'ready' polls. A re-process
+            // dips through processing/pending (new mtime already on disk) before
+            // landing back on ready: if we updated the stored sig during that dip
+            // the final ready poll would match and we'd miss the change. Comparing
+            // to the *previous* ready sig also means a file seen for the first time
+            // (no prior entry) is NOT treated as a change — its initial render is
+            // handled by selectFile/layout.
+            //
+            // Skip the whole pass while a layout swap / panel restore is in flight
+            // (_suspendToolbar): the panels map and iframes are mid-mutation. We
+            // leave _lastFileSigs un-advanced so the change is re-detected on the
+            // next poll once things settle — nothing is lost.
+            if (!_suspendToolbar) {
+                const changedIds = new Set();
+                for (const f of fileRecords) {
+                    if (f.status !== 'ready') continue;
+                    const sig = `${f.mtime}:${f.size}`;
+                    const prev = _lastFileSigs[f.id];
+                    if (prev !== undefined && prev !== sig) changedIds.add(f.id);
+                    _lastFileSigs[f.id] = sig;
+                }
+                if (changedIds.size) refreshUpdatedViews(changedIds);
             }
 
             if (activate && !(await resolveSharedFile())) {
@@ -5614,6 +5682,39 @@
                 clearInterval(pollingTimer);
                 pollingTimer = null;
             }
+        }
+
+        // Re-render in place any open plot / 3D panel whose file just changed on
+        // disk (a live glider re-processed). The map is handled separately via the
+        // 'refreshTracks' message above. Called from refreshFiles with the set of
+        // changed file ids.
+        function refreshUpdatedViews(changedIds) {
+            // Defensive: the caller already skips this whole pass during a layout
+            // swap / panel restore, but never re-render into mid-mutation panels.
+            if (_suspendToolbar) return;
+
+            let activePlotDirty = false;
+            const ap = activePlotPanel();
+            Object.values(panels).forEach(p => {
+                if (p.type === 'plot') {
+                    // Each plot panel can show its own file (multi-plot), so key off
+                    // the panel's own datasetId, not the globally-active dataset.
+                    if (!p.state || !changedIds.has(p.state.datasetId)) return;
+                    if (p === ap) { activePlotDirty = true; return; }
+                    // Background plot: re-drive in place only if it's already warm.
+                    // A cold/mid-load frame is skipped — its in-flight fetch already
+                    // pulls fresh data (the server keys its cache on mtime/size), so
+                    // there's nothing stale to correct.
+                    if (p._frameReady && p.iframe && p.iframe.contentWindow) renderPanel(p);
+                } else if (p.type === '3d') {
+                    // The 3D view always shows the globally-active dataset; reload it
+                    // (fresh /api/3d_data) when that file changed.
+                    if (changedIds.has(datasetSelect.value)) renderPanel(p);
+                }
+            });
+            // Route the active plot through updatePlot so the isPlotting/plotQueued
+            // guard coalesces it with any in-flight or user-triggered re-plot.
+            if (activePlotDirty) updatePlot();
         }
 
         // Tear down whatever file is currently shown and reset the plot area to
@@ -5979,6 +6080,14 @@
             // reload the active plot and flash "Fetching data...".
             if (e.key === 'Enter' && !e.target.closest('#qcDropdown') && !e.target.closest('#jellyPanel')) updatePlot();
                 
+            // 'x' anywhere clears the globe pin and every plot marker (the inverse of
+            // the per-frame X buttons). Ignored while typing into a field.
+            if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
+                && !e.target.closest('input, textarea, select, [contenteditable="true"]')) {
+                forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
+                forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+            }
+
             if (e.key === 'Escape') {
                 // Esc dismisses transient UI only — it must NOT blank the active
                 // plot (that was a single-plot-era leftover that wiped a panel).

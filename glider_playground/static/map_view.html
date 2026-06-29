@@ -148,9 +148,14 @@
         }
         #coord-bubble.visible { display: flex; }
         #coord-bubble .coord-pin { font-size: 15px; color: #3b82f6; }
+        #coord-textwrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
         #coord-text {
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 11px; white-space: nowrap; user-select: text;
+        }
+        #coord-time {
+            display: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 10px; white-space: nowrap; user-select: text; color: var(--text-muted);
         }
         #coord-bubble button {
             flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
@@ -210,7 +215,10 @@
     <!-- Clicked-coordinate readout (top-centre). Populated on globe click. -->
     <div id="coord-bubble">
         <span class="material-symbols-outlined coord-pin">location_on</span>
-        <span id="coord-text">–</span>
+        <span id="coord-textwrap">
+            <span id="coord-text">–</span>
+            <span id="coord-time"></span>
+        </span>
         <button id="coord-copy" type="button" title="Copy lat, lon"><span class="material-symbols-outlined">content_copy</span></button>
         <button id="coord-close" type="button" title="Close"><span class="material-symbols-outlined">close</span></button>
     </div>
@@ -244,7 +252,8 @@
             pathThicknessMax: 3.6,
             pathBrightnessMin: 0.22,
             pathBrightnessMax: 1.0,
-            maxSegments: 400,
+            maxSegments: 1000,        // grey (context) tracks
+            activeMaxSegments: 5000,  // the active track gets the finest line
             zoomScaleFactor: 30,
             minAltitude: 0.01,
             maxAltitude: 2.5,
@@ -348,10 +357,12 @@
             return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
         }
 
-        function buildSegments(points, trackId) {
+        function buildSegments(points, trackId, maxSeg = CONFIG.maxSegments) {
             if (points.length < 2) return [];
-            // Downsample if needed so we keep render cost bounded.
-            const stride = Math.max(1, Math.ceil((points.length - 1) / CONFIG.maxSegments));
+            // Downsample if needed so we keep render cost bounded. Each segment is a
+            // separate globe.gl path object (needed for the old→new fade), so this
+            // cap is really a cap on path-object count, not vertices.
+            const stride = Math.max(1, Math.ceil((points.length - 1) / maxSeg));
             const sampled = [];
             for (let i = 0; i < points.length; i += stride) sampled.push(points[i]);
             if (sampled[sampled.length - 1] !== points[points.length - 1]) {
@@ -469,9 +480,19 @@
             const out = [];
             for (const t of allTracks) if (t.id !== activeId) out.push(...t.segments);
             const at = activeTrack();
-            if (at) out.push(...at.segments);
+            if (at) out.push(...activeSegments(at));
             if (showDac && at) out.push(...at.dacArrows);
             return out;
+        }
+
+        // The active track draws its line at the finer activeMaxSegments. Built once
+        // per track and cached — switching back to a previously-active glider reuses
+        // it. Grey context tracks keep their light 400-segment version (t.segments).
+        function activeSegments(t) {
+            if (!t.segmentsHi) {
+                t.segmentsHi = buildSegments(t.formattedPath, t.id, CONFIG.activeMaxSegments);
+            }
+            return t.segmentsHi;
         }
 
         // Position dots, one per glider so it's obvious where each one is:
@@ -1093,13 +1114,18 @@
                     ? hoverId
                     : nearestTrackAtScreen(e.clientX, e.clientY, 14);
                 if (pick) { selectTrack(pick); return; }
-                const geo = pickGlobeCoords(e.clientX, e.clientY);
+                // A click on (or very near) the ACTIVE glider's path snaps to that
+                // point: the parent then resolves its TIME (shown in the bubble) and
+                // marks the matching point on every open plot. An open-ocean click is
+                // position-only (onPath false) and leaves the plots alone.
+                const snap = nearestActivePointAtScreen(e.clientX, e.clientY, 14);
+                const geo = snap || pickGlobeCoords(e.clientX, e.clientY);
                 if (geo) {
                     showPin(geo.lat, geo.lng);
                     setCoordAim(true);
                     // Mirror the pin onto every other open globe (and clear any plot
                     // point popup, since this is a new selection) via the parent.
-                    try { window.parent.postMessage({ type: 'coordPicked', lat: geo.lat, lng: _wrapLon(geo.lng) }, '*'); } catch (_) {}
+                    try { window.parent.postMessage({ type: 'coordPicked', lat: geo.lat, lng: _wrapLon(geo.lng), onPath: !!snap }, '*'); } catch (_) {}
                 }
             });
         }
@@ -1135,7 +1161,7 @@
         const _tmpV = new THREE.Vector3();
         function ensureCart(t) {
             if (t.cart) return t.cart;
-            const stride = Math.max(1, Math.ceil(t.formattedPath.length / 220));
+            const stride = Math.max(1, Math.ceil(t.formattedPath.length / 400));
             const cart = [];
             for (let i = 0; i < t.formattedPath.length; i += stride) {
                 const p = t.formattedPath[i];
@@ -1144,6 +1170,15 @@
             }
             t.cart = cart;
             return cart;
+        }
+        // Squared distance from point (px,py) to the segment a→b, in screen px.
+        function _distToSeg2(px, py, ax, ay, bx, by) {
+            const vx = bx - ax, vy = by - ay;
+            const len2 = vx * vx + vy * vy;
+            let s = len2 > 0 ? ((px - ax) * vx + (py - ay) * vy) / len2 : 0;
+            s = s < 0 ? 0 : s > 1 ? 1 : s;
+            const dx = px - (ax + s * vx), dy = py - (ay + s * vy);
+            return dx * dx + dy * dy;
         }
         function nearestTrackAtScreen(clientX, clientY, tolPx) {
             if (!myGlobe) return null;
@@ -1154,17 +1189,68 @@
             let best = null, bestD = tolPx * tolPx;
             for (const t of allTracks) {
                 if (t.id === activeId) continue;
+                // Measure distance to the LINE (each visible segment), not just to the
+                // sampled vertices, so the hit area is the continuous track — no gaps
+                // between samples, and two close tracks are judged by which line is
+                // actually nearer. prevOk breaks the polyline where it dips behind the
+                // globe/camera so no false chord is drawn across the horizon.
+                let prevX = 0, prevY = 0, prevOk = false;
                 for (const c of ensureCart(t)) {
-                    // Skip back-facing points (outward normal must face the camera).
-                    if (c[0] * (ex - c[0]) + c[1] * (ey - c[1]) + c[2] * (ez - c[2]) <= 0) continue;
-                    _tmpV.set(c[0], c[1], c[2]).project(cam);
-                    if (_tmpV.z > 1) continue;   // behind the camera
-                    const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
-                    const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
-                    const dx = sx - px, dy = sy - py;
-                    const d = dx * dx + dy * dy;
-                    if (d < bestD) { bestD = d; best = t.id; }
+                    let sx = 0, sy = 0, ok = false;
+                    // Front-facing (outward normal toward camera) and in front of it?
+                    if (c[0] * (ex - c[0]) + c[1] * (ey - c[1]) + c[2] * (ez - c[2]) > 0) {
+                        _tmpV.set(c[0], c[1], c[2]).project(cam);
+                        if (_tmpV.z <= 1) {
+                            sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                            sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                            ok = true;
+                        }
+                    }
+                    if (ok) {
+                        if (prevOk) {
+                            const d = _distToSeg2(px, py, prevX, prevY, sx, sy);
+                            if (d < bestD) { bestD = d; best = t.id; }
+                        } else {
+                            // Lone visible endpoint — fall back to vertex distance.
+                            const dx = sx - px, dy = sy - py, d = dx * dx + dy * dy;
+                            if (d < bestD) { bestD = d; best = t.id; }
+                        }
+                        prevX = sx; prevY = sy; prevOk = true;
+                    } else {
+                        prevOk = false;
+                    }
                 }
+            }
+            return best;
+        }
+
+        // Nearest point ON THE ACTIVE track to a screen click, returned as snapped
+        // {lat, lng}, or null when the click is further than `tolPx` from the path.
+        // Same camera-facing / projection maths as nearestTrackAtScreen, but it
+        // walks the active track at full-ish resolution (this runs once per click,
+        // not per hover frame) so the snap lands on a real fix.
+        function nearestActivePointAtScreen(clientX, clientY, tolPx) {
+            if (!myGlobe) return null;
+            const at = activeTrack();
+            if (!at || !at.formattedPath.length) return null;
+            const rect = document.getElementById('globe-container').getBoundingClientRect();
+            const px = clientX - rect.left, py = clientY - rect.top;
+            const cam = myGlobe.camera();
+            const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+            const stride = Math.max(1, Math.ceil(at.formattedPath.length / 1500));
+            let best = null, bestD = tolPx * tolPx;
+            for (let i = 0; i < at.formattedPath.length; i += stride) {
+                const p = at.formattedPath[i];
+                const w = myGlobe.getCoords(p.lat, p.lng, p.alt || 0);
+                // Skip back-facing points so the far side can't be picked through the globe.
+                if (w.x * (ex - w.x) + w.y * (ey - w.y) + w.z * (ez - w.z) <= 0) continue;
+                _tmpV.set(w.x, w.y, w.z).project(cam);
+                if (_tmpV.z > 1) continue;   // behind the camera
+                const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                const dx = sx - px, dy = sy - py;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = { lat: p.lat, lng: p.lng }; }
             }
             return best;
         }
@@ -1177,10 +1263,26 @@
             const hemiLon = lo >= 0 ? 'E' : 'W';
             document.getElementById('coord-text').textContent =
                 `${Math.abs(la).toFixed(6)}° ${hemiLat}, ${Math.abs(lo).toFixed(6)}° ${hemiLon}`;
+            setCoordTime(null);   // fresh pin starts time-less; filled in async if on-path
             const copyBtn = document.getElementById('coord-copy');
             copyBtn.classList.remove('copied');
             copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
             document.getElementById('coord-bubble').classList.add('visible');
+        }
+
+        // Show (or clear, when ms is null) the TIME line under the coords. Set when
+        // the click landed on the active glider's path and the parent has resolved
+        // the moment the glider was at that spot.
+        function setCoordTime(ms) {
+            const el = document.getElementById('coord-time');
+            if (!el) return;
+            if (typeof ms !== 'number' || !isFinite(ms)) { el.textContent = ''; el.style.display = 'none'; return; }
+            const d = new Date(ms);
+            if (isNaN(d.getTime())) { el.textContent = ''; el.style.display = 'none'; return; }
+            const p = n => String(n).padStart(2, '0');
+            el.textContent = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} `
+                + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+            el.style.display = '';
         }
 
         // Drop (or move) the blue pin: draw the dot + show the coord readout.
@@ -1198,6 +1300,7 @@
             applyDots();
             const bubble = document.getElementById('coord-bubble');
             if (bubble) bubble.classList.remove('visible');
+            setCoordTime(null);
             _lastCoord = null;
             setCoordAim(false);
         }
@@ -1208,6 +1311,16 @@
             if (!_lastCoord) return '';
             return `${_lastCoord.lat.toFixed(6)}, ${_lastCoord.lng.toFixed(6)}`;
         }
+
+        // Pressing 'x' anywhere clears the pin/marker everywhere — clear locally and
+        // tell the parent to fan the clear out to the other globes and the plots.
+        window.addEventListener('keydown', (e) => {
+            if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
+                && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) {
+                clearPin();
+                try { window.parent.postMessage({ type: 'clearAllPicks' }, '*'); } catch (_) {}
+            }
+        });
 
         (function wireCoordBubble() {
             const bubble = document.getElementById('coord-bubble');
@@ -1874,6 +1987,9 @@
                 if (typeof event.data.lat === 'number' && typeof event.data.lng === 'number') {
                     showPin(event.data.lat, event.data.lng);
                 }
+            } else if (event.data.type === 'pinTime') {
+                // Parent resolved the TIME for an on-path pin — show it in the bubble.
+                setCoordTime(typeof event.data.timeMs === 'number' ? event.data.timeMs : null);
             } else if (event.data.type === 'clearPin') {
                 clearPin();
             } else if (event.data.type === 'setDac') {

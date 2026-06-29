@@ -2066,6 +2066,16 @@
             return false;
         }
 
+        // Pressing 'x' anywhere clears this plot's marker and (via the parent) the
+        // globe pin and every other plot's marker too.
+        window.addEventListener('keydown', (e) => {
+            if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
+                && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) {
+                hidePointBubble();
+                try { window.parent.postMessage({ type: 'clearAllPicks' }, '*'); } catch (_) {}
+            }
+        });
+
         (function wirePointBubble() {
             const closeBtn = document.getElementById('point-close');
             if (closeBtn) closeBtn.addEventListener('click', () => {

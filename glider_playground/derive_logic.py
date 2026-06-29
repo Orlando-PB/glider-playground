@@ -145,7 +145,17 @@ def _compute_ctd(filepath, log, names, existing, time_var):
             return np.full(n, float(arr.reshape(-1)[0]) if arr.size else np.nan)
         return arr
     lat, lon = _fit(lat), _fit(lon)
-    
+
+    # GPS fixes are surface-only and sparse, so lat/lon are NaN at virtually every
+    # CTD sample row. SA_from_SP needs a position at each row, so without this the
+    # GSW outputs (ABS_SALINITY/CONS_TEMP/DENSITY) only land on the GPS rows —
+    # disjoint from where TEMP/PRES actually have data — and any plot combining a
+    # derived var with a raw one yields zero points. Carry position to the CTD rows
+    # by the same time interpolation already used for CNDC/TEMP/PRES (position
+    # varies slowly, so a time-linear fill is well within GPS error).
+    lat = _interp_over_time(lat, tvals)
+    lon = _interp_over_time(lon, tvals)
+
     if not (len(cndc) == len(temp) == n == len(lat) == len(lon)):
         log("CTD derive: input length mismatch - skipping")
         return [], {}, {}

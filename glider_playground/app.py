@@ -497,6 +497,15 @@ def api_nearest_fix(id: str, time: float):
     return spatial_logic.get_nearest_fix(_resolve_path(id), time)
 
 
+@app.get("/api/nearest_fix_by_coord")
+def api_nearest_fix_by_coord(id: str, lat: float, lon: float):
+    """Closest GPS fix to a clicked ``lat``/``lon`` — the inverse of
+    ``/api/nearest_fix``. Resolves a globe click on the glider's path to the TIME
+    there, so the matching point can be marked on every open plot. Not cached:
+    the position varies per click."""
+    return spatial_logic.get_nearest_fix_by_coord(_resolve_path(id), lat, lon)
+
+
 @app.get("/api/variables")
 def api_variables(id: str):
     cached = cache_logic.get_payload(id, "variables")

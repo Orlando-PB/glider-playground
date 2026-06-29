@@ -19,7 +19,8 @@ from . import plot_logic
 
 MAX_POINTS = 5000
 BATHY_RESOLUTION = 40
-GEO_GAP_THRESHOLD_KM = 20.0
+GEO_GAP_THRESHOLD_KM = 100.0
+GEO_GAP_THRESHOLD_SEC = 2 * 86400.0   # 2 days
 GEO_GROUP_MIN_POINTS = 100
 
 # Position variable names in priority order. Some files lack the OG1 standard
@@ -65,15 +66,21 @@ def _report_spatial_stage(msg: str):
 
 # ---------- Geographic outlier ----------
 
-def _trim_position_outliers(lat, lon):
+def _trim_position_outliers(lat, lon, times=None):
     """Drop isolated stray fixes while keeping the whole real track.
 
-    Splits the track into groups wherever there is a spatial gap larger than
-    GEO_GAP_THRESHOLD_KM, then keeps *every* group with at least
-    GEO_GROUP_MIN_POINTS fixes. A glider legitimately leaves big gaps behind
-    (a long transit dive, a comms outage), so keeping only the single largest
-    group used to discard whole later legs of the deployment. Only genuinely
-    tiny clusters — a lone bad GPS fix flung far from the track — are dropped.
+    Splits the track into groups wherever there is a real break, then keeps
+    *every* group with at least GEO_GROUP_MIN_POINTS fixes. A glider
+    legitimately leaves big gaps behind (a long transit dive, a comms outage),
+    so keeping only the single largest group used to discard whole later legs of
+    the deployment. Only genuinely tiny clusters — a lone bad GPS fix flung far
+    from the track — are dropped.
+
+    A gap only counts as a *break* when it is large in BOTH distance (over
+    GEO_GAP_THRESHOLD_KM) AND time (over GEO_GAP_THRESHOLD_SEC). A fast >100 km
+    jump within a couple of days is normal transit, and a long pause that barely
+    moves is a comms outage — neither should chop the track and risk hiding a
+    legitimate leg. When times are unavailable we fall back to distance alone.
     """
     n = len(lat)
     valid = np.zeros(n, dtype=bool)
@@ -86,7 +93,13 @@ def _trim_position_outliers(lat, lon):
     dx = (lon[1:] - lon[:-1]) * 111.320 * cos_lat
     dist = np.hypot(dx, dy)
 
-    gap_indices = np.where(dist > GEO_GAP_THRESHOLD_KM)[0] + 1
+    is_break = dist > GEO_GAP_THRESHOLD_KM
+    if times is not None and len(times) == n:
+        dt = np.asarray(times[1:], dtype=float) - np.asarray(times[:-1], dtype=float)
+        big_time = np.isfinite(dt) & (dt > GEO_GAP_THRESHOLD_SEC)
+        is_break = is_break & big_time
+
+    gap_indices = np.where(is_break)[0] + 1
     groups = np.split(np.arange(n), gap_indices)
 
     if not groups:
@@ -367,6 +380,15 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     """
     _report_spatial_stage("spatial QC: reading coordinates")
     lat, lon, pres, temp = _read_lat_lon_pres_temp(filepath)
+    # Times (epoch seconds) drive the gap-break test in the outlier trim. Read
+    # here so they ride through the same valid-mask + subsample as lat/lon and
+    # stay row-aligned; if absent or misaligned the trim falls back to distance.
+    try:
+        times = _read_track_times(filepath)
+    except Exception:
+        times = None
+    if times is not None and len(times) != len(lat):
+        times = None
 
     _report_spatial_stage("spatial QC: interpolating coordinate gaps")
     lat = pd.Series(lat).interpolate(limit_direction='both').to_numpy()
@@ -390,6 +412,8 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     pres = pres[valid]
     if temp is not None:
         temp = temp[valid]
+    if times is not None:
+        times = times[valid]
 
     # Subsample early so the geographic trim (and any future steps) work
     # on a small array. Step through valid points only so isolated GPS
@@ -402,9 +426,11 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
         pres = pres[::step]
         if temp is not None:
             temp = temp[::step]
+        if times is not None:
+            times = times[::step]
 
     _report_spatial_stage("spatial QC: trimming position outliers")
-    keep = _trim_position_outliers(lat, lon)
+    keep = _trim_position_outliers(lat, lon, times)
     lat = lat[keep]
     lon = lon[keep]
     pres = pres[keep]
@@ -510,6 +536,46 @@ def get_nearest_fix(filepath, time_ms):
         "lon": float(lon[j]),
         "time": float(times[j]) * 1000.0,
         "dt_seconds": float(abs(times[j] - t_target)),
+    }
+
+
+def get_nearest_fix_by_coord(filepath, lat_q, lon_q):
+    """Nearest in-space GPS fix to a clicked ``lat_q``/``lon_q`` position.
+
+    The inverse of :func:`get_nearest_fix`: a globe click carries a POSITION but
+    no time, so we match the clicked spot to the closest valid lat/lon sample and
+    hand back the TIME there. That time can then drive the matching point on every
+    open plot. Returns ``{lat, lon, time, dist_km}`` or an ``{error}`` dict.
+    """
+    try:
+        lat, lon, _pres, _temp = _read_lat_lon_pres_temp(filepath)
+        times = _read_track_times(filepath)  # epoch seconds, NaN where invalid
+    except Exception as e:
+        return {"error": str(e)}
+
+    n = min(len(lat), len(lon), len(times))
+    if n == 0:
+        return {"error": "No position data"}
+    lat, lon, times = lat[:n], lon[:n], times[:n]
+
+    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(times)
+    idx = np.flatnonzero(valid)
+    if idx.size == 0:
+        return {"error": "No position fixes"}
+
+    lat_q, lon_q = float(lat_q), float(lon_q)
+    # Equirectangular approximation — cheap and plenty accurate over a glider's
+    # local span for picking the nearest fix.
+    cos_lat = np.cos(np.radians(lat_q))
+    dx = (lon[idx] - lon_q) * cos_lat
+    dy = lat[idx] - lat_q
+    j = idx[int(np.argmin(dx * dx + dy * dy))]
+    return {
+        "lat": float(lat[j]),
+        "lon": float(lon[j]),
+        "time": float(times[j]) * 1000.0,
+        "dist_km": float(np.hypot(
+            (lon[j] - lon_q) * cos_lat, lat[j] - lat_q) * 111.195),
     }
 
 
