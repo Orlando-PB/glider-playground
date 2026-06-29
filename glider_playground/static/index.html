@@ -1899,10 +1899,11 @@
         // union "reset" range). Lets newly-loaded plots tell "follow the active
         // zoom" apart from "re-fit everything to the union time range".
         let _userZoomActive = false;
-        // Panel ids we just drove via alignment — their resulting plotZoomed echo
-        // must not be treated as a fresh user zoom (which would swap the master and
-        // re-propagate in a loop). Each is consumed once, with a timeout fallback.
-        const _alignDriven = new Set();
+        // Sync-driven zooms are distinguished from genuine user zooms by the iframe's
+        // `driven: true` flag on its plotZoomed echo (a driven relayout is suppressed
+        // from the plot's own relayout handler, so it never masquerades as a user
+        // zoom). The parent filters those echoes before maybeAlign, which is what
+        // stops synced plots from re-propagating each other in an endless loop.
 
         // True while a multi-plot view (e.g. Dashboard) is loading its panels in a
         // staggered queue. Alignment drives are suppressed until it clears, so the
@@ -1930,6 +1931,14 @@
             const zb = (p.id === activePlotPanelId) ? currentZoomBounds : (p.state && p.state.zoomBounds);
             return (zb && zb.xMin !== undefined && zb.xMin !== null) ? { xMin: zb.xMin, xMax: zb.xMax } : null;
         }
+        // The y variable a panel plots (e.g. DEPTH). Plots sharing a y var should
+        // zoom together vertically, so a depth window matches across them.
+        function panelYVar(p) { return (p && p.state && p.state.y) || null; }
+        // The live y-range of a panel, when it carries a real y zoom. null = y auto.
+        function panelYRange(p) {
+            const zb = (p.id === activePlotPanelId) ? currentZoomBounds : (p.state && p.state.zoomBounds);
+            return (zb && typeof zb.yMin === 'number' && typeof zb.yMax === 'number') ? { yMin: zb.yMin, yMax: zb.yMax } : null;
+        }
 
         // When time-axis sync is on, a profile / cycle / phase / direction change
         // should apply to every timeseries plot — not just the active one — so
@@ -1949,24 +1958,30 @@
             scheduleSaveLayout();
         }
 
-        // Drive a set of timeseries plots to an explicit x (time) range. Only the
-        // x axis is touched — each plot keeps its own y zoom. The targets' echoed
-        // plotZoomed events are flagged so they don't re-trigger alignment.
-        function driveAlignX(targets, xRange) {
+        // Drive a set of timeseries plots to an explicit x (time) range. When a
+        // master y var + y range are given, plots plotting that SAME y variable
+        // (e.g. Depth) also receive the y range, so a depth window matches across
+        // them; plots with a different y var get only x (y stays autoranged). The
+        // targets' echoed plotZoomed events are flagged so they don't re-trigger
+        // alignment.
+        function driveAlignX(targets, xRange, masterYVar, yRange) {
             targets.forEach(p => {
                 if (!p.iframe || !p.iframe.contentWindow) return;
-                _alignDriven.add(p.id);
-                setTimeout(() => _alignDriven.delete(p.id), 2500);  // safety: never get stuck
-                try { p.iframe.contentWindow.postMessage({ type: 'updateLimits', limits: { xMin: xRange.xMin, xMax: xRange.xMax } }, '*'); } catch (_) {}
+                const limits = { xMin: xRange.xMin, xMax: xRange.xMax };
+                if (yRange && masterYVar && panelYVar(p) === masterYVar) {
+                    limits.yMin = yRange.yMin; limits.yMax = yRange.yMax;
+                }
+                try { p.iframe.contentWindow.postMessage({ type: 'updateLimits', limits }, '*'); } catch (_) {}
             });
         }
 
         // Push `xRange` from `master` onto every other timeseries plot. A null
         // xRange means "reset" — in sync mode the reset target is the union range
         // (total time across all plots), not each plot's own extent.
-        function propagateAlignment(master, xRange) {
+        function propagateAlignment(master, xRange, yRange) {
             if (!xRange) { applyUnionRange(); return; }
-            driveAlignX(timeseriesPanels().filter(p => !master || p.id !== master.id), xRange);
+            driveAlignX(timeseriesPanels().filter(p => !master || p.id !== master.id),
+                        xRange, panelYVar(master), yRange);
         }
 
         // The union of every loaded timeseries plot's full time extent — earliest
@@ -2002,13 +2017,14 @@
         // The x range of the current real user zoom, if any — the master's,
         // falling back to the active plot's. null when in the reset/union state
         // (union-driven ranges must NOT count, or new plots would lock to them).
+        // Returns { master, xRange, yRange } for the active zoom, or null.
         function activeAlignRange() {
             if (!_userZoomActive) return null;
             const cand = [];
             if (alignMasterId && panels[alignMasterId]) cand.push(panels[alignMasterId]);
             const ap = activePlotPanel();
             if (ap && !cand.includes(ap)) cand.push(ap);
-            for (const p of cand) { if (isTimeseriesPanel(p)) { const r = panelXRange(p); if (r) return r; } }
+            for (const p of cand) { if (isTimeseriesPanel(p)) { const r = panelXRange(p); if (r) return { master: p, xRange: r, yRange: panelYRange(p) }; } }
             return null;
         }
 
@@ -2020,21 +2036,23 @@
             if (!alignTimeAxes || !isTimeseriesPanel(panel)) return;
             if (timeseriesPanels().length < 2) return;
             const m = activeAlignRange();
-            if (m) driveAlignX([panel], m);
+            if (m) driveAlignX([panel], m.xRange, panelYVar(m.master), m.yRange);
             else applyUnionRange();
         }
 
         // A real (user) zoom on a timeseries plot: it becomes the master and drives
-        // the others. Echoes from our own alignment drives are consumed here.
+        // the others. Only called for genuine user zooms — the caller has already
+        // filtered out our own `driven` alignment echoes, so there's no feedback loop.
         function maybeAlign(srcPanel, limits) {
             if (_bulkLoading) return;   // ignore load-time zoom echoes during a staggered batch
             if (!alignTimeAxes || !isTimeseriesPanel(srcPanel)) return;
-            if (_alignDriven.has(srcPanel.id)) { _alignDriven.delete(srcPanel.id); return; }
             alignMasterId = srcPanel.id;
             const xRange = (limits && limits.xMin !== undefined && limits.xMin !== 'auto' && limits.xMin !== null)
                 ? { xMin: limits.xMin, xMax: limits.xMax } : null;
+            const yRange = (limits && typeof limits.yMin === 'number' && typeof limits.yMax === 'number')
+                ? { yMin: limits.yMin, yMax: limits.yMax } : null;
             _userZoomActive = !!xRange;   // a real zoom sets it; a real reset clears it
-            propagateAlignment(srcPanel, xRange);
+            propagateAlignment(srcPanel, xRange, yRange);
         }
 
         // Toggle alignment from the toolbar's Sync button. On → align to the active
@@ -2048,7 +2066,7 @@
                 // otherwise snap everything to the union (total) time range.
                 const ap = activePlotPanel();
                 const r = isTimeseriesPanel(ap) ? panelXRange(ap) : null;
-                if (r) { alignMasterId = ap.id; _userZoomActive = true; driveAlignX(timeseriesPanels(), r); }
+                if (r) { alignMasterId = ap.id; _userZoomActive = true; driveAlignX(timeseriesPanels(), r, panelYVar(ap), panelYRange(ap)); }
                 else { alignMasterId = null; _userZoomActive = false; applyUnionRange(); }
             } else {
                 alignMasterId = null;
@@ -3399,8 +3417,8 @@
                     const l = msg.limits;
                     srcPanel.state.zoomBounds = (l && l.xMin !== 'auto' && l.xMin !== undefined)
                         ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
-                    // Alignment-driven echoes must not re-enter the propagation logic,
-                    // or synced plots ping-pong zoom in/out forever.
+                    // Alignment-driven echoes carry `driven: true` and must not re-enter
+                    // the propagation logic, or synced plots ping-pong zoom forever.
                     if (!msg.driven) maybeAlign(srcPanel, l);
                 } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
