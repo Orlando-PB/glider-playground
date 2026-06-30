@@ -19,16 +19,16 @@ Grab the latest prebuilt desktop app — no Python or setup required:
 | Platform | Download |
 |---|---|
 | **macOS** (Apple Silicon) | [GliderPlayground-macOS-arm64.zip](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-macOS-arm64.zip) |
-| **Windows** (x64) | [GliderPlayground-Windows-x64.zip](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-Windows-x64.zip) |
+| **Windows** (x64) | [GliderPlayground-Windows-x64-Setup.exe](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-Windows-x64-Setup.exe) |
 | **Linux** (x64) | [GliderPlayground-Linux-x64.tar.gz](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-Linux-x64.tar.gz) |
 
 Or [browse all releases](https://github.com/Orlando-PB/glider-playground/releases/latest).
 
-Unzip and run it like any other app.
+On macOS and Linux, unzip and run it like any other app. On Windows, run the installer (`Setup.exe`) — it installs the app, adds Start-menu/desktop shortcuts, and registers an uninstaller in **Add or remove programs**.
 
 > **Unsigned builds.** macOS and Windows builds aren't code-signed yet, so the OS will warn the first time you open them:
 > - **macOS** — if it says the app is unsafe or can't be opened, go to **System Settings → Privacy & Security**, scroll down to the **Security** section, and click **Open Anyway**. Alternatively, right-click the app → **Open** → **Open**, or run `xattr -dr com.apple.quarantine /path/to/GliderPlayground.app`.
-> - **Windows** — on the SmartScreen prompt click **More info** → **Run anyway**.
+> - **Windows** — when SmartScreen appears, click **More info** → **Run anyway**. You only need to do this once, on the installer; the installed app runs without further warnings.
 
 ---
 

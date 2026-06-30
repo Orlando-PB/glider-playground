@@ -134,7 +134,7 @@ def _desktop_asset() -> tuple[str | None, str]:
             return "GliderPlayground-macOS-arm64.zip", "macOS (Apple Silicon)"
         return None, "macOS (Intel)"
     if sys.platform.startswith("win"):
-        return "GliderPlayground-Windows-x64.zip", "Windows (x64)"
+        return "GliderPlayground-Windows-x64-Setup.exe", "Windows (x64)"
     if sys.platform.startswith("linux"):
         return "GliderPlayground-Linux-x64.tar.gz", "Linux (x64)"
     return None, sys.platform

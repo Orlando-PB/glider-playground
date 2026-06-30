@@ -26,7 +26,7 @@ jobs:
             asset: GliderPlayground-macOS-arm64.zip
           - os: windows-latest
             label: Windows-x64
-            asset: GliderPlayground-Windows-x64.zip
+            asset: GliderPlayground-Windows-x64-Setup.exe
           - os: ubuntu-latest
             label: Linux-x64
             asset: GliderPlayground-Linux-x64.tar.gz
@@ -85,9 +85,18 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "GliderPlayground.app" "../${{ matrix.asset }}"
         shell: bash
 
+      # Wrap the PyInstaller bundle in an Inno Setup installer instead of a raw
+      # zip. Files written by the installer don't inherit the "Mark of the Web"
+      # that a downloaded zip stamps onto every extracted file, so the user only
+      # clears SmartScreen once (on the installer) and the app then runs cleanly.
+      # Inno Setup (iscc) is preinstalled on the windows-latest runner image.
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        run: Compress-Archive -Path dist/GliderPlayground/* -DestinationPath ${{ matrix.asset }}
+        env:
+          GP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          iscc "/DAppVersion=$env:GP_VERSION" packaging\installer.iss
+          Move-Item packaging\installer\${{ matrix.asset }} ${{ matrix.asset }}
         shell: pwsh
 
       - name: Package (Linux)
@@ -125,7 +134,7 @@ jobs:
             Automatically built from the latest commit on `main`.
 
             - **macOS** (Apple Silicon): `GliderPlayground-macOS-arm64.zip`
-            - **Windows** (x64): `GliderPlayground-Windows-x64.zip`
+            - **Windows** (x64): `GliderPlayground-Windows-x64-Setup.exe` (installer)
             - **Linux** (x64): `GliderPlayground-Linux-x64.tar.gz`
 
             > macOS/Windows builds are unsigned — see the repo README for how to open them past Gatekeeper/SmartScreen.
