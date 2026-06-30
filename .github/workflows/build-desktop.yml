@@ -1,9 +1,11 @@
 name: Build desktop apps
 
 # Builds the windowed desktop app for macOS, Windows and Linux on every push to
-# main and publishes them as assets on a single rolling "latest" release. Asset
-# filenames are stable per-platform, so each run overwrites the previous build
-# (no old builds are kept).
+# main. Each platform publishes to its OWN rolling release (tags latest-macos /
+# latest-windows / latest-linux), so the Releases page lists one clean,
+# single-asset release per platform. Each run deletes and recreates its
+# platform's release at the current commit, so the publish date and the
+# auto-attached "Source code" archives always reflect the latest code.
 
 on:
   push:
@@ -24,12 +26,18 @@ jobs:
           - os: macos-latest
             label: macOS-arm64
             asset: GliderPlayground-macOS-arm64.zip
+            tag: latest-macos
+            release_name: Latest macOS release (Apple Silicon)
           - os: windows-latest
             label: Windows-x64
             asset: GliderPlayground-Windows-x64-Setup.exe
+            tag: latest-windows
+            release_name: Latest Windows release (x64)
           - os: ubuntu-latest
             label: Linux-x64
             asset: GliderPlayground-Linux-x64.tar.gz
+            tag: latest-linux
+            release_name: Latest Linux release (x64)
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +75,9 @@ jobs:
 
       - name: Read version
         id: version
-        run: echo "version=$(python -c 'import importlib.metadata as m; print(m.version(\"glider-playground\"))')" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(python -c "import importlib.metadata as m; print(m.version('glider-playground'))")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Build with PyInstaller
@@ -92,10 +102,10 @@ jobs:
       # Inno Setup (iscc) is preinstalled on the windows-latest runner image.
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        env:
-          GP_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          iscc "/DAppVersion=$env:GP_VERSION" packaging\installer.iss
+          $ver = "${{ steps.version.outputs.version }}"
+          if (-not $ver) { $ver = "0.0.0" }
+          iscc "/DAppVersion=$ver" packaging\installer.iss
           Move-Item packaging\installer\${{ matrix.asset }} ${{ matrix.asset }}
         shell: pwsh
 
@@ -104,41 +114,23 @@ jobs:
         run: tar -czf "${{ matrix.asset }}" -C dist GliderPlayground
         shell: bash
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.label }}
-          path: ${{ matrix.asset }}
-          if-no-files-found: error
+      # Publish straight to this platform's own rolling release. Delete the
+      # existing release + tag first, then recreate at the current commit, so the
+      # release only ever holds the latest single asset and its date/source
+      # archives are current. fail-fast:false means one platform failing here
+      # doesn't stop the others publishing.
+      - name: Publish ${{ matrix.label }} release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "${{ matrix.tag }}" --cleanup-tag --yes || true
+          gh release create "${{ matrix.tag }}" "${{ matrix.asset }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ matrix.release_name }}" \
+            --latest=false \
+            --notes "Automatically built from the latest commit on \`main\` (version ${{ steps.version.outputs.version }}).
 
-  release:
-    name: Publish rolling release
-    needs: build
-    # Publish whatever built successfully, even if one platform failed — so a
-    # single broken target doesn't block shipping the others. Only skips if the
-    # whole run was cancelled.
-    if: ${{ always() && !cancelled() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+          Download: \`${{ matrix.asset }}\`
 
-      - name: Publish to "latest" release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest desktop build
-          body: |
-            Automatically built from the latest commit on `main`.
-
-            - **macOS** (Apple Silicon): `GliderPlayground-macOS-arm64.zip`
-            - **Windows** (x64): `GliderPlayground-Windows-x64-Setup.exe` (installer)
-            - **Linux** (x64): `GliderPlayground-Linux-x64.tar.gz`
-
-            > macOS/Windows builds are unsigned — see the repo README for how to open them past Gatekeeper/SmartScreen.
-          prerelease: false
-          make_latest: true
-          files: artifacts/**/*
-          fail_on_unmatched_files: true
+          > This build is unsigned — see the repo README for how to open it past Gatekeeper/SmartScreen."
+        shell: bash

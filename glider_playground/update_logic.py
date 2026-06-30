@@ -25,11 +25,12 @@ PACKAGE_NAME = "glider-playground"
 CACHE_TTL = 3600  # seconds — re-check PyPI at most once an hour per process
 HTTP_TIMEOUT = 5
 
-# Desktop builds are published to a single rolling "latest" GitHub release with
-# stable per-platform asset names (see .github/workflows/build-desktop.yml), so
-# these download URLs never change between versions.
-RELEASES_PAGE = "https://github.com/Orlando-PB/glider-playground/releases/latest"
-DOWNLOAD_BASE = "https://github.com/Orlando-PB/glider-playground/releases/download/latest"
+# Desktop builds are published to one rolling GitHub release *per platform*
+# (tags latest-macos / latest-windows / latest-linux), each holding only that
+# platform's asset (see .github/workflows/build-desktop.yml). Asset names are
+# stable, so these download URLs never change between versions.
+RELEASES_PAGE = "https://github.com/Orlando-PB/glider-playground/releases"
+RELEASE_DOWNLOAD = "https://github.com/Orlando-PB/glider-playground/releases/download"
 
 _lock = threading.Lock()
 _cache: dict = {"at": 0.0, "data": None}
@@ -121,23 +122,23 @@ def _detect_env() -> dict:
     return {"kind": None, "name": None, "activate": None}
 
 
-def _desktop_asset() -> tuple[str | None, str]:
-    """Return (asset_filename_or_None, human_label) for the current platform.
+def _desktop_asset() -> tuple[str | None, str, str]:
+    """Return (asset_url_or_None, human_label) for the current platform.
 
-    Mirrors the asset names produced by the desktop build workflow. None means
-    no prebuilt asset exists for this OS/arch (e.g. Intel macOS) — callers fall
-    back to the releases page so the user can pick manually.
+    Mirrors the per-platform releases produced by the desktop build workflow.
+    A ``None`` url means no prebuilt asset exists for this OS/arch (e.g. Intel
+    macOS) — callers fall back to the releases page so the user can pick.
     """
     machine = platform.machine().lower()
     if sys.platform == "darwin":
         if machine in ("arm64", "aarch64"):
-            return "GliderPlayground-macOS-arm64.zip", "macOS (Apple Silicon)"
-        return None, "macOS (Intel)"
+            return "latest-macos", "GliderPlayground-macOS-arm64.zip", "macOS (Apple Silicon)"
+        return None, "", "macOS (Intel)"
     if sys.platform.startswith("win"):
-        return "GliderPlayground-Windows-x64-Setup.exe", "Windows (x64)"
+        return "latest-windows", "GliderPlayground-Windows-x64-Setup.exe", "Windows (x64)"
     if sys.platform.startswith("linux"):
-        return "GliderPlayground-Linux-x64.tar.gz", "Linux (x64)"
-    return None, sys.platform
+        return "latest-linux", "GliderPlayground-Linux-x64.tar.gz", "Linux (x64)"
+    return None, "", sys.platform
 
 
 def _fill_actions(info: dict, method: str, repo_dir: str | None, env: dict) -> None:
@@ -147,9 +148,11 @@ def _fill_actions(info: dict, method: str, repo_dir: str | None, env: dict) -> N
     build gets a ``download_url`` + ``download_label`` instead.
     """
     if method == "desktop":
-        asset, label = _desktop_asset()
+        tag, asset, label = _desktop_asset()
         info["download_label"] = label
-        info["download_url"] = f"{DOWNLOAD_BASE}/{asset}" if asset else RELEASES_PAGE
+        info["download_url"] = (
+            f"{RELEASE_DOWNLOAD}/{tag}/{asset}" if tag else RELEASES_PAGE
+        )
         info["steps"] = []
     else:
         info["steps"] = _build_steps(method, repo_dir, env)

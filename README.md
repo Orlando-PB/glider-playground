@@ -18,11 +18,11 @@ Grab the latest prebuilt desktop app — no Python or setup required:
 
 | Platform | Download |
 |---|---|
-| **macOS** (Apple Silicon) | [GliderPlayground-macOS-arm64.zip](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-macOS-arm64.zip) |
-| **Windows** (x64) | [GliderPlayground-Windows-x64-Setup.exe](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-Windows-x64-Setup.exe) |
-| **Linux** (x64) | [GliderPlayground-Linux-x64.tar.gz](https://github.com/Orlando-PB/glider-playground/releases/download/latest/GliderPlayground-Linux-x64.tar.gz) |
+| **macOS** (Apple Silicon) | [GliderPlayground-macOS-arm64.zip](https://github.com/Orlando-PB/glider-playground/releases/download/latest-macos/GliderPlayground-macOS-arm64.zip) |
+| **Windows** (x64) | [GliderPlayground-Windows-x64-Setup.exe](https://github.com/Orlando-PB/glider-playground/releases/download/latest-windows/GliderPlayground-Windows-x64-Setup.exe) |
+| **Linux** (x64) | [GliderPlayground-Linux-x64.tar.gz](https://github.com/Orlando-PB/glider-playground/releases/download/latest-linux/GliderPlayground-Linux-x64.tar.gz) |
 
-Or [browse all releases](https://github.com/Orlando-PB/glider-playground/releases/latest).
+Or [browse all releases](https://github.com/Orlando-PB/glider-playground/releases).
 
 On macOS and Linux, unzip and run it like any other app. On Windows, run the installer (`Setup.exe`) — it installs the app, adds Start-menu/desktop shortcuts, and registers an uninstaller in **Add or remove programs**.
 
