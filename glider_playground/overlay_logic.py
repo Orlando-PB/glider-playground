@@ -492,8 +492,13 @@ def _extract(ds, variable: str, date_str: str, demean: bool = False) -> dict:
     flat = vals[mask]
     if demean:
         flat = flat - float(np.mean(flat))
-    p10 = float(np.percentile(flat, 10))
-    p90 = float(np.percentile(flat, 90))
+        # SLA's diverging ramp saturates hard at the percentile-based range —
+        # eddies routinely exceed it. Copernicus users read SLA on a fixed
+        # +/-0.2 m scale, so match that instead of the data's own p10/p90.
+        p10, p90 = -0.2, 0.2
+    else:
+        p10 = float(np.percentile(flat, 10))
+        p90 = float(np.percentile(flat, 90))
 
     # Pack [lat, lng, value] as a float32 (n, 3) array, fully vectorised — this
     # skips the old per-cell Python list build (the slow part of "extract" for a

@@ -5132,9 +5132,20 @@
             const fileId = datasetSelect.value;
             if (!fileId) return;
 
-            const response = await fetch(`/api/variables?id=${encodeURIComponent(fileId)}`);
-            const data = await response.json();
-            
+            let data;
+            try {
+                const response = await fetch(`/api/variables?id=${encodeURIComponent(fileId)}`);
+                if (!response.ok) throw new Error(`/api/variables ${response.status}`);
+                data = await response.json();
+            } catch (e) {
+                // A backend error here must not silently abort the rest of
+                // handleDatasetChange (loadLocation, panel dataset updates,
+                // updatePlot) — swapping to a file that errors out would
+                // otherwise leave the UI pointed at the previous file's data.
+                console.error('Failed to load variables:', e);
+                data = { variables: [] };
+            }
+
             const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
             const hasAnyCtd = ['PRES', 'TEMP', 'CNDC'].some(n => data.variables.some(v => v.name === n || v.name === n + '_ADJUSTED'));
 
@@ -5861,6 +5872,19 @@
 
             // Extra globes (added via the panel "+") follow the shared dataset too.
             Object.values(panels).forEach(p => { if (p.type === 'map' && !p.hostedEl && p.iframe) loadExtraMap(p); });
+
+            // Dashboard / Overview / Bio-optics choose their plot set by which
+            // variables the file actually has (see applyDashboard() etc.) — a plain
+            // dataset swap needs to re-run that same filtering, or a file with fewer
+            // variables keeps showing dead plots, and a file with MORE variables never
+            // gains the newly-available one (e.g. swapping onto a glider that carries
+            // CHLA). Re-clicking the view button already does this; do it automatically
+            // on every swap too, instead of just re-pointing the existing panels.
+            const viewReappliers = { dashboard: applyDashboard, overview: applyOverview, biooptics: applyBioOptics };
+            if (viewReappliers[_viewKind]) {
+                viewReappliers[_viewKind]();
+                return;
+            }
 
             // Point every panel at the newly-selected dataset (shared-dataset
             // default). The active plot panel is rendered via updatePlot (toolbar

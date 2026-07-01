@@ -12,7 +12,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cache_logic
@@ -34,6 +34,19 @@ app = FastAPI()
 # transfer for ~120ms less server CPU is a clear win on the plot hot path (and the
 # big vendor bundles are cached immutably, so their compression only matters once).
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
+
+
+# Starlette's default handler for an unhandled exception is a plain-text
+# "Internal Server Error" body, not JSON. Every frontend call does
+# `await response.json()` unconditionally, so that plain-text body blows up as
+# "Unexpected token 'I', "Internal S"... is not valid JSON" and aborts whatever
+# chain of awaits was mid-flight (e.g. loadVariables during a dataset swap).
+# Returning JSON here means a backend bug degrades to a normal fetch-error the
+# frontend can catch, instead of a JSON.parse crash.
+@app.exception_handler(Exception)
+async def _json_500(request: Request, exc: Exception):
+    logging.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # Warm the heavy copernicusmarine import in the background at startup, so the
 # first overlay request doesn't pay its ~2s cold-import cost inline (that import
