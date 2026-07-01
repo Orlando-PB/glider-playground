@@ -310,6 +310,13 @@ def clear_preloaded(filepath: str):
             f.unlink(missing_ok=True)
     clear_derived(filepath)
     _bust_caches()
+    # Unlike _bust_caches (called on every file switch), this runs only when
+    # the file at this exact path changed on disk (see cache_logic._refresh's
+    # size/mtime check) — so the (filepath, interp, clean) cache key is no
+    # longer trustworthy for this path and must be dropped too, or a stale
+    # entry (e.g. from before new dives were appended) gets compared against
+    # freshly loaded arrays of a different length and crashes.
+    _ctd_processed_arrays_cached.cache_clear()
 
 
 def _get_preloaded(filepath: str):
@@ -432,7 +439,8 @@ def _ctd_processed_arrays_cached(filepath, interpolate: bool, apply_ctd_qc: bool
         clean_canon = _overlay_to_canonical(clean_actual, var_map) if clean_actual else {}
         clean_changed = bool(clean_canon) and any(
             c in clean_canon and c in data_dict
-            and np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c]))
+            and (clean_canon[c].shape != data_dict[c].shape
+                 or np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c])))
             for c in CTD_VARS
         )
         if not clean_changed:
@@ -488,7 +496,8 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
         clean_canon = _overlay_to_canonical(clean_actual, var_map) if clean_actual else {}
         clean_changed = bool(clean_canon) and any(
             c in clean_canon and c in data_dict
-            and np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c]))
+            and (clean_canon[c].shape != data_dict[c].shape
+                 or np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c])))
             for c in CTD_VARS
         )
         if not clean_changed:

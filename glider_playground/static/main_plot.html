@@ -964,6 +964,9 @@
             const AXIS_LABEL_COLOR = TC.label;
             const GRID_COLOR = TC.grid;
             const LINE_COLOR = TC.line;
+            // The density isopycnals already give the T-S diagram a reference grid —
+            // the default square gridlines just clutter on top of them.
+            const isTSMode = TS_SALINITY_VARS.includes(plotData.x_var) && TS_TEMP_VARS.includes(plotData.y_var);
             const layout = {
                 // Tight margins so stacked plots pack close in multiview. Top is
                 // mostly empty space; bottom only needs to fit the x tick labels
@@ -977,7 +980,7 @@
                 margin: { l: 60, r: _multiview ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
-                    type: isXDate ? 'date' : 'linear', showgrid: true, zeroline: false,
+                    type: isXDate ? 'date' : 'linear', showgrid: !isTSMode, zeroline: false,
                     gridcolor: GRID_COLOR, linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
                     title: xLabel ? { text: xLabel, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined,
                     // Keep each date tick on a single line (Plotly's default splits the
@@ -992,7 +995,7 @@
                     ] : undefined,
                 },
                 yaxis: {
-                    showgrid: true, zeroline: false,
+                    showgrid: !isTSMode, zeroline: false,
                     gridcolor: GRID_COLOR, linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
                     title: yLabel ? { text: yLabel, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined
                 },
@@ -1058,7 +1061,104 @@
             return layout;
         }
 
+        // --- T-S diagram density (isopycnal) contours -----------------------------
+        // Seawater density at atmospheric pressure from practical salinity + in-situ
+        // temperature (Millero & Poisson 1981 / UNESCO EOS-80 "dens0"). This is the
+        // classic formula oceanographic tools use to draw sigma-t contour lines on a
+        // T-S diagram; it's a close approximation even when the plot is actually using
+        // absolute salinity / conservative temperature (the small TEOS-10 offset from
+        // sigma-t doesn't matter for a visual reference grid).
+        function dens0(S, T) {
+            const T68 = T * 1.00024;
+            const rhoW = 999.842594 + T68 * (6.793952e-2 + T68 * (-9.095290e-3 + T68 * (1.001685e-4 + T68 * (-1.120083e-6 + T68 * 6.536332e-9))));
+            return rhoW
+                + S * (8.24493e-1 + T68 * (-4.0899e-3 + T68 * (7.6438e-5 + T68 * (-8.2467e-7 + T68 * 5.3875e-9))))
+                + S * Math.sqrt(S) * (-5.72466e-3 + T68 * (1.0227e-4 + T68 * -1.6546e-6))
+                + 4.8314e-4 * S * S;
+        }
+
+        const TS_SALINITY_VARS = ['PRAC_SALINITY', 'ABS_SALINITY'];
+        const TS_TEMP_VARS = ['TEMP', 'CONS_TEMP'];
+
+        // Solve for T at fixed S such that dens0(S,T)-1000 == target, given density
+        // decreases monotonically with T over the ocean's normal temperature range.
+        function solveIsopycnalT(S, target, tLo, tHi) {
+            let fLo = dens0(S, tLo) - 1000 - target;
+            let fHi = dens0(S, tHi) - 1000 - target;
+            if (fLo === 0) return tLo;
+            if (fHi === 0) return tHi;
+            if ((fLo > 0) === (fHi > 0)) return null; // target outside [tLo,tHi] density range at this S
+            for (let i = 0; i < 25; i++) {
+                const tMid = (tLo + tHi) / 2;
+                const fMid = dens0(S, tMid) - 1000 - target;
+                if ((fMid > 0) === (fLo > 0)) { tLo = tMid; fLo = fMid; } else { tHi = tMid; }
+            }
+            return (tLo + tHi) / 2;
+        }
+
+        function buildDensityContourTraces(data) {
+            if (!TS_SALINITY_VARS.includes(data.x_var) || !TS_TEMP_VARS.includes(data.y_var)) return [];
+            const sExt = xDataExtent(data.x, false);
+            const tExt = xDataExtent(data.y, false);
+            if (!isFinite(sExt.min) || !isFinite(sExt.max) || !isFinite(tExt.min) || !isFinite(tExt.max)) return [];
+            if (sExt.max <= sExt.min || tExt.max <= tExt.min) return [];
+            const sPad = (sExt.max - sExt.min) * 0.05;
+            const tPad = (tExt.max - tExt.min) * 0.05;
+            const sLo = sExt.min - sPad, sHi = sExt.max + sPad;
+            const tLo = tExt.min - tPad, tHi = tExt.max + tPad;
+
+            // Density falls as T rises and rises as S rises, so the extreme corners
+            // bound the sigma-t range spanned by the (possibly padded) view.
+            const sigLo = dens0(sLo, tHi) - 1000;
+            const sigHi = dens0(sHi, tLo) - 1000;
+            const STEP = 0.5;
+            const levelStart = Math.ceil(sigLo / STEP) * STEP;
+            const levelEnd = Math.floor(sigHi / STEP) * STEP;
+            if (!isFinite(levelStart) || !isFinite(levelEnd) || levelStart > levelEnd) return [];
+            const MAX_LEVELS = 60; // guards against a runaway loop on a degenerate range
+            const nLevels = Math.min(MAX_LEVELS, Math.round((levelEnd - levelStart) / STEP) + 1);
+
+            const N_SAMPLES = 40;
+            const lineX = [], lineY = [];
+            const labelX = [], labelY = [], labelText = [];
+            for (let li = 0; li < nLevels; li++) {
+                const level = levelStart + li * STEP;
+                let lastValid = null;
+                for (let i = 0; i <= N_SAMPLES; i++) {
+                    const s = sLo + (sHi - sLo) * i / N_SAMPLES;
+                    const t = solveIsopycnalT(s, level, tLo, tHi);
+                    if (t === null) {
+                        lineX.push(null); lineY.push(null);
+                    } else {
+                        lineX.push(s); lineY.push(t);
+                        lastValid = { s, t };
+                    }
+                }
+                lineX.push(null); lineY.push(null); // break between isopycnals
+                if (lastValid) {
+                    labelX.push(lastValid.s); labelY.push(lastValid.t);
+                    labelText.push(level.toFixed(1));
+                }
+            }
+
+            const TC = readThemeColors();
+            return [
+                {
+                    x: lineX, y: lineY, mode: 'lines', type: 'scatter',
+                    line: { color: TC.grid === 'rgba(255,255,255,0.05)' ? 'rgba(160,170,190,0.45)' : 'rgba(90,100,120,0.45)', width: 1, dash: 'dot' },
+                    hoverinfo: 'none', showlegend: false, connectgaps: false,
+                },
+                {
+                    x: labelX, y: labelY, mode: 'text', type: 'scatter',
+                    text: labelText, textposition: 'top left',
+                    textfont: { size: 9, color: TC.label },
+                    hoverinfo: 'none', showlegend: false,
+                },
+            ];
+        }
+
         function createTraces(data) {
+            const densityContourTraces = buildDensityContourTraces(data);
             let cmapName = urlParams.get('cmap') || 'thermal';
             const isDiscrete09 = cmapName === 'discrete_09';
             // Point draw order: 'normal' = file/measurement order (as before),
@@ -1092,12 +1192,12 @@
                         showlegend: true, hoverinfo: 'none',
                     });
                 }
-                return traces;
+                return densityContourTraces.concat(traces);
             }
 
             let effectiveColorscale = customColorscales[cmapName] || cmapName;
 
-            let traces = [];
+            let traces = densityContourTraces.slice();
 
             if (data.qc_applied && urlParams.get('highlight_qc') === 'true') {
                 const gx=[], gy=[], gc=[], bx=[], by=[], bc=[];
@@ -1266,20 +1366,10 @@
                 }
 
                 if (xAuto && yAuto) {
-                    clearTimeout(_pendingBounds);
-                    _currentZoom = null;
-                    if (_originalPlotData) {
-                        plotData = _originalPlotData;
-                        // See resetZoomToFull: suppress the resolved-range relayout this
-                        // react re-emits so it doesn't re-enter as a full-extent zoom.
-                        _suppressRelayout = true;
-                        Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
-                            .then(() => { _suppressRelayout = false; });
-                        if (window.logRedraw) window.logRedraw('zoom out (autorange)', (plotData.x && plotData.x.length) || 0);
-                        window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
-                    }
-                    window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
-                    renderProfileSidebar();   // zoom cleared → drop the marginal greying
+                    // Same reset as plotly_doubleclick — delegate instead of duplicating,
+                    // since a real double-click fires both events and racing two
+                    // independent Plotly.react calls here corrupted the axis autorange.
+                    resetZoomToFull();
                     return;
                 }
 
@@ -1388,7 +1478,16 @@
         // Reset the plot to its full extent (the double-click "zoom out" action),
         // restoring the base downsampled record. Shared by Plotly's own double-click
         // and by a double-click landing on the point popup (which sits over the plot).
+        // A real double-click fires BOTH 'plotly_doubleclick' and a 'plotly_relayout'
+        // with xaxis/yaxis autorange — each used to independently call Plotly.react
+        // to reset the zoom. Two Plotly.react calls racing on the same div corrupted
+        // Plotly's axis autorange (it fell back to its empty-plot default [-1,6]
+        // range despite valid data). This guard makes a reset idempotent so only the
+        // first of the two events actually redraws.
+        let _resettingZoom = false;
         function resetZoomToFull() {
+            if (_resettingZoom) return;
+            _resettingZoom = true;
             if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
             clearTimeout(_pendingBounds);
             _currentZoom = null;
@@ -1400,11 +1499,12 @@
                 // full-dataset hi-res refetch — overriding the user's quality cap.
                 _suppressRelayout = true;
                 Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
-                    .then(() => { _suppressRelayout = false; });
+                    .then(() => { _suppressRelayout = false; _resettingZoom = false; });
                 if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
             } else {
                 _suppressRelayout = false;
+                _resettingZoom = false;
             }
             window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
             renderProfileSidebar();   // zoom cleared → drop the marginal greying

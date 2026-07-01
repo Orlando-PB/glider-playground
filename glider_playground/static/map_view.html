@@ -62,13 +62,13 @@
         #layer-body { display: flex; flex-direction: column; gap: 4px; }
 
         /* Toggle rows inside the sidebar */
-        #dacToggle, .ovBtn {
+        #dacToggle, #smoothToggle, .ovBtn {
             display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
             padding: 5px 8px; border: none; cursor: pointer; border-radius: 6px;
             font-size: 11px; font-weight: 600; color: var(--text-primary); background: transparent;
         }
-        #dacToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
-        #dacToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+        #dacToggle:hover, #smoothToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
+        #dacToggle.on, #smoothToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
         .ovBtn.loading { cursor: progress; }
         .ovBtn .spin { animation: chlaspin 0.9s linear infinite; }
         @keyframes chlaspin { to { transform: rotate(360deg); } }
@@ -195,6 +195,12 @@
             <span class="material-symbols-outlined chev">expand_more</span>
         </button>
         <div id="layer-body">
+            <!-- Overlay-mesh smoothing toggle. Applies to whichever surface overlay
+                 or currents mesh is active; default on. -->
+            <button id="smoothToggle" class="on" title="Toggle overlay smoothing">
+                <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">blur_on</span>
+                Smooth
+            </button>
             <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
             <button id="dacToggle" title="Toggle depth-averaged currents">
                 <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">near_me</span>
@@ -415,6 +421,8 @@
         let activeOverlay = null;  // key of the overlay currently drawn, or null
         let overlayMesh = null;    // single merged THREE mesh of the active overlay
         let overlayLoading = null; // key currently being fetched, or null
+        let overlayReqSeq = 0;     // ticket counter — only the latest loadOverlay() call may apply
+        let overlaySmooth = true;  // Smooth toggle in the layer panel; rebuilds the active mesh
 
         // Each overlay: ramp colour stops (0–1 → [r,g,b]), log/linear scaling,
         // label and units for the legend. `log` suits values spanning orders of
@@ -849,6 +857,13 @@
             if (myGlobe) myGlobe.pathsData(visiblePaths());
         });
 
+        document.getElementById('smoothToggle').addEventListener('click', () => {
+            overlaySmooth = !overlaySmooth;
+            document.getElementById('smoothToggle').classList.toggle('on', overlaySmooth);
+            applyOverlay();   // rebuilds the active scalar overlay mesh, if any
+            applyCurrents();  // rebuilds the currents mesh, if active
+        });
+
         // Re-centre the camera on the track. With opts.whole the camera frames the
         // whole globe (with edge space); otherwise it fits the track tightly plus
         // opts.padding extra altitude.
@@ -885,35 +900,111 @@
             const latA = data.lat, lonA = data.lon, valA = data.val;
             const pts = data.points;
             const n = flat ? valA.length : pts.length;
-            const positions = new Float32Array(n * 4 * 3);
-            const colors = new Float32Array(n * 4 * 3);
-            const index = new Uint32Array(n * 6);
-            let vi = 0, ci = 0, ii = 0, base = 0;
+            const spacing = H * 2;
 
+            let latMin = Infinity, lonMin = Infinity;
+            const lats = new Float64Array(n), lons = new Float64Array(n), vals = new Float64Array(n);
             for (let k = 0; k < n; k++) {
-                let lat, lng, val;
-                if (flat) { lat = latA[k]; lng = lonA[k]; val = valA[k]; }
-                else { const t = pts[k]; lat = t[0]; lng = t[1]; val = t[2]; }
-                const c = overlayColor01(ov, val, data.p10, data.p90);
-                // 4 corners, placed on the globe via getCoords so the patch
-                // follows the curvature exactly.
-                const corners = [
-                    [lat - H, lng - H], [lat - H, lng + H],
-                    [lat + H, lng + H], [lat + H, lng - H],
-                ];
-                for (const [la, lo] of corners) {
-                    const p = myGlobe.getCoords(la, lo, OVERLAY_ALT);
-                    positions[vi++] = p.x; positions[vi++] = p.y; positions[vi++] = p.z;
-                    colors[ci++] = c[0]; colors[ci++] = c[1]; colors[ci++] = c[2];
+                const lat = flat ? latA[k] : pts[k][0];
+                const lng = flat ? lonA[k] : pts[k][1];
+                lats[k] = lat; lons[k] = lng; vals[k] = flat ? valA[k] : pts[k][2];
+                if (lat < latMin) latMin = lat;
+                if (lng < lonMin) lonMin = lng;
+            }
+
+            // Snap cells onto their (row, col) in the regular source grid so
+            // adjacent cells can share corner vertices instead of each getting
+            // 4 independent, identically-coloured corners — that's what was
+            // producing the hard block edges.
+            const rowOf = new Int32Array(n), colOf = new Int32Array(n);
+            let nRows = 0, nCols = 0;
+            for (let k = 0; k < n; k++) {
+                const r = Math.round((lats[k] - latMin) / spacing);
+                const c = Math.round((lons[k] - lonMin) / spacing);
+                rowOf[k] = r; colOf[k] = c;
+                if (r + 1 > nRows) nRows = r + 1;
+                if (c + 1 > nCols) nCols = c + 1;
+            }
+            const cellVal = new Float64Array(nRows * nCols).fill(NaN);
+            for (let k = 0; k < n; k++) cellVal[rowOf[k] * nCols + colOf[k]] = vals[k];
+
+            const nVX = nCols + 1;
+            const vertexIndex = new Int32Array((nRows + 1) * nVX).fill(-1);
+            // Interior cells share smoothed corners; boundary cells (see below)
+            // each get their own private, unshared quad — so allow for both.
+            const maxVerts = (nRows + 1) * nVX + n * 4;
+            const positions = new Float32Array(maxVerts * 3);
+            const colors = new Float32Array(maxVerts * 3);
+            let vi = 0;
+
+            function hasCell(r, c) {
+                return r >= 0 && r < nRows && c >= 0 && c < nCols && !Number.isNaN(cellVal[r * nCols + c]);
+            }
+            // True only when every one of the 8 surrounding cells has data —
+            // i.e. this cell is nowhere near the bbox edge or a data gap
+            // (land, cloud, coastline). Only these get smoothed: blending a
+            // vertex across a real/missing boundary is what made land behind
+            // the overlay look blurred, and it also softened the bbox edges
+            // the user wants kept straight.
+            function isInterior(r, c) {
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if ((dr || dc) && !hasCell(r + dr, c + dc)) return false;
+                    }
                 }
-                index[ii++] = base; index[ii++] = base + 1; index[ii++] = base + 2;
-                index[ii++] = base; index[ii++] = base + 2; index[ii++] = base + 3;
-                base += 4;
+                return true;
+            }
+
+            function addVertex(i, j, col) {
+                const lat = latMin + i * spacing - H;
+                const lng = lonMin + j * spacing - H;
+                const p = myGlobe.getCoords(lat, lng, OVERLAY_ALT);
+                const idx = vi++;
+                positions[idx * 3] = p.x; positions[idx * 3 + 1] = p.y; positions[idx * 3 + 2] = p.z;
+                colors[idx * 3] = col[0]; colors[idx * 3 + 1] = col[1]; colors[idx * 3 + 2] = col[2];
+                return idx;
+            }
+
+            // Shared, smoothed corner for an interior cell — averaged over
+            // whichever of the (always all-present, since the cell is
+            // interior) 4 contributing cells touch this vertex.
+            function sharedVertex(i, j) {
+                const key = i * nVX + j;
+                let idx = vertexIndex[key];
+                if (idx !== -1) return idx;
+                let sum = 0, count = 0;
+                for (const [dr, dc] of [[-1, -1], [-1, 0], [0, -1], [0, 0]]) {
+                    const r = i + dr, c = j + dc;
+                    if (hasCell(r, c)) { sum += cellVal[r * nCols + c]; count++; }
+                }
+                const col = overlayColor01(ov, sum / count, data.p10, data.p90);
+                idx = addVertex(i, j, col);
+                vertexIndex[key] = idx;
+                return idx;
+            }
+
+            const index = new Uint32Array(n * 6);
+            let ii = 0;
+            for (let k = 0; k < n; k++) {
+                const r = rowOf[k], c = colOf[k];
+                let v00, v01, v11, v10;
+                if (overlaySmooth && isInterior(r, c)) {
+                    v00 = sharedVertex(r, c); v01 = sharedVertex(r, c + 1);
+                    v11 = sharedVertex(r + 1, c + 1); v10 = sharedVertex(r + 1, c);
+                } else {
+                    // Boundary cell — its own flat, hard-edged quad, same as
+                    // the original blocky render, so no colour crosses the gap.
+                    const col = overlayColor01(ov, cellVal[r * nCols + c], data.p10, data.p90);
+                    v00 = addVertex(r, c, col); v01 = addVertex(r, c + 1, col);
+                    v11 = addVertex(r + 1, c + 1, col); v10 = addVertex(r + 1, c, col);
+                }
+                index[ii++] = v00; index[ii++] = v01; index[ii++] = v11;
+                index[ii++] = v00; index[ii++] = v11; index[ii++] = v10;
             }
 
             const geom = new THREE.BufferGeometry();
-            geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geom.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, vi * 3), 3));
+            geom.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, vi * 3), 3));
             geom.setIndex(new THREE.BufferAttribute(index, 1));
             const mat = new THREE.MeshBasicMaterial({
                 vertexColors: true, transparent: true, opacity,
@@ -1502,6 +1593,14 @@
             const fileId = activeId;   // overlays always target the active glider
             if (!fileId) return;
 
+            // Ticket for this call. setActiveTrack re-fetches the open overlay
+            // directly (bypassing selectOverlay's mid-fetch guard) whenever the
+            // user switches gliders, so several loadOverlay calls can genuinely
+            // be in flight together — whichever HTTP response happens to land
+            // last would otherwise win, even if it was requested first. Only
+            // the call still holding the newest ticket when its response lands
+            // is allowed to touch state or render.
+            const seq = ++overlayReqSeq;
             overlayLoading = key;
             updateOverlayButtons();
             // Marks for the unified OVERLAY timing log (see logOverlayTiming).
@@ -1520,6 +1619,9 @@
                     ? await res.json()
                     : decodeOverlayBinary(await res.arrayBuffer());
                 T.parsed = performance.now();
+                // A newer request has since superseded this one — drop this
+                // response rather than let a slow, stale fetch clobber it.
+                if (seq !== overlayReqSeq) return;
                 if (!res.ok || data.error) {
                     showOverlayError(data.error || `Request failed (${res.status})`, data.hint, data.setup);
                     return;
@@ -1534,13 +1636,15 @@
                 T.cells = data.n;
                 T.date = data.date;
             } catch (err) {
-                showOverlayError(err.message || 'Failed to load overlay');
+                if (seq === overlayReqSeq) showOverlayError(err.message || 'Failed to load overlay');
             } finally {
-                if (overlayLoading === key) overlayLoading = null;
-                const drawMs = applyOverlay();
-                if (T.cells) {
-                    T.drawn = performance.now();
-                    logOverlayTiming(key, T, drawMs);
+                if (seq === overlayReqSeq) {
+                    overlayLoading = null;
+                    const drawMs = applyOverlay();
+                    if (T.cells) {
+                        T.drawn = performance.now();
+                        logOverlayTiming(key, T, drawMs);
+                    }
                 }
             }
         }
@@ -1600,6 +1704,7 @@
         let currentsData = null;     // fetched {lat0,lon0,dlat,dlon,nlat,nlon,u,v,...}
         let currentsActive = false;
         let currentsLoading = false;
+        let currentsReqSeq = 0;      // ticket counter — only the latest loadCurrents() call may apply
         let currentsMesh = null;     // THREE mesh of the speed backdrop
         let flowLines = null;        // THREE.LineSegments of the fading trails
         let flowState = null;        // per-particle sim arrays
@@ -1859,6 +1964,9 @@
         async function loadCurrents() {
             const fileId = activeId;   // currents always target the active glider
             if (!fileId) return;
+            // Same stale-response race as loadOverlay: setActiveTrack calls this
+            // directly on every glider switch, so only the newest ticket may apply.
+            const seq = ++currentsReqSeq;
             currentsLoading = true;
             updateCurrentsButton();
             const T = { start: performance.now(), cells: 0 };
@@ -1870,6 +1978,7 @@
                 T.serverTime = hdr ? parseFloat(hdr) * 1000 : 0;
                 const data = await res.json();
                 T.parsed = performance.now();
+                if (seq !== currentsReqSeq) return;   // superseded — drop it
                 if (!res.ok || data.error) {
                     showOverlayError(data.error || `Request failed (${res.status})`, data.hint, data.setup);
                     return;
@@ -1885,13 +1994,15 @@
                 T.date = data.date;
                 T.note = `${data.nlat}×${data.nlon} grid · ${data.date}`;
             } catch (err) {
-                showOverlayError(err.message || 'Failed to load currents');
+                if (seq === currentsReqSeq) showOverlayError(err.message || 'Failed to load currents');
             } finally {
-                currentsLoading = false;
-                const drawMs = applyCurrents();
-                if (T.cells) {
-                    T.drawn = performance.now();
-                    logOverlayTiming('currents', T, drawMs);
+                if (seq === currentsReqSeq) {
+                    currentsLoading = false;
+                    const drawMs = applyCurrents();
+                    if (T.cells) {
+                        T.drawn = performance.now();
+                        logOverlayTiming('currents', T, drawMs);
+                    }
                 }
             }
         }
