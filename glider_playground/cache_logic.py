@@ -84,7 +84,8 @@ DATA_DIR = _resolve_data_dir()
 # v14: LATITUDE_GPS/LONGITUDE_GPS position fallback (re-derive CTD on GPS-only files)
 # v15: fix profile classifier crash on all-NaN PRES inflection bins (pandas>=3);
 #      SCI_PHASE/PROFILE_NUMBER now derive on multi-sensor NaN-heavy-PRES files
-CACHE_VERSION = "15"
+# v16: derive BBP per beta channel (BBP700 + BBP532 + ...), not just the first
+CACHE_VERSION = "16"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

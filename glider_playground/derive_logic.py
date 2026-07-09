@@ -535,63 +535,74 @@ def _compute_backscatter(filepath, log, names, existing, time_var):
     it's meant for a visual feel of the signal, not science-grade numbers. A
     rolling-median baseline and the residual "spikes" are also produced, since the
     despiked view is what makes backscatter features (particle bursts) legible.
+
+    One BBP product is derived per raw beta channel (e.g. BBP700 from
+    BETA_BACKSCATTERING700, BBP532 from ...532) so multi-wavelength sensors are
+    fully represented; the frontend defaults the backscatter plot to BBP700 when
+    present (see ``preset_bbp``).
     """
     # Skip if any backscatter product already exists (don't override real data).
     if any(n.upper().startswith("BBP") for n in existing):
         return [], {}, {}
 
-    # Find a raw beta variable (e.g. BETA_BACKSCATTERING700). The wavelength digits
-    # may differ; if there are several, any one is fine — take the first.
-    beta_var = next((n for n in names
-                     if "BETA" in n.upper() and "BACKSCATTER" in n.upper()
-                     and not n.upper().endswith("_QC")), None)
-    if not beta_var:
+    # Find every raw beta variable (e.g. BETA_BACKSCATTERING532/700). Each distinct
+    # wavelength becomes its own BBP product.
+    beta_vars = [n for n in names
+                 if "BETA" in n.upper() and "BACKSCATTER" in n.upper()
+                 and not n.upper().endswith("_QC")]
+    if not beta_vars:
         return [], {}, {}
 
-    data = plot_logic._read_vars_cached(filepath, (beta_var,))
-    if not data or beta_var not in data:
+    data = plot_logic._read_vars_cached(filepath, tuple(sorted(beta_vars)))
+    if not data:
         return [], {}, {}
-
-    beta = np.asarray(data[beta_var], dtype=float)
-    if beta.size == 0 or not np.any(np.isfinite(beta)):
-        return [], {}, {}
-
-    # Name the output after the sensor wavelength when present (else BBP700).
-    m = re.search(r"(\d{3,4})", beta_var)
-    base = f"BBP{m.group(1)}" if m else "BBP700"
 
     CHI = 1.076                         # chi factor for a ~124° backscatter sensor
-    bbp = 2.0 * np.pi * CHI * beta      # m-1.sr-1 * sr -> m-1
-
-    # Despike: sample-count rolling median baseline, spikes = signal - baseline.
-    s = pd.Series(bbp)
-    baseline = s.rolling(50, center=True, min_periods=1).median().to_numpy()
-    spikes = bbp - baseline
-
-    log(f"Backscatter derive: {beta_var} -> {base} (+ baseline/spikes)")
-
-    outputs = {
-        base: (bbp, f"Particulate backscatter (simple 2πχβ from {beta_var}; visual only, not science-grade)"),
-        f"{base}_BASELINE": (baseline, f"Rolling-median baseline of {base} (window 50 samples)"),
-        f"{base}_SPIKES": (spikes, f"{base} minus its baseline — particulate backscatter spikes"),
-    }
 
     wanted, arrays, meta = [], {}, {}
-    for name, (arr, desc) in outputs.items():
-        if name in existing:
+    for beta_var in beta_vars:
+        beta = np.asarray(data.get(beta_var), dtype=float) if beta_var in data else None
+        if beta is None or beta.size == 0 or not np.any(np.isfinite(beta)):
             continue
-        arr = np.asarray(arr, dtype=float)
-        arrays[name] = arr
-        meta[name] = {"units": "m-1", "type": "numeric", "description": _CALC + desc}
-        wanted.append(name)
 
-        qc_name = name + "_QC"
-        if qc_name not in existing:
-            arrays[qc_name] = np.where(np.isfinite(arr), 1, 9).astype(np.int8)
-            meta[qc_name] = {
-                "units": "1", "type": "numeric",
-                "description": f"Quality flag for {name} (1=good, 9=missing; derived)",
-            }
+        # Name the output after the sensor wavelength when present (else BBP700).
+        m = re.search(r"(\d{3,4})", beta_var)
+        base = f"BBP{m.group(1)}" if m else "BBP700"
+        # Two beta vars sharing a wavelength (or clashing with a native BBP) —
+        # keep the first and skip the rest rather than clobbering.
+        if base in arrays or base in existing:
+            continue
+
+        bbp = 2.0 * np.pi * CHI * beta      # m-1.sr-1 * sr -> m-1
+
+        # Despike: sample-count rolling median baseline, spikes = signal - baseline.
+        s = pd.Series(bbp)
+        baseline = s.rolling(50, center=True, min_periods=1).median().to_numpy()
+        spikes = bbp - baseline
+
+        log(f"Backscatter derive: {beta_var} -> {base} (+ baseline/spikes)")
+
+        outputs = {
+            base: (bbp, f"Particulate backscatter (simple 2πχβ from {beta_var}; visual only, not science-grade)"),
+            f"{base}_BASELINE": (baseline, f"Rolling-median baseline of {base} (window 50 samples)"),
+            f"{base}_SPIKES": (spikes, f"{base} minus its baseline — particulate backscatter spikes"),
+        }
+
+        for name, (arr, desc) in outputs.items():
+            if name in existing:
+                continue
+            arr = np.asarray(arr, dtype=float)
+            arrays[name] = arr
+            meta[name] = {"units": "m-1", "type": "numeric", "description": _CALC + desc}
+            wanted.append(name)
+
+            qc_name = name + "_QC"
+            if qc_name not in existing:
+                arrays[qc_name] = np.where(np.isfinite(arr), 1, 9).astype(np.int8)
+                meta[qc_name] = {
+                    "units": "1", "type": "numeric",
+                    "description": f"Quality flag for {name} (1=good, 9=missing; derived)",
+                }
 
     return wanted, arrays, meta
 

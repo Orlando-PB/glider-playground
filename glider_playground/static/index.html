@@ -3168,7 +3168,7 @@
             // plot. Raw outputs aren't converted to concentration (that needs the
             // optode's calibration coefficients) — they're shown in their own units.
             preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532'], cmap: 'bbp', invert: true, drawOrder: 'largest' }
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'largest' }
         };
 
         const COOKIE_FILE = 'gp_file_id';
