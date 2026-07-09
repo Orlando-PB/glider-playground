@@ -373,6 +373,11 @@ def _classify_profiles(df_raw, depth_col, target_transect_phase):
         d_prev = df.loc[idx - 1, depth_col] if idx > 0 else curr_d
         d_next = df.loc[idx + 1, depth_col] if idx < len(df) - 1 else curr_d
         raw_subset = mapped_df[mapped_mask]
+        # On multi-sensor axes PRES is NaN on non-CTD rows; an inflection bin can
+        # map only onto such rows, leaving an all-NaN subset. idxmax/idxmin raise
+        # on that in pandas >=3, so skip re-flagging when there's no finite depth.
+        if raw_subset[depth_col].notna().sum() == 0:
+            continue
         if curr_d >= (d_prev + d_next) / 2:
             extreme_idx = raw_subset[depth_col].idxmax()
         else:

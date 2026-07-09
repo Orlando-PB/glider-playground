@@ -82,7 +82,9 @@ DATA_DIR = _resolve_data_dir()
 # v11: revert datetime x to string format (epoch-ms caused timezone display bugs)
 # v12: lower render cap 200k -> 100k (invalidate old 200k-decimated plot payloads)
 # v14: LATITUDE_GPS/LONGITUDE_GPS position fallback (re-derive CTD on GPS-only files)
-CACHE_VERSION = "14"
+# v15: fix profile classifier crash on all-NaN PRES inflection bins (pandas>=3);
+#      SCI_PHASE/PROFILE_NUMBER now derive on multi-sensor NaN-heavy-PRES files
+CACHE_VERSION = "15"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
