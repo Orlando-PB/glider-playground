@@ -81,7 +81,8 @@ DATA_DIR = _resolve_data_dir()
 # v10: binary plot payloads + on-demand plot-payload cache
 # v11: revert datetime x to string format (epoch-ms caused timezone display bugs)
 # v12: lower render cap 200k -> 100k (invalidate old 200k-decimated plot payloads)
-CACHE_VERSION = "13"
+# v14: LATITUDE_GPS/LONGITUDE_GPS position fallback (re-derive CTD on GPS-only files)
+CACHE_VERSION = "14"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

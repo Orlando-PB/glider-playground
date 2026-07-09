@@ -27,9 +27,11 @@ GEO_GROUP_MIN_POINTS = 100
 
 # Position variable names in priority order. Some files lack the OG1 standard
 # LATITUDE/LONGITUDE and instead carry the BODC parameter codes ALATPT01 /
-# ALONPT01, which hold the same fix — use them as direct replacements.
-LAT_NAMES = ("LATITUDE", "ALATPT01")
-LON_NAMES = ("LONGITUDE", "ALONPT01")
+# ALONPT01, which hold the same fix — use them as direct replacements. Others
+# only carry the raw GPS fix under LATITUDE_GPS / LONGITUDE_GPS; fall back to
+# that last so CTD derivation etc. still get a position at each row.
+LAT_NAMES = ("LATITUDE", "ALATPT01", "LATITUDE_GPS")
+LON_NAMES = ("LONGITUDE", "ALONPT01", "LONGITUDE_GPS")
 
 
 def _resolve_latlon_names(container):
