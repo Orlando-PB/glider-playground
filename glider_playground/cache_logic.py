@@ -441,18 +441,31 @@ def _refresh(rec: dict):
 # ---------- public API ----------
 
 def _scan_data_dir():
-    """Register any .nc files in DATA_DIR not yet in the registry."""
-    if not DATA_DIR.is_dir():
-        return
-    for p in sorted(DATA_DIR.rglob("*.nc")):
-        rid = _file_id(p)
-        with _lock:
-            known = rid in _registry
-        if not known:
-            try:
-                register_path(str(p))
-            except Exception:
-                pass
+    """Register any .nc files not yet in the registry.
+
+    Sweeps both DATA_DIR (live/BODC downloads) and UPLOADS_DIR (admin-panel
+    uploads). Uploads must be scanned here too: a CACHE_VERSION bump drops the
+    whole registry (see _load_once), and only files re-discovered by this scan
+    come back — so without UPLOADS_DIR, uploaded files would be silently
+    orphaned on disk and never reprocessed.
+    """
+    seen = set()
+    for base in (DATA_DIR, UPLOADS_DIR):
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*.nc")):
+            rp = p.resolve()
+            if rp in seen:
+                continue
+            seen.add(rp)
+            rid = _file_id(p)
+            with _lock:
+                known = rid in _registry
+            if not known:
+                try:
+                    register_path(str(p))
+                except Exception:
+                    pass
 
 
 # The on-disk sweep (rglob the data dir + stat every registered file) only needs
