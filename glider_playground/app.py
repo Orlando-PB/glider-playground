@@ -447,6 +447,25 @@ def api_map(id: str):
     return payload
 
 
+@app.get("/api/kmz")
+def api_kmz(id: str):
+    """Download the glider's surface track as a KMZ for Google Earth."""
+    path = _resolve_path(id)
+    rec = cache_logic.get_record(id)
+    name = (rec.get("name") if rec else None) or os.path.basename(path)
+    stem = os.path.splitext(name)[0]
+    try:
+        kmz = spatial_logic.generate_kmz(path, stem)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Could not build KMZ: {e}")
+    safe = "".join(c if c.isalnum() or c in "._- " else "_" for c in stem) or "glider_track"
+    return Response(
+        content=kmz,
+        media_type="application/vnd.google-earth.kmz",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.kmz"'},
+    )
+
+
 def _downsample_path(path: list, cap: int) -> list:
     """Evenly thin a [[lat,lon],...] track to at most `cap` points, always
     keeping the first and last fix. The globe further downsamples to its own

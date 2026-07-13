@@ -4539,10 +4539,13 @@
                 } else if (!e.downloaded) {
                     actionHtml = `<button class="file-card-action" data-act="bodc-download" data-fn="${esc(e.filename)}" title="Download to data folder"><span class="material-symbols-outlined text-[14px]">cloud_download</span></button>`;
                 } else {
+                    const kmz = e.file_id && e.status === 'ready'
+                        ? `<button class="file-card-action" data-act="live-kmz" data-id="${esc(e.file_id)}" title="Download track as KMZ (Google Earth)"><span class="material-symbols-outlined text-[14px]">public</span></button>`
+                        : '';
                     const upd = e.needs_update
                         ? `<button class="file-card-action accent" data-act="bodc-download" data-fn="${esc(e.filename)}" title="Newer version available — update"><span class="material-symbols-outlined text-[14px]">sync</span></button>`
                         : '';
-                    actionHtml = `${upd}<button class="file-card-action danger" data-act="bodc-delete" data-fn="${esc(e.filename)}" title="Delete downloaded file"><span class="material-symbols-outlined text-[14px]">delete</span></button>`;
+                    actionHtml = `${kmz}${upd}<button class="file-card-action danger" data-act="bodc-delete" data-fn="${esc(e.filename)}" title="Delete downloaded file"><span class="material-symbols-outlined text-[14px]">delete</span></button>`;
                 }
 
                 // Optimistic delete: show it leaving right away, overriding the
@@ -4595,6 +4598,17 @@
                 }));
             if (placeholders.length === 0) return;
             liveList.innerHTML = placeholders.map(liveCardHtml).join('');
+        }
+
+        // Trigger a KMZ track download for any ready file id. The server sets
+        // Content-Disposition: attachment, so this downloads without navigating.
+        function downloadKmz(id) {
+            const a = document.createElement('a');
+            a.href = `/api/kmz?id=${encodeURIComponent(id)}`;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
         }
 
         async function bodcDownload(fn) {
@@ -4654,6 +4668,8 @@
                         await bodcDownload(fn);
                     } else if (act === 'bodc-delete') {
                         await bodcDelete(fn);
+                    } else if (act === 'live-kmz') {
+                        downloadKmz(actBtn.dataset.id);
                     }
                 } catch (err) { console.error(err); }
                 finally { actBtn.disabled = false; }
@@ -5482,6 +5498,7 @@
                         ` : ''}
                     </div>
                     <div class="file-card-actions">
+                        ${f.status === 'ready' ? `<button class="file-card-action" data-act="kmz" title="Download track as KMZ (Google Earth)"><span class="material-symbols-outlined text-[14px]">public</span></button>` : ''}
                         ${f.status === 'error' || f.status === 'ready' ? `<button class="file-card-action" data-act="refresh" title="Reprocess this file"><span class="material-symbols-outlined text-[14px]">refresh</span></button>` : ''}
                         ${(!isServerMode || f.status === 'error') ? `<button class="file-card-action danger" data-act="remove" title="Remove from list"><span class="material-symbols-outlined text-[14px]">delete</span></button>` : ''}
                     </div>
@@ -5978,6 +5995,8 @@
                 } else if (action === 'refresh') {
                     await fetch(`/api/files/refresh/${id}`, { method: 'POST' });
                     await refreshFiles();
+                } else if (action === 'kmz') {
+                    downloadKmz(id);
                 }
                 return;
             }
