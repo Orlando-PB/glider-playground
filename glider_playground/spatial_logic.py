@@ -611,62 +611,8 @@ def generate_map_image(filepath):
 
 # ---------- KMZ export ----------
 
-# Viridis-like stops for the time-coloured track — perceptually even and
-# readable over both ocean blue and satellite imagery.
-_KMZ_PALETTE = ((68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37))
 _KMZ_SEGMENTS = 150
-
-
-def _kmz_palette_rgb(frac):
-    """Interpolate _KMZ_PALETTE at frac in [0,1] -> (r, g, b)."""
-    stops = _KMZ_PALETTE
-    x = min(max(float(frac), 0.0), 1.0) * (len(stops) - 1)
-    i = min(int(x), len(stops) - 2)
-    t = x - i
-    return tuple(round(a + (b - a) * t) for a, b in zip(stops[i], stops[i + 1]))
-
-
-def _kml_color(rgb, alpha=255):
-    """KML colours are aabbggrr hex."""
-    r, g, b = rgb
-    return f"{alpha:02x}{b:02x}{g:02x}{r:02x}"
-
-
-def _png_rgb(rows):
-    """Encode rows of (r, g, b) tuples as a PNG using only the stdlib."""
-    import struct
-    import zlib
-
-    height = len(rows)
-    width = len(rows[0])
-    raw = b"".join(b"\x00" + bytes(v for px in row for v in px) for row in rows)
-
-    def chunk(tag, data):
-        payload = tag + data
-        return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload))
-
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw))
-        + chunk(b"IEND", b"")
-    )
-
-
-def _kmz_legend_png(width=220, height=14):
-    """Horizontal palette bar with a dark 1px border, for the screen overlay."""
-    border = (30, 30, 30)
-    rows = []
-    for y in range(height):
-        if y in (0, height - 1):
-            rows.append([border] * width)
-            continue
-        row = [border]
-        for x in range(1, width - 1):
-            row.append(_kmz_palette_rgb((x - 1) / (width - 3)))
-        row.append(border)
-        rows.append(row)
-    return _png_rgb(rows)
+_KMZ_YELLOW = "ff00d5ff"  # KML aabbggrr — solid yellow, matches the app's track
 
 
 def _kml_time(epoch_s):
@@ -677,15 +623,12 @@ def _kml_time(epoch_s):
 def generate_kmz(filepath, name):
     """Build a KMZ (zipped KML) of the glider's surface track for Google Earth.
 
-    Uses the same QC'd path as the map view. Layers (Google Earth sidebar):
-      - "Track" radio folder: time-coloured segments (default) OR a plain
-        single-colour line — mutually exclusive, user picks one.
-      - Start/End pins.
-      - A palette legend pinned to the corner of the screen.
-    When track times are available each coloured segment carries a begin-only
-    TimeSpan, so Google Earth's time slider replays the deployment (the track
-    grows as time advances). Raises on files with no valid positions — the
-    endpoint turns that into an HTTP error.
+    Uses the same QC'd path as the map view: a solid yellow track plus
+    Start/End pins. When track times are available the line is split into
+    segments carrying begin-only TimeSpans, so Google Earth's time slider
+    replays the deployment (the track grows as time advances); without times
+    it's a single plain LineString. Raises on files with no valid positions —
+    the endpoint turns that into an HTTP error.
     """
     lat, lon, _pres, _temp, times = get_core_spatial_data(filepath)
     n = len(lat)
@@ -701,46 +644,40 @@ def generate_kmz(filepath, name):
     def coord(i):
         return f"{float(lon[i]):.5f},{float(lat[i]):.5f},0"
 
-    # Per-point colour fraction: elapsed time when available, index otherwise.
     if time_ok:
-        frac = np.clip((np.nan_to_num(times, nan=t0) - t0) / (t1 - t0), 0.0, 1.0)
-    else:
-        frac = np.arange(n) / max(n - 1, 1)
-
-    # Split the track into contiguous buckets, one Placemark each, coloured at
-    # the bucket's midpoint. Buckets share their boundary point so the line
-    # stays continuous.
-    n_seg = min(_KMZ_SEGMENTS, max(n - 1, 1))
-    bounds = np.linspace(0, n - 1, n_seg + 1).round().astype(int)
-    segments = []
-    for k in range(n_seg):
-        i0, i1 = int(bounds[k]), int(bounds[k + 1])
-        if i1 <= i0:
-            continue
-        colour = _kml_color(_kmz_palette_rgb(float(frac[i0:i1 + 1].mean())))
-        timespan = ""
-        if time_ok:
+        # Contiguous buckets, one Placemark each, sharing their boundary point
+        # so the line stays continuous. Begin-only TimeSpan: each segment
+        # appears at its start time and stays, so playback draws the track
+        # progressively.
+        n_seg = min(_KMZ_SEGMENTS, max(n - 1, 1))
+        bounds = np.linspace(0, n - 1, n_seg + 1).round().astype(int)
+        parts = []
+        for k in range(n_seg):
+            i0, i1 = int(bounds[k]), int(bounds[k + 1])
+            if i1 <= i0:
+                continue
             seg_t = times[i0:i1 + 1]
             seg_t = seg_t[np.isfinite(seg_t)]
-            if len(seg_t):
-                # Begin-only TimeSpan: the segment appears at its start time and
-                # stays, so playback draws the track progressively.
-                timespan = f"<TimeSpan><begin>{_kml_time(seg_t.min())}</begin></TimeSpan>"
-        coords = "\n".join(coord(i) for i in range(i0, i1 + 1))
-        segments.append(
-            "      <Placemark>"
-            f"{timespan}"
-            f"<Style><LineStyle><color>{colour}</color><width>3</width></LineStyle></Style>"
+            timespan = f"<TimeSpan><begin>{_kml_time(seg_t.min())}</begin></TimeSpan>" if len(seg_t) else ""
+            coords = "\n".join(coord(i) for i in range(i0, i1 + 1))
+            parts.append(
+                "      <Placemark>"
+                f"{timespan}"
+                "<styleUrl>#track</styleUrl>"
+                "<LineString><tessellate>1</tessellate><coordinates>\n"
+                f"{coords}\n"
+                "</coordinates></LineString></Placemark>"
+            )
+        track_kml = "\n".join(parts)
+    else:
+        all_coords = "\n".join(coord(i) for i in range(n))
+        track_kml = (
+            "      <Placemark><styleUrl>#track</styleUrl>"
             "<LineString><tessellate>1</tessellate><coordinates>\n"
-            f"{coords}\n"
+            f"{all_coords}\n"
             "</coordinates></LineString></Placemark>"
         )
 
-    all_coords = "\n".join(coord(i) for i in range(n))
-    legend_name = (
-        f"Time: {_kml_time(t0)[:10]} → {_kml_time(t1)[:10]}" if time_ok else "Track progress"
-    )
-    coloured_name = "Coloured by time" if time_ok else "Coloured by progress"
     desc_lines = [f"{n:,} surface fixes"]
     if time_ok:
         desc_lines.append(f"{_kml_time(t0)} → {_kml_time(t1)}")
@@ -751,22 +688,13 @@ def generate_kmz(filepath, name):
   <Document>
     <name>{title}</name>
     <description>{description}</description>
+    <Style id="track">
+      <LineStyle><color>{_KMZ_YELLOW}</color><width>3</width></LineStyle>
+    </Style>
     <Folder>
       <name>Track</name>
-      <Style><ListStyle><listItemType>radioFolder</listItemType></ListStyle></Style>
-      <Folder>
-        <name>{coloured_name}</name>
-        <open>0</open>
-{chr(10).join(segments)}
-      </Folder>
-      <Placemark>
-        <name>Single colour</name>
-        <visibility>0</visibility>
-        <Style><LineStyle><color>ff00d5ff</color><width>3</width></LineStyle></Style>
-        <LineString><tessellate>1</tessellate><coordinates>
-{all_coords}
-        </coordinates></LineString>
-      </Placemark>
+      <open>0</open>
+{track_kml}
     </Folder>
     <Folder>
       <name>Markers</name>
@@ -779,20 +707,12 @@ def generate_kmz(filepath, name):
         <Point><coordinates>{coord(n - 1)}</coordinates></Point>
       </Placemark>
     </Folder>
-    <ScreenOverlay>
-      <name>{_xml_escape(legend_name)}</name>
-      <Icon><href>files/legend.png</href></Icon>
-      <overlayXY x="0" y="0" xunits="fraction" yunits="fraction"/>
-      <screenXY x="0.02" y="0.03" xunits="fraction" yunits="fraction"/>
-      <size x="220" y="14" xunits="pixels" yunits="pixels"/>
-    </ScreenOverlay>
   </Document>
 </kml>
 """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("doc.kml", kml)
-        zf.writestr("files/legend.png", _kmz_legend_png())
     return buf.getvalue()
 
 
