@@ -165,6 +165,18 @@
         #coord-bubble button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
         #coord-bubble button.copied { color: #34d399; }
         #coord-bubble .material-symbols-outlined { font-size: 15px; }
+
+        /* Hover tooltip for waypoint/glider markers — follows the cursor. */
+        #marker-tooltip {
+            display: none; position: absolute; z-index: 71; pointer-events: none;
+            padding: 5px 8px; border-radius: 7px; font-size: 11px; line-height: 1.4;
+            color: var(--text-primary); white-space: nowrap;
+            background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+        }
+        #marker-tooltip.visible { display: block; }
+        #marker-tooltip b { font-weight: 700; }
+        #marker-tooltip .sub { color: var(--text-muted); }
     </style>
     <script>
         (function() {
@@ -217,6 +229,9 @@
         <span id="chla-bar-hi">–</span>
         <span id="chla-bar-date"></span>
     </div>
+
+    <!-- Hover tooltip for waypoint/glider markers, follows the cursor. -->
+    <div id="marker-tooltip"></div>
 
     <!-- Clicked-coordinate readout (top-centre). Populated on globe click. -->
     <div id="coord-bubble">
@@ -537,14 +552,17 @@
                 if (t.isNrt) {
                     const lat = t.lastLat != null ? Number(t.lastLat) : end.lat;
                     const lng = t.lastLon != null ? Number(t.lastLon) : end.lng;
-                    pts.push({ lat, lng, trackId: t.id, live: true, active: t.id === activeId });
+                    pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId });
                 } else if (t.id !== activeId) {
-                    pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, live: false, active: false });
+                    pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, name: t.name, live: false, active: false });
                 }
             }
             // The blue pinned point rides in the same html layer so it re-applies
             // automatically whenever the dots are refreshed (track switch, etc.).
             if (_pinDot) pts.push(_pinDot);
+            for (const w of waypointsForActiveTrack()) {
+                pts.push({ lat: w.lat, lng: w.lon, waypoint: true, tag: w.tag, glider: w.glider, notes: w.notes });
+            }
             return pts;
         }
 
@@ -739,17 +757,7 @@
                     .htmlLat('lat')
                     .htmlLng('lng')
                     .htmlAltitude(0)
-                    .htmlElement(dotEl)
-                    .labelsData(waypointsForActiveTrack())
-                    .labelLat('lat')
-                    .labelLng('lon')
-                    .labelText('tag')
-                    .labelSize(1.1)
-                    .labelDotRadius(0.4)
-                    .labelColor(() => '#facc15')
-                    .labelAltitude(0.001)
-                    .labelResolution(2)
-                    .labelLabel(w => `<div><b>${w.tag}</b><br>${w.glider}${w.notes ? '<br>' + w.notes : ''}</div>`);
+                    .htmlElement(dotEl);
 
                 // Clamp camera distance: prevents zooming out so far the globe
                 // shrinks, and zooming in past the tile resolution.
@@ -799,19 +807,51 @@
             refreshPathStyle();
         }
 
+        function _escHtml(s) {
+            return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        }
+
+        // Small cursor-following tooltip for waypoint/glider markers — same box
+        // for both, content built from nearestMarkerAtScreen()'s result.
+        function showMarkerTooltip(info, cx, cy) {
+            const el = document.getElementById('marker-tooltip');
+            if (!el) return;
+            const lines = [`<b>${_escHtml(info.title)}</b>`];
+            if (info.subtitle) lines.push(`<span class="sub">${_escHtml(info.subtitle)}</span>`);
+            if (info.detail) lines.push(_escHtml(info.detail));
+            el.innerHTML = lines.join('<br>');
+            el.style.left = (cx + 14) + 'px';
+            el.style.top = (cy + 14) + 'px';
+            el.classList.add('visible');
+        }
+
+        function hideMarkerTooltip() {
+            const el = document.getElementById('marker-tooltip');
+            if (el) el.classList.remove('visible');
+        }
+
         // Throttle hover hit-testing to one check per animation frame.
         function scheduleHover(cx, cy) {
             _hoverXY = [cx, cy];
             if (_hoverRAF) return;
             _hoverRAF = requestAnimationFrame(() => {
                 _hoverRAF = 0;
-                if (_hoverXY) setHover(nearestTrackAtScreen(_hoverXY[0], _hoverXY[1], 14));
+                if (!_hoverXY) return;
+                const marker = nearestMarkerAtScreen(_hoverXY[0], _hoverXY[1], 12);
+                if (marker) {
+                    setHover(null);
+                    showMarkerTooltip(marker, _hoverXY[0], _hoverXY[1]);
+                } else {
+                    hideMarkerTooltip();
+                    setHover(nearestTrackAtScreen(_hoverXY[0], _hoverXY[1], 14));
+                }
             });
         }
 
         function clearHover() {
             if (_hoverRAF) { cancelAnimationFrame(_hoverRAF); _hoverRAF = 0; }
             _hoverXY = null;
+            hideMarkerTooltip();
             setHover(null);
         }
 
@@ -822,6 +862,12 @@
             // Blue pinned point: same look as the live dot, blue and a touch smaller.
             if (d.pin) {
                 el.style.cssText = 'width:11px;height:11px;border-radius:50%;background:#3b82f6;border:2px solid #fff;box-shadow:0 0 12px rgba(59,130,246,0.85);pointer-events:none;transform:translate(-50%,-50%);';
+                return el;
+            }
+            // Waypoint (station) marker: small green dot, its tag renders separately
+            // via the labels layer.
+            if (d.waypoint) {
+                el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 8px rgba(34,197,94,0.85);pointer-events:none;transform:translate(-50%,-50%);';
                 return el;
             }
             const c = d.live ? '#ef4444' : '#9ca3af';
@@ -866,7 +912,6 @@
             dacArrows = activeTrack().dacArrows;
             updateDacToggle();
             if (myGlobe) {
-                myGlobe.labelsData(waypointsForActiveTrack());
                 myGlobe.pathsData(visiblePaths());   // reorder + recolour in one pass
                 applyDots();   // active non-live track drops its grey dot; others update
             }
@@ -1230,6 +1275,16 @@
                 _coordDown = null;
                 if (!start) return;
                 if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _COORD_MOVE_TOL) return; // a drag/rotate
+                // A click on (or very near) a waypoint snaps straight to its exact
+                // coordinates, taking priority over track selection/path snapping —
+                // it's a fixed target point, not something to approximate.
+                const wpHit = nearestWaypointAtScreen(e.clientX, e.clientY, 20);
+                if (wpHit) {
+                    showPin(wpHit.lat, wpHit.lng);
+                    setCoordAim(true);
+                    try { window.parent.postMessage({ type: 'coordPicked', lat: wpHit.lat, lng: _wrapLon(wpHit.lng), onPath: false }, '*'); } catch (_) {}
+                    return;
+                }
                 // A click on (or near) a grey context track selects it as the
                 // active glider, driven from the top menu. The nearest-track
                 // fallback adds a forgiving hit radius so a slightly-off click
@@ -1345,6 +1400,64 @@
                         prevOk = false;
                     }
                 }
+            }
+            return best;
+        }
+
+        // Nearest waypoint (station) to a screen click, returned as its exact
+        // {lat, lng}, or null when the click is further than `tolPx` from any
+        // visible waypoint. Same camera-facing / projection maths as the track
+        // pickers above, just against single points instead of a polyline.
+        function nearestWaypointAtScreen(clientX, clientY, tolPx) {
+            if (!myGlobe) return null;
+            const wps = waypointsForActiveTrack();
+            if (!wps.length) return null;
+            const rect = document.getElementById('globe-container').getBoundingClientRect();
+            const px = clientX - rect.left, py = clientY - rect.top;
+            const cam = myGlobe.camera();
+            const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+            let best = null, bestD = tolPx * tolPx;
+            for (const w of wps) {
+                const p = myGlobe.getCoords(w.lat, w.lon, 0);
+                if (p.x * (ex - p.x) + p.y * (ey - p.y) + p.z * (ez - p.z) <= 0) continue;
+                _tmpV.set(p.x, p.y, p.z).project(cam);
+                if (_tmpV.z > 1) continue;
+                const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                const dx = sx - px, dy = sy - py;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = { lat: w.lat, lng: w.lon }; }
+            }
+            return best;
+        }
+
+        // Nearest marker (waypoint or a glider's position dot) to a screen point,
+        // returned as tooltip content {title, subtitle, detail}, or null when
+        // nothing visible is within `tolPx`. Reuses buildPositionDots() so the
+        // hit set always matches what's actually drawn (dots update on track
+        // switch, waypoints filtered to the active glider, etc.).
+        function nearestMarkerAtScreen(clientX, clientY, tolPx) {
+            if (!myGlobe) return null;
+            const rect = document.getElementById('globe-container').getBoundingClientRect();
+            const px = clientX - rect.left, py = clientY - rect.top;
+            const cam = myGlobe.camera();
+            const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+            let best = null, bestD = tolPx * tolPx;
+            for (const d of buildPositionDots()) {
+                if (d.pin) continue;   // the user's own click marker, not a hover target
+                const p = myGlobe.getCoords(d.lat, d.lng, 0);
+                if (p.x * (ex - p.x) + p.y * (ey - p.y) + p.z * (ez - p.z) <= 0) continue;
+                _tmpV.set(p.x, p.y, p.z).project(cam);
+                if (_tmpV.z > 1) continue;
+                const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                const dx = sx - px, dy = sy - py;
+                const dist2 = dx * dx + dy * dy;
+                if (dist2 >= bestD) continue;
+                bestD = dist2;
+                best = d.waypoint
+                    ? { title: d.tag, subtitle: d.glider, detail: d.notes || null }
+                    : { title: d.name || 'Unnamed glider', subtitle: d.live ? 'Live' : null, detail: null };
             }
             return best;
         }
