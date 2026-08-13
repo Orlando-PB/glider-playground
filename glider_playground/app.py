@@ -22,6 +22,7 @@ from . import overlay_logic
 from . import plot_logic
 from . import spatial_logic
 from . import update_logic
+from . import waypoint_logic
 
 app = FastAPI()
 
@@ -65,8 +66,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # ---------- SEO (server deployment only) ----------
 # These tags are injected into index.html and the robots/sitemap routes are only
 # meaningful for the public deployment at glider-playground.co.uk. Local (pip)
-# and desktop installs run on 127.0.0.1, so injecting canonical/OG/sitemap there
-# would be noise — IS_SERVER gates all of it (see cli.py / the publish workflow).
+# installs run on 127.0.0.1, so injecting canonical/OG/sitemap there would be
+# noise — IS_SERVER gates all of it (see cli.py / the publish workflow).
 SITE_URL = "https://glider-playground.co.uk"
 SEO_TITLE = "Glider Playground — OG1 Glider Data Viewer | National Oceanography Centre"
 SEO_DESCRIPTION = (
@@ -129,7 +130,7 @@ _seo_html_cache: str | None = None
 
 # HTML snippets contributed by server-only plugins (see _load_server_plugins),
 # injected into the served index.html. Empty on every non-server / non-plugin
-# install, so this is a no-op for pip/desktop users.
+# install, so this is a no-op for pip users.
 _PLUGIN_BODY: list[str] = []
 
 
@@ -210,7 +211,7 @@ def _cached_or_live(file_id: str, key: str, compute):
 
 @app.get("/")
 def read_root():
-    # Inject SEO tags only for the public deployment; local/desktop installs get
+    # Inject SEO tags only for the public deployment; local installs get
     # the unmodified file straight from disk.
     if _is_server():
         return Response(content=_index_html(), media_type="text/html")
@@ -228,7 +229,7 @@ def robots_txt():
             f"\nSitemap: {SITE_URL}/sitemap.xml\n"
         )
     else:
-        # Local/desktop install on 127.0.0.1 — nothing to crawl.
+        # Local install on 127.0.0.1 — nothing to crawl.
         body = "User-agent: *\nDisallow: /\n"
     return Response(content=body, media_type="text/plain")
 
@@ -512,6 +513,15 @@ def api_map_all():
     return {"tracks": tracks}
 
 
+@app.get("/api/waypoints")
+def api_waypoints(glider: str | None = None):
+    """Manually curated target points (e.g. planned stations) for a glider,
+    optionally filtered by a case-insensitive substring match on the `glider`
+    tag. Read-only here — managed from the admin panel on the server
+    deployment (see deploy/waypoints_admin.py)."""
+    return {"waypoints": waypoint_logic.list_waypoints(glider)}
+
+
 @app.get("/api/3d_data")
 def api_3d_data(id: str):
     return _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
@@ -778,10 +788,10 @@ def _load_server_plugins() -> None:
 
     These live *outside* this package (and outside the public repo / PyPI
     release) so the deployment can add things like usage analytics without that
-    code shipping to local/desktop/pip users. Each .py file in the plugins dir
+    code shipping to local/pip users. Each .py file in the plugins dir
     may define ``register(app)`` to add routes and/or a ``BEACON_HTML`` string
     injected into index.html. Loaded only in server mode; absence is the normal
-    case (so pip/desktop installs do nothing here and pay no overhead).
+    case (so pip installs do nothing here and pay no overhead).
 
     Plugins dir: $GP_PLUGINS_DIR, else ~/.glider_playground/plugins.
     """

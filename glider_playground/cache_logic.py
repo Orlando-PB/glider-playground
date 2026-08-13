@@ -19,7 +19,6 @@ import hashlib
 import json
 import os
 import shutil
-import sys
 import threading
 import time
 import traceback
@@ -52,22 +51,18 @@ REGISTRY_FILE = CACHE_ROOT / "registry.json"
 def _resolve_data_dir() -> Path:
     """Where managed live-deployment downloads live and get auto-scanned.
 
-    Picking this relative to the package only works for a source checkout — in
-    the frozen desktop build the package lives *inside* the .app bundle, so the
-    old default tried to write downloads into a read-only bundle. Resolution:
-
       1. ``GP_DATA_DIR`` env var, if set, always wins.
-      2. A source checkout (``.git`` beside the package, not frozen) keeps using
-         the repo's ``data/`` folder, so the dev workflow is unchanged.
-      3. Everything else — a pip install or the frozen desktop app — uses a
-         user-writable folder alongside our other state (``~/.glider_playground/data``).
+      2. A source checkout (``.git`` beside the package) keeps using the repo's
+         ``data/`` folder, so the dev workflow is unchanged.
+      3. Everything else — a pip install — uses a user-writable folder
+         alongside our other state (``~/.glider_playground/data``).
     """
     env = os.environ.get("GP_DATA_DIR")
     if env:
         return Path(env).expanduser()
 
     repo_root = Path(__file__).resolve().parent.parent
-    if not getattr(sys, "frozen", False) and (repo_root / ".git").is_dir():
+    if (repo_root / ".git").is_dir():
         return repo_root / "data"
 
     return CACHE_ROOT / "data"
@@ -126,7 +121,7 @@ def _lower_worker_priority():
     seconds and the proxy starts returning 502s. On Linux nice is per-thread, so
     this only deprioritises the worker, not the server. setpriority is absolute
     (unlike os.nice's relative increment) so it's safe to call once per file.
-    Skipped off-server: on macOS niceness is per-process, and the desktop/local
+    Skipped off-server: on macOS niceness is per-process, and the local
     box has spare cores anyway, so we never want to slow it down.
     """
     if os.getenv("IS_SERVER") != "True":

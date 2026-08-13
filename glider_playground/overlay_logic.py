@@ -21,8 +21,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # The copernicusmarine toolbox stores credentials in a single file under the
-# user's home dir, independent of the Python environment — so a login done in any
-# terminal/env, or via login() below, is visible to the bundled desktop app too.
+# user's home dir, independent of the Python environment — so a login done in
+# any terminal/env, or via login() below, is visible everywhere.
 _CONFIG_DIR = Path.home() / ".copernicusmarine"
 _CREDENTIALS_FILE = _CONFIG_DIR / ".copernicusmarine-credentials"
 

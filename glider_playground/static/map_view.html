@@ -411,7 +411,30 @@
         // readout. Kept in sync across every open globe by the parent.
         let _pinDot = null;   // null or {lat, lng, pin:true}
 
+        // Manually curated target points (planned stations etc.), managed from
+        // the admin panel — see waypoint_logic.py. Filtered client-side to the
+        // active track by a case-insensitive substring match of `glider`
+        // against the track's filename (there's no canonical glider id).
+        let allWaypoints = [];   // [{id, glider, tag, lat, lon, notes}]
+
         function activeTrack() { return allTracks.find(t => t.id === activeId) || null; }
+
+        function waypointsForActiveTrack() {
+            const at = activeTrack();
+            if (!at || !allWaypoints.length) return [];
+            const name = (at.name || '').toLowerCase();
+            return allWaypoints.filter(w => name.includes((w.glider || '').toLowerCase()));
+        }
+
+        async function fetchWaypoints() {
+            try {
+                const res = await fetch('/api/waypoints');
+                const data = await res.json();
+                allWaypoints = data.waypoints || [];
+            } catch (_) {
+                allWaypoints = [];
+            }
+        }
 
         // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass / ssh) ──
         // Only one surface field is shown at a time; turning one on replaces the
@@ -671,7 +694,7 @@
             activeId = params.get('id') || params.get('filename') || null;
 
             try {
-                await fetchAllTracks();
+                await Promise.all([fetchAllTracks(), fetchWaypoints()]);
 
                 if (allTracks.length === 0) {
                     document.getElementById('loadingIcon').textContent = 'error';
@@ -716,7 +739,17 @@
                     .htmlLat('lat')
                     .htmlLng('lng')
                     .htmlAltitude(0)
-                    .htmlElement(dotEl);
+                    .htmlElement(dotEl)
+                    .labelsData(waypointsForActiveTrack())
+                    .labelLat('lat')
+                    .labelLng('lon')
+                    .labelText('tag')
+                    .labelSize(1.1)
+                    .labelDotRadius(0.4)
+                    .labelColor(() => '#facc15')
+                    .labelAltitude(0.001)
+                    .labelResolution(2)
+                    .labelLabel(w => `<div><b>${w.tag}</b><br>${w.glider}${w.notes ? '<br>' + w.notes : ''}</div>`);
 
                 // Clamp camera distance: prevents zooming out so far the globe
                 // shrinks, and zooming in past the tile resolution.
@@ -833,6 +866,7 @@
             dacArrows = activeTrack().dacArrows;
             updateDacToggle();
             if (myGlobe) {
+                myGlobe.labelsData(waypointsForActiveTrack());
                 myGlobe.pathsData(visiblePaths());   // reorder + recolour in one pass
                 applyDots();   // active non-live track drops its grey dot; others update
             }

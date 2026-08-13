@@ -1093,13 +1093,6 @@
         .jelly-cmd-copy:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
         .jelly-cmd-copy.copied { color: #34d399; }
         .jelly-cmd-copy .material-symbols-outlined { font-size: 15px; }
-        .jelly-download-btn {
-            display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
-            padding: 7px 12px; border-radius: 6px; text-decoration: none;
-            background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
-        }
-        .jelly-download-btn:hover { background: var(--accent-hover); }
-        .jelly-download-btn .material-symbols-outlined { font-size: 16px; }
         /* In-app Copernicus Marine sign-in form inside a Jelly bubble. */
         .jelly-login { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
         .jelly-login-input {
@@ -4786,20 +4779,6 @@
             parent.appendChild(wrap);
         }
 
-        // Append a direct download button to a message bubble (desktop builds:
-        // a one-click link to the latest release asset for the user's OS).
-        function appendDownloadLink(parent, url, label) {
-            if (!parent || !url) return;
-            const a = document.createElement('a');
-            a.href = url;
-            a.target = '_blank';
-            a.rel = 'noopener';
-            a.className = 'jelly-download-btn';
-            const text = label ? `Download for ${label}` : 'Download latest';
-            a.innerHTML = `<span class="material-symbols-outlined">download</span>${text}`;
-            parent.appendChild(a);
-        }
-
         async function checkForUpdate() {
             let info;
             try {
@@ -4811,12 +4790,7 @@
             const steps = Array.isArray(info.steps) ? info.steps : [];
             let text = `Heads up — a new version of glider-playground is available: `
                 + `${info.current || '?'} → ${info.latest}.`;
-            if (info.download_url) {
-                // Desktop build: offer a one-click download for this OS, then
-                // the user replaces their app with it (no pip/git involved).
-                const forWhat = info.download_label ? ` for ${info.download_label}` : '';
-                text += `\n\nDownload the latest build${forWhat} below, then replace your current app with it.`;
-            } else if (steps.length) {
+            if (steps.length) {
                 let how = info.method === 'git' ? 'To update your checkout'
                     : info.method === 'pip' ? 'To upgrade with pip'
                     : 'To update';
@@ -4842,8 +4816,7 @@
             // Put the reminder in the panel and drop the commands into a copyable
             // code block (or a one-click download button) beneath the prose.
             const div = notifyJelly(text, { open: firstSight });
-            if (info.download_url) appendDownloadLink(div, info.download_url, info.download_label);
-            else if (steps.length) appendCommandBlock(div, steps);
+            if (steps.length) appendCommandBlock(div, steps);
         }
 
         async function init() {
@@ -6329,8 +6302,8 @@
             else if (div && command) appendCommandBlock(div, command);
         }
 
-        // In-app Copernicus Marine sign-in. Desktop builds bundle copernicusmarine
-        // but the user has no terminal copy to run `login`, so collect their
+        // In-app Copernicus Marine sign-in, for users who'd rather not run
+        // `copernicusmarine login` in a terminal themselves. Collect their
         // account details here and POST them to the backend, which validates them
         // online and persists them to ~/.copernicusmarine. On success overlays work
         // immediately (no restart) — the user just re-toggles the layer to retry.
