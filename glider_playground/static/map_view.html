@@ -137,14 +137,20 @@
         #chla-err-cmd .material-symbols-outlined { font-size: 14px; }
 
         /* Clicked-coordinate bubble — top-centre, for piloting hand-off. */
+        /* Top-centre readout stack: the live coord-bubble (current pick/ruler)
+           followed by any pinned measurements, in normal document flow so the
+           stack collapses upward automatically when the live bubble is hidden. */
+        #coord-overlay-stack {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 70; display: flex; flex-direction: column; align-items: center;
+            gap: 6px; max-width: calc(100vw - 20px);
+        }
         #coord-bubble {
-            display: none; position: absolute; top: 10px; left: 50%;
-            transform: translateX(-50%); z-index: 70;
-            align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
+            display: none; align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
             border-radius: 8px; font-size: 11px; color: var(--text-primary);
             background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
             box-shadow: 0 1px 8px rgba(0,0,0,0.35); backdrop-filter: blur(4px);
-            max-width: calc(100vw - 20px); box-sizing: border-box;
+            max-width: 100%; box-sizing: border-box;
         }
         #coord-bubble.visible { display: flex; }
         #coord-bubble .coord-pin { font-size: 15px; color: #3b82f6; }
@@ -165,6 +171,37 @@
         #coord-bubble button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
         #coord-bubble button.copied { color: #34d399; }
         #coord-bubble .material-symbols-outlined { font-size: 15px; }
+        /* Ruler mode: orange accent instead of the blue pin, distance takes the
+           primary line, the two endpoint coords sit underneath. */
+        #coord-bubble.ruler-mode .coord-pin { color: #f97316; }
+        #coord-bubble.ruler-mode #coord-text { font-weight: 600; }
+
+        /* Pinned measurements: compact rows stacked under the live bubble,
+           one per pinned point/ruler, each removable independently. */
+        #coord-pinned-stack {
+            display: none; flex-direction: column; align-items: center; gap: 4px;
+            max-width: 100%;
+        }
+        #coord-pinned-stack.visible { display: flex; }
+        .coord-pinned-row {
+            display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px;
+            border-radius: 7px; font-size: 10px; color: var(--text-primary);
+            background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+            box-shadow: 0 1px 6px rgba(0,0,0,0.3); backdrop-filter: blur(4px);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            white-space: nowrap; max-width: 100%; box-sizing: border-box;
+        }
+        .coord-pinned-row .row-icon { font-size: 13px; flex: 0 0 auto; }
+        .coord-pinned-row .row-icon.point { color: #3b82f6; }
+        .coord-pinned-row .row-icon.ruler { color: #f97316; }
+        .coord-pinned-row .row-text { overflow: hidden; text-overflow: ellipsis; }
+        .coord-pinned-row button {
+            flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+            width: 18px; height: 18px; border: none; border-radius: 4px;
+            cursor: pointer; background: transparent; color: var(--text-muted);
+        }
+        .coord-pinned-row button:hover { background: color-mix(in srgb, var(--text-primary) 14%, transparent); color: var(--text-primary); }
+        .coord-pinned-row .material-symbols-outlined { font-size: 13px; }
 
         /* Hover tooltip for waypoint/glider markers — follows the cursor. */
         #marker-tooltip {
@@ -233,15 +270,20 @@
     <!-- Hover tooltip for waypoint/glider markers, follows the cursor. -->
     <div id="marker-tooltip"></div>
 
-    <!-- Clicked-coordinate readout (top-centre). Populated on globe click. -->
-    <div id="coord-bubble">
-        <span class="material-symbols-outlined coord-pin">location_on</span>
-        <span id="coord-textwrap">
-            <span id="coord-text">–</span>
-            <span id="coord-time"></span>
-        </span>
-        <button id="coord-copy" type="button" title="Copy lat, lon"><span class="material-symbols-outlined">content_copy</span></button>
-        <button id="coord-close" type="button" title="Close"><span class="material-symbols-outlined">close</span></button>
+    <!-- Clicked-coordinate readout (top-centre): the live pick/ruler, plus any
+         measurements pinned out of it below (see coord-pinned-stack). -->
+    <div id="coord-overlay-stack">
+        <div id="coord-bubble">
+            <span class="material-symbols-outlined coord-pin">location_on</span>
+            <span id="coord-textwrap">
+                <span id="coord-text">–</span>
+                <span id="coord-time"></span>
+            </span>
+            <button id="coord-copy" type="button" title="Copy lat, lon"><span class="material-symbols-outlined">content_copy</span></button>
+            <button id="coord-pin-toggle" type="button" title="Pin (keep when a new point/line is made)"><span class="material-symbols-outlined">push_pin</span></button>
+            <button id="coord-close" type="button" title="Close"><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <div id="coord-pinned-stack"></div>
     </div>
 
     <!-- CHL-a error toast -->
@@ -282,7 +324,7 @@
             // to top: ocean tiles (surface) -> track line -> arrows -> point
             // (the point is a DOM overlay, already on top). Kept small enough
             // that the lift causes no visible parallax when rotating.
-            lineAltitude: 0.00015
+            lineAltitude: 0.000015
         };
 
         // Depth-averaged current (DAC) arrows. Each glider dive yields one
@@ -302,7 +344,7 @@
             maxLenSpanFrac: 0.08, // also cap length to a fraction of the track span
             headFrac: 0.3,        // arrowhead length as a fraction of the shaft
             headAngleDeg: 25,
-            altitude: 0.0004,     // just above the track line so arrows always
+            altitude: 0.00004,    // just above the track line so arrows always
                                   // draw on top of it; small enough to avoid
                                   // visible parallax (see CONFIG.lineAltitude)
         };
@@ -425,6 +467,27 @@
         // smaller) in the same html layer as the position dots, plus the coord-bubble
         // readout. Kept in sync across every open globe by the parent.
         let _pinDot = null;   // null or {lat, lng, pin:true}
+
+        // Ruler measurement — press and hold, then drag, to lay a great-circle
+        // line between two points (see attachCoordPicker). `_rulerStart`/`_rulerEnd`
+        // are the endpoints (drawn as orange dots via dotEl's `ruler` case);
+        // `_rulerLine` is the three.js line object itself, built fresh on every
+        // drag frame by _greatCircleGeometry so it follows the globe's curvature
+        // rather than cutting a straight chord through the sphere.
+        let _rulerStart = null;
+        let _rulerEnd = null;
+        let _rulerLine = null;
+
+        // Pinned measurements — the "push_pin" button in the coord bubble moves
+        // whatever's currently live (a point pick or a finished ruler) into this
+        // list so it survives the next click/ruler instead of being overwritten.
+        // Each entry: {id, type:'point', lat, lng} or {id, type:'ruler', a, b, km}.
+        // Point dots ride the same html marker layer as the live pin (buildPositionDots);
+        // ruler lines get their own persistent three.js Line, keyed by id, since
+        // there can be several on screen at once (unlike the single live _rulerLine).
+        let _pinnedItems = [];
+        let _pinIdSeq = 1;
+        const _pinnedRulerLines = {};
 
         // Manually curated target points (planned stations etc.), managed from
         // the admin panel — see waypoint_logic.py. Filtered client-side to the
@@ -560,6 +623,16 @@
             // The blue pinned point rides in the same html layer so it re-applies
             // automatically whenever the dots are refreshed (track switch, etc.).
             if (_pinDot) pts.push(_pinDot);
+            if (_rulerStart) pts.push({ lat: _rulerStart.lat, lng: _rulerStart.lng, ruler: true });
+            if (_rulerEnd) pts.push({ lat: _rulerEnd.lat, lng: _rulerEnd.lng, ruler: true });
+            for (const item of _pinnedItems) {
+                if (item.type === 'point') {
+                    pts.push({ lat: item.lat, lng: item.lng, pin: true });
+                } else {
+                    pts.push({ lat: item.a.lat, lng: item.a.lng, ruler: true });
+                    pts.push({ lat: item.b.lat, lng: item.b.lng, ruler: true });
+                }
+            }
             for (const w of waypointsForActiveTrack()) {
                 pts.push({ lat: w.lat, lng: w.lon, waypoint: true, tag: w.tag, glider: w.glider, notes: w.notes });
             }
@@ -864,6 +937,11 @@
                 el.style.cssText = 'width:11px;height:11px;border-radius:50%;background:#3b82f6;border:2px solid #fff;box-shadow:0 0 12px rgba(59,130,246,0.85);pointer-events:none;transform:translate(-50%,-50%);';
                 return el;
             }
+            // Ruler endpoint: small orange dot, same treatment as the pin.
+            if (d.ruler) {
+                el.style.cssText = 'width:9px;height:9px;border-radius:50%;background:#f97316;border:2px solid #fff;box-shadow:0 0 10px rgba(249,115,22,0.85);pointer-events:none;transform:translate(-50%,-50%);';
+                return el;
+            }
             // Waypoint (station) marker: small green dot, its tag renders separately
             // via the labels layer.
             if (d.waypoint) {
@@ -965,7 +1043,7 @@
         // Build ONE mesh holding every cell as a coloured quad. A single
         // geometry (a few thousand triangles) keeps this fast — a per-cell
         // globe.gl polygon layer froze the tab at ~2500 cells.
-        const OVERLAY_ALT = 0.00005;  // just above surface, below track (0.00015) and arrows (0.0004)
+        const OVERLAY_ALT = 0.000005;  // just above surface, below track (0.000015) and arrows (0.00004)
         const OVERLAY_OPACITY = 0.72;
 
         function buildOverlayMesh(data, ov, opacity = OVERLAY_OPACITY) {
@@ -1241,6 +1319,137 @@
         let _coordDown = null;   // {x, y} at pointerdown, screen px
         const _COORD_MOVE_TOL = 6;   // px; a release within this of the press = a click
 
+        // ── Press-and-hold ruler ────────────────────────────────────────
+        // Holding the pointer still for _RULER_HOLD_MS arms the ruler: a
+        // start point drops, orbit controls are disabled so the drag can't
+        // also spin the globe, and every further move redraws the line to
+        // the current pointer position with a live distance. Releasing drops
+        // the end point and leaves the measurement on screen. Moving past
+        // _COORD_MOVE_TOL before the hold fires is a normal rotate instead —
+        // the timer gets cancelled and nothing about the ruler engages.
+        let _rulerHoldTimer = null;
+        let _rulerArmed = false;
+        let _rulerAnchor = null;   // {lat, lng} — where the hold landed
+        const _RULER_HOLD_MS = 380;
+
+        // Great-circle distance between two lat/lng points, in km (mean
+        // Earth radius) — this is what's shown in the coord bubble, kept
+        // independent of the globe's render radius/altitude.
+        function _haversineKm(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const toRad = d => d * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2
+                + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(Math.min(1, a)));
+        }
+
+        // Same altitude scale the rest of the app's overlays use (OVERLAY_ALT
+        // 0.000005, track 0.000015, DAC arrows 0.00004, CUR_ALT 0.000013) — the
+        // ruler sits above all of them so it's never hidden under the track.
+        // Kept this whole family an order of magnitude closer to the surface
+        // than the original values (see CONFIG.lineAltitude comment) — even
+        // the track/waypoints showed visible parallax on rotation before.
+        const RULER_ALT = 0.00006;
+
+        // Build a great-circle arc (as a THREE.BufferGeometry) between two
+        // lat/lng points, slerping between their unit vectors so the line
+        // follows the globe's curvature instead of cutting a straight chord
+        // through the sphere. Lifted a hair above the surface to avoid
+        // z-fighting with the terrain tiles.
+        function _greatCircleGeometry(a, b) {
+            const r = myGlobe.getGlobeRadius() * (1 + RULER_ALT);
+            const pa = myGlobe.getCoords(a.lat, a.lng, 0);
+            const pb = myGlobe.getCoords(b.lat, b.lng, 0);
+            const va = new THREE.Vector3(pa.x, pa.y, pa.z).normalize();
+            const vb = new THREE.Vector3(pb.x, pb.y, pb.z).normalize();
+            const omega = Math.acos(Math.min(1, Math.max(-1, va.dot(vb))));
+            const pts = [];
+            if (omega < 1e-6) {
+                pts.push(va.clone().multiplyScalar(r), vb.clone().multiplyScalar(r));
+            } else {
+                const sinOmega = Math.sin(omega);
+                const segments = 64;
+                for (let i = 0; i <= segments; i++) {
+                    const t = i / segments;
+                    const f1 = Math.sin((1 - t) * omega) / sinOmega;
+                    const f2 = Math.sin(t * omega) / sinOmega;
+                    pts.push(new THREE.Vector3(
+                        va.x * f1 + vb.x * f2,
+                        va.y * f1 + vb.y * f2,
+                        va.z * f1 + vb.z * f2
+                    ).multiplyScalar(r));
+                }
+            }
+            return new THREE.BufferGeometry().setFromPoints(pts);
+        }
+
+        function updateRulerLine(a, b) {
+            if (!myGlobe) return;
+            const geom = _greatCircleGeometry(a, b);
+            if (_rulerLine) {
+                _rulerLine.geometry.dispose();
+                _rulerLine.geometry = geom;
+            } else {
+                _rulerLine = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.9 }));
+                _rulerLine.renderOrder = 999;
+                myGlobe.scene().add(_rulerLine);
+            }
+        }
+
+        function clearRulerLine() {
+            if (_rulerLine && myGlobe) {
+                myGlobe.scene().remove(_rulerLine);
+                _rulerLine.geometry.dispose();
+                _rulerLine.material.dispose();
+            }
+            _rulerLine = null;
+        }
+
+        // Format one endpoint as "12.3456°N, 1.2345°W" for the bubble's second line.
+        function _fmtLatLng(lat, lng) {
+            const la = lat, lo = _wrapLon(lng);
+            return `${Math.abs(la).toFixed(4)}°${la >= 0 ? 'N' : 'S'}, ${Math.abs(lo).toFixed(4)}°${lo >= 0 ? 'E' : 'W'}`;
+        }
+
+        // Show the ruler's live/final readout in the same top-centre bubble the
+        // single-point pin uses — distance as the headline, both endpoints below.
+        function showRulerBubble(a, b, km) {
+            document.getElementById('coord-text').textContent = `${km.toFixed(km < 10 ? 3 : 2)} km`;
+            const el = document.getElementById('coord-time');
+            el.textContent = `${_fmtLatLng(a.lat, a.lng)}  →  ${_fmtLatLng(b.lat, b.lng)}`;
+            el.style.display = '';
+            document.getElementById('coord-bubble').classList.add('visible', 'ruler-mode');
+        }
+
+        // Pointer released (or left the globe) while the ruler was armed: drop
+        // the end point, leave the line + bubble showing, restore orbiting.
+        function finishRuler(clientX, clientY) {
+            clearTimeout(_rulerHoldTimer);
+            _rulerArmed = false;
+            try { myGlobe.controls().enabled = true; } catch (_) {}
+            const anchor = _rulerAnchor;
+            _rulerAnchor = null;
+            if (!anchor) return;
+            const end = _snapPickCoords(clientX, clientY) || anchor;
+            const km = _haversineKm(anchor.lat, anchor.lng, end.lat, end.lng);
+            // A hold released without any real drag isn't a measurement — treat
+            // it like a plain click and just drop the usual pin.
+            if (km < 0.01) {
+                _rulerStart = null; _rulerEnd = null;
+                clearRulerLine();
+                showPin(anchor.lat, anchor.lng);
+                setCoordAim(true);
+                try { window.parent.postMessage({ type: 'coordPicked', lat: anchor.lat, lng: _wrapLon(anchor.lng), onPath: false }, '*'); } catch (_) {}
+                return;
+            }
+            _rulerStart = anchor;
+            _rulerEnd = end;
+            applyDots();
+            updateRulerLine(anchor, end);
+            showRulerBubble(anchor, end, km);
+        }
+
         // Once the user has picked a point, switch the globe to a crosshair so the
         // next point is easier to aim. Any drag (rotate) or closing the bubble
         // drops back to the grab hand (clearing the inline cursor lets the CSS
@@ -1256,12 +1465,38 @@
             el._coordPickerWired = true;
             el.addEventListener('pointerdown', (e) => {
                 _coordDown = { x: e.clientX, y: e.clientY };
+                clearTimeout(_rulerHoldTimer);
+                _rulerHoldTimer = setTimeout(() => {
+                    if (!_coordDown) return;   // already released before the hold fired
+                    const geo = _snapPickCoords(_coordDown.x, _coordDown.y);
+                    if (!geo) return;
+                    // Holding lands on a real ruler start — clear any previous
+                    // pin/measurement so the bubble isn't showing two things.
+                    clearPin();
+                    _rulerArmed = true;
+                    _rulerAnchor = geo;
+                    try { myGlobe.controls().enabled = false; } catch (_) {}
+                    clearHover();
+                    _rulerStart = geo;
+                    applyDots();
+                    updateRulerLine(geo, geo);
+                    showRulerBubble(geo, geo, 0);
+                }, _RULER_HOLD_MS);
             });
             el.addEventListener('pointermove', (e) => {
+                if (_rulerArmed) {
+                    const geo = _snapPickCoords(e.clientX, e.clientY);
+                    if (geo && _rulerAnchor) {
+                        updateRulerLine(_rulerAnchor, geo);
+                        showRulerBubble(_rulerAnchor, geo, _haversineKm(_rulerAnchor.lat, _rulerAnchor.lng, geo.lat, geo.lng));
+                    }
+                    return;
+                }
                 // A press that turns into a drag means the user is rotating —
-                // leave aim mode right away and stop highlighting so the cursor
-                // reads as a grab.
+                // cancel any pending ruler-hold, leave aim mode right away, and
+                // stop highlighting so the cursor reads as a grab.
                 if (_coordDown && Math.hypot(e.clientX - _coordDown.x, e.clientY - _coordDown.y) > _COORD_MOVE_TOL) {
+                    clearTimeout(_rulerHoldTimer);
                     setCoordAim(false);
                     clearHover();
                     return;
@@ -1269,8 +1504,17 @@
                 // Otherwise highlight the nearest grey track within the hit radius.
                 scheduleHover(e.clientX, e.clientY);
             });
-            el.addEventListener('pointerleave', clearHover);
+            el.addEventListener('pointerleave', (e) => {
+                clearHover();
+                if (_rulerArmed) finishRuler(e.clientX, e.clientY);
+            });
             el.addEventListener('pointerup', (e) => {
+                clearTimeout(_rulerHoldTimer);
+                if (_rulerArmed) {
+                    finishRuler(e.clientX, e.clientY);
+                    _coordDown = null;
+                    return;
+                }
                 const start = _coordDown;
                 _coordDown = null;
                 if (!start) return;
@@ -1283,6 +1527,15 @@
                     showPin(wpHit.lat, wpHit.lng);
                     setCoordAim(true);
                     try { window.parent.postMessage({ type: 'coordPicked', lat: wpHit.lat, lng: _wrapLon(wpHit.lng), onPath: false }, '*'); } catch (_) {}
+                    return;
+                }
+                // Same priority for a pinned marker (point pin or ruler endpoint) —
+                // also a fixed target, so a click near one snaps to it exactly.
+                const pinnedHit = nearestPinnedAtScreen(e.clientX, e.clientY, 20);
+                if (pinnedHit) {
+                    showPin(pinnedHit.lat, pinnedHit.lng);
+                    setCoordAim(true);
+                    try { window.parent.postMessage({ type: 'coordPicked', lat: pinnedHit.lat, lng: _wrapLon(pinnedHit.lng), onPath: false }, '*'); } catch (_) {}
                     return;
                 }
                 // A click on (or near) a grey context track selects it as the
@@ -1330,6 +1583,17 @@
                 const geo = myGlobe.toGeoCoords({ x: hit.x, y: hit.y, z: hit.z });
                 return { lat: geo.lat, lng: geo.lng };
             } catch (_) { return null; }
+        }
+
+        // Same snap priority a normal click uses (waypoint, then a pinned
+        // marker, then the active track's path, then raw globe coords) —
+        // shared by the ruler so its endpoints land on the same fixed points
+        // a single click would.
+        function _snapPickCoords(clientX, clientY) {
+            return nearestWaypointAtScreen(clientX, clientY, 20)
+                || nearestPinnedAtScreen(clientX, clientY, 20)
+                || nearestActivePointAtScreen(clientX, clientY, 14)
+                || pickGlobeCoords(clientX, clientY);
         }
 
         // Nearest grey (non-active) track whose line passes within `tolPx` of the
@@ -1431,6 +1695,36 @@
             return best;
         }
 
+        // Nearest pinned marker (a point pin or either end of a pinned ruler) to
+        // a screen click, returned as its exact {lat, lng}, or null when nothing
+        // pinned is within `tolPx`. Same camera-facing / projection maths as
+        // nearestWaypointAtScreen — pinned markers are fixed targets too, so
+        // clicks/ruler drags should snap to them the same way.
+        function nearestPinnedAtScreen(clientX, clientY, tolPx) {
+            if (!myGlobe || !_pinnedItems.length) return null;
+            const rect = document.getElementById('globe-container').getBoundingClientRect();
+            const px = clientX - rect.left, py = clientY - rect.top;
+            const cam = myGlobe.camera();
+            const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+            let best = null, bestD = tolPx * tolPx;
+            const test = (lat, lng) => {
+                const p = myGlobe.getCoords(lat, lng, 0);
+                if (p.x * (ex - p.x) + p.y * (ey - p.y) + p.z * (ez - p.z) <= 0) return;
+                _tmpV.set(p.x, p.y, p.z).project(cam);
+                if (_tmpV.z > 1) return;
+                const sx = (_tmpV.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_tmpV.y * 0.5 + 0.5) * rect.height;
+                const dx = sx - px, dy = sy - py;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = { lat, lng }; }
+            };
+            for (const item of _pinnedItems) {
+                if (item.type === 'point') test(item.lat, item.lng);
+                else { test(item.a.lat, item.a.lng); test(item.b.lat, item.b.lng); }
+            }
+            return best;
+        }
+
         // Nearest marker (waypoint or a glider's position dot) to a screen point,
         // returned as tooltip content {title, subtitle, detail}, or null when
         // nothing visible is within `tolPx`. Reuses buildPositionDots() so the
@@ -1444,7 +1738,7 @@
             const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
             let best = null, bestD = tolPx * tolPx;
             for (const d of buildPositionDots()) {
-                if (d.pin) continue;   // the user's own click marker, not a hover target
+                if (d.pin || d.ruler) continue;   // the user's own click/ruler markers, not a hover target
                 const p = myGlobe.getCoords(d.lat, d.lng, 0);
                 if (p.x * (ex - p.x) + p.y * (ey - p.y) + p.z * (ez - p.z) <= 0) continue;
                 _tmpV.set(p.x, p.y, p.z).project(cam);
@@ -1505,6 +1799,7 @@
             const copyBtn = document.getElementById('coord-copy');
             copyBtn.classList.remove('copied');
             copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+            document.getElementById('coord-bubble').classList.remove('ruler-mode');
             document.getElementById('coord-bubble').classList.add('visible');
         }
 
@@ -1524,28 +1819,104 @@
         }
 
         // Drop (or move) the blue pin: draw the dot + show the coord readout.
+        // A plain click always wins over a leftover ruler measurement — same as
+        // it already overrides any previous pin.
         function showPin(lat, lng) {
             if (typeof lat !== 'number' || typeof lng !== 'number') return;
             _pinDot = { lat, lng, pin: true };
+            _rulerStart = null;
+            _rulerEnd = null;
+            clearRulerLine();
             applyDots();
             showCoordBubble({ lat, lng });
         }
 
         // Remove the blue pin and its readout from THIS globe (local only — the
-        // parent fans the clear out to the other globes / the plot popup).
+        // parent fans the clear out to the other globes / the plot popup). Also
+        // wipes any ruler measurement, since both share the one top-centre bubble.
         function clearPin() {
             _pinDot = null;
+            _rulerStart = null;
+            _rulerEnd = null;
+            clearRulerLine();
             applyDots();
             const bubble = document.getElementById('coord-bubble');
-            if (bubble) bubble.classList.remove('visible');
+            if (bubble) bubble.classList.remove('visible', 'ruler-mode');
             setCoordTime(null);
             _lastCoord = null;
             setCoordAim(false);
         }
 
+        // Move whatever's currently live (a point pick or a finished ruler) into
+        // the pinned stack, so the next click/ruler no longer overwrites it. The
+        // live ruler's three.js line is handed off intact rather than rebuilt.
+        function pinCurrent() {
+            if (_rulerStart && _rulerEnd) {
+                const id = _pinIdSeq++;
+                const km = _haversineKm(_rulerStart.lat, _rulerStart.lng, _rulerEnd.lat, _rulerEnd.lng);
+                _pinnedItems.push({ id, type: 'ruler', a: _rulerStart, b: _rulerEnd, km });
+                _pinnedRulerLines[id] = _rulerLine;
+                _rulerLine = null;   // ownership transferred — clearPin() below must not dispose it
+            } else if (_pinDot) {
+                _pinnedItems.push({ id: _pinIdSeq++, type: 'point', lat: _pinDot.lat, lng: _pinDot.lng });
+            } else {
+                return;
+            }
+            clearPin();
+            renderPinnedStack();
+        }
+
+        // Drop one pinned item (its dot(s), its ruler line if any, and its row).
+        function unpinItem(id) {
+            const idx = _pinnedItems.findIndex(p => p.id === id);
+            if (idx === -1) return;
+            _pinnedItems.splice(idx, 1);
+            const line = _pinnedRulerLines[id];
+            if (line && myGlobe) {
+                myGlobe.scene().remove(line);
+                line.geometry.dispose();
+                line.material.dispose();
+            }
+            delete _pinnedRulerLines[id];
+            applyDots();
+            renderPinnedStack();
+        }
+
+        // Rebuild the compact stack of pinned rows under the live coord bubble.
+        function renderPinnedStack() {
+            const wrap = document.getElementById('coord-pinned-stack');
+            if (!wrap) return;
+            wrap.innerHTML = '';
+            for (const item of _pinnedItems) {
+                const row = document.createElement('div');
+                row.className = 'coord-pinned-row';
+                const icon = document.createElement('span');
+                icon.className = 'material-symbols-outlined row-icon ' + (item.type === 'ruler' ? 'ruler' : 'point');
+                icon.textContent = item.type === 'ruler' ? 'straighten' : 'location_on';
+                const text = document.createElement('span');
+                text.className = 'row-text';
+                text.textContent = item.type === 'ruler'
+                    ? `${item.km.toFixed(item.km < 10 ? 3 : 2)} km  ·  ${_fmtLatLng(item.a.lat, item.a.lng)} → ${_fmtLatLng(item.b.lat, item.b.lng)}`
+                    : _fmtLatLng(item.lat, item.lng);
+                const closeBtn = document.createElement('button');
+                closeBtn.type = 'button';
+                closeBtn.title = 'Remove';
+                closeBtn.innerHTML = '<span class="material-symbols-outlined">close</span>';
+                closeBtn.addEventListener('click', () => unpinItem(item.id));
+                row.append(icon, text, closeBtn);
+                wrap.appendChild(row);
+            }
+            wrap.classList.toggle('visible', _pinnedItems.length > 0);
+        }
+
         // The string handed to the clipboard — plain signed decimal "lat, lon",
         // a format most piloting/GIS tools accept. Tweak once we know the target.
         function _coordCopyText() {
+            if (_rulerStart && _rulerEnd) {
+                const km = _haversineKm(_rulerStart.lat, _rulerStart.lng, _rulerEnd.lat, _rulerEnd.lng);
+                return `${_rulerStart.lat.toFixed(6)}, ${_rulerStart.lng.toFixed(6)} -> `
+                    + `${_rulerEnd.lat.toFixed(6)}, ${_rulerEnd.lng.toFixed(6)} (${km.toFixed(2)} km)`;
+            }
             if (!_lastCoord) return '';
             return `${_lastCoord.lat.toFixed(6)}, ${_lastCoord.lng.toFixed(6)}`;
         }
@@ -1568,6 +1939,9 @@
                 // Tell the parent so the pin clears on every other globe and on the
                 // plot point popup too.
                 try { window.parent.postMessage({ type: 'coordCleared' }, '*'); } catch (_) {}
+            });
+            document.getElementById('coord-pin-toggle').addEventListener('click', () => {
+                pinCurrent();
             });
             const copyBtn = document.getElementById('coord-copy');
             copyBtn.addEventListener('click', async () => {
@@ -1841,7 +2215,7 @@
         const CUR_PARTICLES = 4000;        // particles advected each frame
         const CUR_TRAIL = 44;              // points kept per particle's fading trail (longer = longer streaks)
         const CUR_LINE_COLOR = [0, 0, 0];  // streak colour, 0–1 per channel ([1,1,1] = white). Black so the lines stand out against the speed backdrop instead of blending into it.
-        const CUR_ALT = 0.00013;           // above the speed mesh, just below the track
+        const CUR_ALT = 0.000013;          // above the speed mesh, just below the track
         const CUR_LIFE_MIN = 90, CUR_LIFE_MAX = 220;   // particle lifespan (frames)
         const CUR_BASE_OPACITY = 1.0;
         const CUR_DEG_PER_SEC = 0.32;      // arc/sec a p90-strength current sweeps
