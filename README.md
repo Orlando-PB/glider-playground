@@ -145,6 +145,12 @@ pip uninstall glider-playground
 
 ---
 
+## Developer Docs
+
+See [OVERVIEW.md](OVERVIEW.md) for an internal reference on the architecture, data pipeline, and deployment.
+
+---
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
