@@ -1363,10 +1363,20 @@
                     <!-- Advanced only: point draw order (which colour extreme renders on top) -->
                     <div class="flex items-center gap-1 adv-only">
                         <span class="text-[9px] text-gray-500 font-medium">Order</span>
-                        <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top. 'Largest/Smallest on top' surface outliers and use a smaller marker.">
-                            <option value="normal">Normal</option>
-                            <option value="largest">Largest on top</option>
-                            <option value="smallest">Smallest on top</option>
+                        <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top.">
+                            <option value="normal">Standard</option>
+                            <option value="smallest">Lowest on top</option>
+                            <option value="largest">Highest on top</option>
+                            <option value="outliers">Outliers on top</option>
+                        </select>
+                    </div>
+                    <!-- Advanced only: marker point size -->
+                    <div class="flex items-center gap-1 adv-only">
+                        <span class="text-[9px] text-gray-500 font-medium">Size</span>
+                        <select id="drawOrderSize" class="p-1.5 transition-all" title="Marker point size.">
+                            <option value="small">Small</option>
+                            <option value="med">Med</option>
+                            <option value="large">Large</option>
                         </select>
                     </div>
                     <!-- Advanced only: render quality (max points sent to the WebGL plot) -->
@@ -1603,6 +1613,12 @@
         const invertYBtn = document.getElementById('invertYBtn');
         const profileSidebarBtn = document.getElementById('profileSidebarBtn');
         const drawOrderSelect = document.getElementById('drawOrder');
+        const drawOrderSizeSelect = document.getElementById('drawOrderSize');
+        // Marker size defaults to 'large', except for the 'largest'/'smallest'/'outliers'
+        // draw orders (used by presets like Backscatter/Chlorophyll/PAR to surface
+        // outliers), where 'med' keeps the surfaced points from overwhelming the rest
+        // of the trace.
+        const defaultDrawOrderSize = (drawOrder) => (drawOrder === 'largest' || drawOrder === 'smallest' || drawOrder === 'outliers') ? 'med' : 'large';
         const qualitySelect = document.getElementById('quality');
         
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
@@ -2143,6 +2159,7 @@
                 qcFlags: qcFlagsInput.value,
                 profileSidebar: profileSidebarBtn.classList.contains('active'),
                 drawOrder: drawOrderSelect.value || 'normal',
+                drawOrderSize: drawOrderSizeSelect.value || defaultDrawOrderSize(drawOrderSelect.value),
                 quality: qualitySelect.value || '',
                 cycleProfile: (CycleProfile.getParams && CycleProfile.getParams()) || {},
                 zoomBounds: currentZoomBounds,
@@ -2167,6 +2184,7 @@
                 if (s.qcFlags !== undefined) { qcFlagsInput.value = s.qcFlags; syncQcChips(); }
                 updateToggleBtn(profileSidebarBtn, !!s.profileSidebar);
                 drawOrderSelect.value = s.drawOrder || 'normal';
+                drawOrderSizeSelect.value = s.drawOrderSize || defaultDrawOrderSize(s.drawOrder || 'normal');
                 qualitySelect.value = s.quality || '';
                 currentZoomBounds = s.zoomBounds || null;
                 currentPreset = s.preset || '';
@@ -2207,6 +2225,7 @@
                 qc_flags: s.qcFlags || '',
                 profile_sidebar: !!s.profileSidebar,
                 draw_order: s.drawOrder || 'normal',
+                size_mode: s.drawOrderSize || defaultDrawOrderSize(s.drawOrder || 'normal'),
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
             if (s.zoomBounds) {
@@ -3159,7 +3178,7 @@
             preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'deep', invert: false },
             preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'sal', invert: true },
             preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'dense', invert: true },
-            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'chla', invert: true },
+            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'chla', invert: true, drawOrder: 'outliers' },
             // Oxygen, in rough order of usefulness: calibrated concentration first
             // (MOLAR_DOXY µmol/L, DOXY µmol/kg, OXYSAT_DOXY % sat), then raw optode
             // outputs (DPHASE_DOXY phase angle °, FREQUENCY_DOXY Hz) as a last
@@ -3167,8 +3186,8 @@
             // plot. Raw outputs aren't converted to concentration (that needs the
             // optode's calibration coefficients) — they're shown in their own units.
             preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'largest' },
-            preset_par: { text: 'PAR', icon: 'sunny', bg: 'bg-yellow-100', textCol: 'text-yellow-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DOWNWELLING_PAR'], cmap: 'sunset', invert: true }
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'outliers' },
+            preset_par: { text: 'PAR', icon: 'sunny', bg: 'bg-yellow-100', textCol: 'text-yellow-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DOWNWELLING_PAR'], cmap: 'sunset', invert: true, drawOrder: 'outliers' }
         };
 
         const COOKIE_FILE = 'gp_file_id';
@@ -3651,6 +3670,7 @@
             s.x = findBest(p.x); s.y = findBest(p.y); s.c = findBest(p.c);
             s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
             s.drawOrder = p.drawOrder || 'normal';
+            s.drawOrderSize = p.drawOrderSize || defaultDrawOrderSize(s.drawOrder);
             s.zoomBounds = null; s.cMin = null; s.cMax = null;
             // Don't inherit the active plot's colour-trim — it belongs to a
             // different variable. Start at full range (filled on first load).
@@ -3987,7 +4007,7 @@
                 { key: 'preset_chla', drawOrder: 'largest'  },
                 { key: 'preset_bbp',  drawOrder: 'smallest' },
                 { key: 'preset_bbp',  drawOrder: 'largest'  },
-                { key: 'preset_par',  drawOrder: 'normal'   },
+                { key: 'preset_par',  drawOrder: 'outliers' },
             ].filter(s => presetOk(s.key));
             if (specs.length === 0) return;
 
@@ -3999,6 +4019,7 @@
             const plotIds = specs.map(spec => {
                 const s = stateFromPreset(spec.key);
                 s.drawOrder = spec.drawOrder;
+                s.drawOrderSize = defaultDrawOrderSize(spec.drawOrder);
                 return createPanel('plot', s).id;
             });
 
@@ -5108,6 +5129,7 @@
             
             updateToggleBtn(invertYBtn, p.invert);
             drawOrderSelect.value = p.drawOrder || 'normal';
+            drawOrderSizeSelect.value = p.drawOrderSize || defaultDrawOrderSize(p.drawOrder || 'normal');
 
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             isXDateTime = xInfo && xInfo.type === 'datetime';
@@ -5193,6 +5215,7 @@
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
         profileSidebarBtn.addEventListener('click', () => handleToggle(profileSidebarBtn, false));
         drawOrderSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
+        drawOrderSizeSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
         qualitySelect.addEventListener('change', () => {
             resetPlotState(false);
             const plots = Object.values(panels).filter(p => p.type === 'plot');

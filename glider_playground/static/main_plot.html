@@ -832,7 +832,13 @@
                 }
                 const tJsonParsed = now();
 
-                if (plotData.error) throw new Error(plotData.error);
+                if (plotData.error) {
+                    // Server-reported empty/filtered result, not a bug — logged as a
+                    // clean note below instead of console.error's stack trace.
+                    const e = new Error(plotData.error);
+                    e.expected = true;
+                    throw e;
+                }
 
                 // build + draw is split into trace-building / Plotly draw / paint via
                 // the marks renderPlot records into this object.
@@ -948,7 +954,8 @@
                 document.getElementById('loadingIcon').style.display = 'none';
                 document.getElementById('statusText').style.color = '#ef4444';
                 document.getElementById('statusText').textContent = err.message || "Failed to load plot data.";
-                console.error(err);
+                if (err && err.expected && window.logNote) window.logNote(err.message);
+                else console.error(err);
                 window.parent.postMessage({ type: 'plotError', message: err.message }, '*');
             }
         }
@@ -1190,10 +1197,14 @@
             const isDiscrete09 = cmapName === 'discrete_09';
             // Point draw order: 'normal' = file/measurement order (as before),
             // 'largest' = high colour values drawn last (on top), 'smallest' = low
-            // values on top. The two "on top" modes also use a smaller marker so the
-            // surfaced points sit cleanly over the rest.
+            // values on top, 'outliers' = both tails drawn last (on top), ranked by
+            // distance from the median. Marker size is independent of draw order,
+            // set by `size_mode` ('small' | 'med' | 'large').
             const drawOrder = urlParams.get('draw_order') || 'normal';
-            const orderActive = drawOrder === 'largest' || drawOrder === 'smallest';
+            const orderActive = drawOrder === 'largest' || drawOrder === 'smallest' || drawOrder === 'outliers';
+            const sizeMode = urlParams.get('size_mode') || 'large';   // 'small' | 'med' | 'large'
+            const MARKER_SIZE_FACTORS = { small: 0.5, med: 0.75, large: 1 };
+            const markerSize = plotConfig.defaultMarkerSize * (MARKER_SIZE_FACTORS[sizeMode] ?? 1);
 
             // --- Discrete 0-9 mode: one trace per integer value, legend instead of colorbar ---
             if (isDiscrete09 && data.c && data.c.length) {
@@ -1233,6 +1244,21 @@
             // data.x/data.c untouched for the running-mean trace below.
             if (pc && orderActive) {
                 const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
+                const isOutliers = drawOrder === 'outliers';
+                // For 'outliers', rank each point by its distance from the median
+                // rather than by raw value, then draw the most extreme (either tail) last.
+                let extremityOf = null;
+                if (isOutliers) {
+                    const finite = Array.from(pc).filter(v => v !== null && v !== undefined && !Number.isNaN(v));
+                    finite.sort((a, b) => a - b);
+                    const n = finite.length;
+                    if (n) {
+                        const median = n % 2 ? finite[(n - 1) / 2] : (finite[n / 2 - 1] + finite[n / 2]) / 2;
+                        extremityOf = v => Math.abs(v - median);
+                    } else {
+                        extremityOf = () => 0;
+                    }
+                }
                 // Plain Array, not pc.map(): pc may be a Float32Array (binary path),
                 // and a typed-array `order` would coerce the date-string x values to
                 // NaN in the maps below → blank plot.
@@ -1242,6 +1268,7 @@
                     if (na && nb) return 0;
                     if (na) return -1;   // nulls to the bottom
                     if (nb) return 1;
+                    if (isOutliers) return extremityOf(va) - extremityOf(vb);
                     return sign * (va - vb);
                 });
                 px = order.map(i => data.x[i]);
@@ -1251,7 +1278,7 @@
             traces.push({
                 x: px, y: py, mode: 'markers', type: 'scattergl',
                 marker: {
-                    size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
+                    size: markerSize,
                     color: pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour),
                     opacity: MARKER_OPACITY,
                     colorscale: pc ? effectiveColorscale : undefined,

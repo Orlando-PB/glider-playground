@@ -220,6 +220,18 @@
         console.groupEnd();
     };
 
+    // Clean one-line log for expected/handled failures shown to the user (e.g.
+    // "no points remain" after a filter) — unlike console.error, this never prints
+    // a stack trace. Always visible (not gated by GP_DEBUG): it's the only trace
+    // of a real, user-facing condition, not a perf diagnostic.
+    window.logNote = function (message) {
+        console.log(
+            `%c NOTE %c ${message}`,
+            'background:#5a3a0a;color:#fbbf24;font-weight:bold;border-radius:3px 0 0 3px;padding:1px 4px',
+            'color:#fbbf24;font-weight:normal'
+        );
+    };
+
     window.logVersion = function (version, isServer, throttle, lowMemory) {
         const modeLabel = isServer ? 'server' : 'local';
         const modeBg = isServer ? '#3b1f6e' : '#1a3a1a';
