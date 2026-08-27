@@ -717,6 +717,7 @@
 
         function getSafeMin(arr) {
             let min = Infinity;
+            if (!arr) return min;
             for (let i = 0; i < arr.length; i++) {
                 if (arr[i] !== null && arr[i] < min) min = arr[i];
             }
@@ -725,6 +726,7 @@
 
         function getSafeMax(arr) {
             let max = -Infinity;
+            if (!arr) return max;
             for (let i = 0; i < arr.length; i++) {
                 if (arr[i] !== null && arr[i] > max) max = arr[i];
             }
@@ -740,6 +742,7 @@
         // so the two can't drift — a past divergence left date axes un-padded.
         function xDataExtent(xs, isDt) {
             if (!isDt) return { min: getSafeMin(xs), max: getSafeMax(xs) };
+            if (!xs) return { min: Infinity, max: -Infinity };
             let first = null, last = null;
             for (let i = 0; i < xs.length; i++) { if (xs[i] !== null) { first = xs[i]; break; } }
             for (let i = xs.length - 1; i >= 0; i--) { if (xs[i] !== null) { last = xs[i]; break; } }

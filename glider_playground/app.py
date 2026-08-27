@@ -510,6 +510,7 @@ def api_map_all():
             "last_lat": rec.get("last_lat"),
             "last_lon": rec.get("last_lon"),
             "is_nrt": rec.get("is_nrt"),
+            "last_time": rec.get("last_time"),
         })
     return {"tracks": tracks}
 

@@ -1267,7 +1267,7 @@
                         <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
                         <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
                         <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
-                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top) with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
+                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top), and PAR, with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
                         <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
                     </div>
                 </div>
@@ -3162,7 +3162,8 @@
             // plot. Raw outputs aren't converted to concentration (that needs the
             // optode's calibration coefficients) — they're shown in their own units.
             preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'largest' }
+            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'largest' },
+            preset_par: { text: 'PAR', icon: 'sunny', bg: 'bg-yellow-100', textCol: 'text-yellow-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DOWNWELLING_PAR'], cmap: 'sunset', invert: true }
         };
 
         const COOKIE_FILE = 'gp_file_id';
@@ -3967,8 +3968,8 @@
 
         // Bio-optics: temperature, then chlorophyll and backscatter each shown twice —
         // once surfacing the smallest values, once the largest — so both faint and
-        // intense features read clearly. The globe fills the whole left column on its
-        // own (no 3D view here).
+        // intense features read clearly, then downwelling PAR. The globe fills the
+        // whole left column on its own (no 3D view here).
         function applyBioOptics() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const presetOk = (key) => {
@@ -3981,6 +3982,7 @@
                 { key: 'preset_chla', drawOrder: 'largest'  },
                 { key: 'preset_bbp',  drawOrder: 'smallest' },
                 { key: 'preset_bbp',  drawOrder: 'largest'  },
+                { key: 'preset_par',  drawOrder: 'normal'   },
             ].filter(s => presetOk(s.key));
             if (specs.length === 0) return;
 

@@ -615,7 +615,7 @@
                 if (t.isNrt) {
                     const lat = t.lastLat != null ? Number(t.lastLat) : end.lat;
                     const lng = t.lastLon != null ? Number(t.lastLon) : end.lng;
-                    pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId });
+                    pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId, lastTime: t.lastTime });
                 } else if (t.id !== activeId) {
                     pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, name: t.name, live: false, active: false });
                 }
@@ -749,6 +749,7 @@
                 isNrt: !!raw.is_nrt,
                 lastLat: raw.last_lat,
                 lastLon: raw.last_lon,
+                lastTime: raw.last_time,
                 view: {
                     centreLat: (minLat + maxLat) / 2,
                     centreLng: (minLng + maxLng) / 2,
@@ -1751,9 +1752,23 @@
                 bestD = dist2;
                 best = d.waypoint
                     ? { title: d.tag, subtitle: d.glider, detail: d.notes || null }
-                    : { title: d.name || 'Unnamed glider', subtitle: d.live ? 'Live' : null, detail: null };
+                    : { title: d.name || 'Unnamed glider', subtitle: d.live ? (relTimeAgo(d.lastTime) || 'Live') : null, detail: null };
             }
             return best;
+        }
+
+        // "3 mins ago" / "2 hours ago" style readout for a live glider's last fix.
+        function relTimeAgo(iso) {
+            const t = iso ? Date.parse(iso) : NaN;
+            if (isNaN(t)) return '';
+            const diff = Math.max(0, Date.now() - t);
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+            const days = Math.floor(hrs / 24);
+            return `${days} day${days === 1 ? '' : 's'} ago`;
         }
 
         // Nearest point ON THE ACTIVE track to a screen click, returned as snapped

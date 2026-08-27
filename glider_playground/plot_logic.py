@@ -1049,7 +1049,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
     y_vals = data_dict.get(y_var, np.array([]))
     c_vals = data_dict.get(c_var) if c_var and c_var != 'black' else None
 
-    if len(x_vals) == 0:
+    if len(x_vals) == 0 or len(y_vals) != len(x_vals):
         return {"error": "No data found for selected variables."}
 
     stats = {
