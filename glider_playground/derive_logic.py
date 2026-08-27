@@ -130,7 +130,13 @@ def _compute_time_qc(filepath, log, names, existing, time_var):
 
     valid = ~nat_mask
     min_time = np.datetime64(pd.Timestamp("1990-01-01"))
-    now_time = np.datetime64(pd.Timestamp.now())
+    # TIME is naive UTC (see module docstring) — comparing it against
+    # pd.Timestamp.now() (naive LOCAL walltime) silently shifted the "is this
+    # timestamp in the future" cutoff by the server's UTC offset, so on a
+    # machine behind UTC the most recent hours of genuinely-valid live data
+    # could get flagged QC=4 ("bad") and then hard-excluded by the default
+    # QC-flag filter (which excludes 4) everywhere TIME is plotted.
+    now_time = np.datetime64(pd.Timestamp.utcnow().tz_localize(None))
     t_vals = t.to_numpy()
     with np.errstate(invalid="ignore"):
         out_of_range = valid & ((t_vals < min_time) | (t_vals > now_time))

@@ -1045,6 +1045,29 @@
                 }
             }
 
+            // A numeric ms range on a 'date' axis is stored by Plotly internally as
+            // an ms number too (this is how zoom-restore/sync already relied on it
+            // working) — EXCEPT it turns out Plotly's date axis re-derives its stored
+            // range from a tick-formatted (browser-LOCAL) string representation of
+            // the number it's given, not the number itself, so on a non-UTC browser
+            // the axis Plotly actually draws ends up shifted by the local offset
+            // from what we asked for — while the trace's own x values (fed as naive-
+            // UTC STRINGS, never numbers) are placed correctly. Result: a short,
+            // filtered selection (single cycle/profile) renders with its real points
+            // sitting up to an hour outside the axis window Plotly settles on —
+            // "off the edge" / "cut off at one end". Sidestep it by giving the axis
+            // the SAME naive-UTC string format the trace itself uses, never a number,
+            // so there's no ms<->string round trip for Plotly to get local-time about.
+            if (isXDate && Array.isArray(layout.xaxis.range)) {
+                const pad2 = n => String(n).padStart(2, '0');
+                const toNaiveStr = (v) => {
+                    if (typeof v !== 'number') return v;
+                    const d = new Date(v);
+                    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
+                };
+                layout.xaxis.range = layout.xaxis.range.map(toNaiveStr);
+            }
+
             if (yRange) {
                 layout.yaxis.range = isInverted ? [yRange[1], yRange[0]] : yRange;
                 layout.yaxis.autorange = false;
@@ -1374,6 +1397,21 @@
                     const t = yMin; yMin = yMax; yMax = t;
                 }
 
+                // Resolve to unambiguous epoch-ms HERE, via this panel's own live axis
+                // (axisXToMs -> r2l), before xMin/xMax leave this scope. Left as Plotly's
+                // raw emitted date strings, they carry exactly the ambiguity axisXToMs
+                // exists to dodge (see its comment above) — leaking them out via
+                // postMessage made every downstream consumer (the parent's zoom state,
+                // the cycle/profile navigator's zoom-constrained stepping, other synced
+                // panels re-parsing them with THEIR OWN axis) independently re-guess the
+                // same timezone question with no live axis of their own to resolve it
+                // correctly, which is how this exact class of bug — already fixed for
+                // this panel's own in-panel zoom-fetch — resurfaced one level out.
+                if (plotData.is_x_dt) {
+                    xMin = axisXToMs(xMin);
+                    xMax = axisXToMs(xMax);
+                }
+
                 _currentZoom = { xMin, xMax, yMin, yMax };
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
@@ -1479,7 +1517,22 @@
                 _suppressRelayout = false;
                 _resettingZoom = false;
             }
-            window.parent.postMessage({ type: 'plotZoomed', limits: {} }, '*');
+            // A profile/cycle filter narrows what "reset to full" means for THIS
+            // panel to just that selection's own extent (_globalExtent, taken from
+            // this filtered load) — not the whole file. Reporting the reset as an
+            // EMPTY zoom told the parent "no filter is active, fit every synced
+            // panel to the union of everyone's full unfiltered extent"
+            // (applyUnionRange) — correct for a genuinely unfiltered view, but for
+            // a filtered one it fires anyway (any 2+-panel synced view) and drives
+            // every panel, including this one, back out to the whole file a beat
+            // after the correct cycle-scoped reset renders — "double-click reset
+            // zooms out to the whole file/profile instead of staying on the cycle".
+            // Reporting the reset as a real zoom to this panel's own (already
+            // filtered) extent makes the parent sync every panel to THIS selection
+            // instead of re-deriving the whole-file union.
+            const hasSelection = urlParams.has('cycle_num') || urlParams.has('profile_num');
+            const limits = (hasSelection && _globalExtent) ? { ..._globalExtent } : {};
+            window.parent.postMessage({ type: 'plotZoomed', limits }, '*');
             renderProfileSidebar();   // zoom cleared → drop the marginal greying
         }
 

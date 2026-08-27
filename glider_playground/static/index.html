@@ -1949,16 +1949,21 @@
             return (zb && typeof zb.yMin === 'number' && typeof zb.yMax === 'number') ? { yMin: zb.yMin, yMax: zb.yMax } : null;
         }
 
-        // When time-axis sync is on, a profile / cycle / phase / direction change
-        // should apply to every timeseries plot — not just the active one — so
-        // stepping a profile shows the same profile across all synced plots. The
+        // A profile / cycle / phase / direction change is a DATA filter (applied
+        // server-side by PROFILE_NUMBER / cycle var, see plot_logic.py), not a
+        // time-axis alignment concern — it must reach every plot panel regardless
+        // of that panel's x variable or the Sync-time-axes toggle. Previously this
+        // only propagated to timeseries panels when alignTimeAxes was on, so a
+        // non-time panel (e.g. a T-S plot) in a multiview kept showing unfiltered
+        // data, and turning Sync off silently stopped stepping working at all. The
         // active plot is already re-rendered by updatePlot(); here we push the same
         // cycle/profile params onto the rest (each keeps its own x/y/c variables).
         function propagateCycleProfileToSynced() {
-            if (_suspendToolbar || !alignTimeAxes) return;
+            if (_suspendToolbar) return;
             const cp = (CycleProfile.getParams && CycleProfile.getParams()) || {};
             const active = activePlotPanel();
-            timeseriesPanels().forEach(p => {
+            Object.values(panels).forEach(p => {
+                if (p.type !== 'plot') return;
                 if (active && p.id === active.id) return;
                 p.state.cycleProfile = { ...cp };
                 p.state.zoomBounds = null;   // a profile change supersedes any prior zoom

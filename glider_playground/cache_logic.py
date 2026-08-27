@@ -108,7 +108,11 @@ DATA_DIR = _resolve_data_dir()
 #      clock reset/backward jump was silently sending np.gradient's velocity
 #      computation to NaN/inf via a near-zero post-sort time delta, sweeping
 #      a large stretch of genuine dives into one long propelled/parking blob
-CACHE_VERSION = "22"
+# v23: derived TIME QC's "is this timestamp in the future" cutoff now uses
+#      UTC now() instead of naive LOCAL now() - TIME is naive UTC, so on a
+#      server whose local timezone is behind UTC, live data from the last
+#      few hours could be wrongly flagged QC=4 (bad) and hard-excluded
+CACHE_VERSION = "23"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

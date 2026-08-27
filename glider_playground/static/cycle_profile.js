@@ -161,12 +161,12 @@ const CycleProfile = (() => {
         if (cycleNum === null || !_cycleList.length) return _profileList;
         const cyc = _cycleList.find(c => c.number === cycleNum);
         if (!cyc || !cyc.time_min || !cyc.time_max) return _profileList;
-        const cMin = new Date(cyc.time_min).getTime();
-        const cMax = new Date(cyc.time_max).getTime();
+        const cMin = _parseUTC(cyc.time_min);
+        const cMax = _parseUTC(cyc.time_max);
         const filtered = _profileList.filter(p => {
             if (!p.time_min || !p.time_max) return true;
-            return new Date(p.time_max).getTime() >= cMin &&
-                   new Date(p.time_min).getTime() <= cMax;
+            return _parseUTC(p.time_max) >= cMin &&
+                   _parseUTC(p.time_min) <= cMax;
         });
         return filtered.length ? filtered : _profileList;
     }
@@ -176,18 +176,18 @@ const CycleProfile = (() => {
         if (profileNum === null || !_cycleList.length) return null;
         const prof = _profileList.find(p => p.number === profileNum);
         if (!prof || !prof.time_min || !prof.time_max) return null;
-        const pMid = (new Date(prof.time_min).getTime() + new Date(prof.time_max).getTime()) / 2;
+        const pMid = (_parseUTC(prof.time_min) + _parseUTC(prof.time_max)) / 2;
         const containing = _cycleList.filter(c => {
             if (!c.time_min || !c.time_max) return false;
-            return new Date(c.time_min).getTime() <= pMid &&
-                   pMid <= new Date(c.time_max).getTime();
+            return _parseUTC(c.time_min) <= pMid &&
+                   pMid <= _parseUTC(c.time_max);
         });
         if (containing.length) return containing[0].number;
         // Fallback: nearest cycle by time distance
         let best = null, bestDist = Infinity;
         for (const c of _cycleList) {
             if (!c.time_min || !c.time_max) continue;
-            const cMid = (new Date(c.time_min).getTime() + new Date(c.time_max).getTime()) / 2;
+            const cMid = (_parseUTC(c.time_min) + _parseUTC(c.time_max)) / 2;
             const dist = Math.abs(cMid - pMid);
             if (dist < bestDist) { bestDist = dist; best = c.number; }
         }
@@ -219,6 +219,20 @@ const CycleProfile = (() => {
     function _hideElement(el) { if (el) el.style.display = 'none'; }
     function _showElement(el, display) { if (el) el.style.display = display || 'flex'; }
     function _fire() { if (_onChange) _onChange(); }
+
+    // time_min/time_max (from /api/profiles, /api/cycles) and zoom bounds are
+    // naive-UTC timestamps with no timezone designator (e.g. '2026-04-25T10:08:25'
+    // or '2026-04-25 10:08:25'). `new Date(str)` on a string like that is parsed
+    // as BROWSER-LOCAL time per the JS spec (only date-only strings default to
+    // UTC), so anywhere the browser isn't UTC this silently shifted every
+    // profile/cycle time comparison by the local offset (e.g. BST = +1h) — the
+    // same class of bug main_plot.html works around for Plotly's axis strings.
+    // Force UTC by normalizing to 'T' and appending 'Z' before parsing.
+    function _parseUTC(v) {
+        if (typeof v === 'number') return v;
+        if (!v) return NaN;
+        return new Date(String(v).replace(' ', 'T') + 'Z').getTime();
+    }
 
     // ── Profile ───────────────────────────────────────────────────────────────
 
@@ -281,15 +295,20 @@ const CycleProfile = (() => {
 
         let candidates = pool;
 
-        // Further zoom-constrain when no profile is selected
+        // Further zoom-constrain when no profile is selected. _zoomBounds comes
+        // from the plot iframe's own Plotly relayout event, NOT server data — its
+        // date strings follow Plotly's own (occasionally browser-local) format,
+        // so treating them as naive-UTC via _parseUTC would misapply the fix
+        // meant for time_min/time_max. Bare Date parsing matches what main_plot's
+        // own zoom-echo handling expects here.
         if (_profileNum === null && _zoomBounds && _isXDateTime &&
                 pool.some(p => p.time_min && p.time_max)) {
             const zMin = new Date(_zoomBounds.xMin).getTime();
             const zMax = new Date(_zoomBounds.xMax).getTime();
             const inZoom = pool.filter(p => {
                 if (!p.time_min || !p.time_max) return false;
-                return new Date(p.time_max).getTime() >= zMin &&
-                       new Date(p.time_min).getTime() <= zMax;
+                return _parseUTC(p.time_max) >= zMin &&
+                       _parseUTC(p.time_min) <= zMax;
             });
             if (inZoom.length) candidates = inZoom;
         }
@@ -395,12 +414,12 @@ const CycleProfile = (() => {
 
         if (_cycleNum === null && _zoomBounds && _isXDateTime &&
                 _cycleList.some(c => c.time_min && c.time_max)) {
-            const zMin = new Date(_zoomBounds.xMin).getTime();
-            const zMax = new Date(_zoomBounds.xMax).getTime();
+            const zMin = _parseUTC(_zoomBounds.xMin);
+            const zMax = _parseUTC(_zoomBounds.xMax);
             const inZoom = _cycleList.filter(c => {
                 if (!c.time_min || !c.time_max) return false;
-                return new Date(c.time_max).getTime() >= zMin &&
-                       new Date(c.time_min).getTime() <= zMax;
+                return _parseUTC(c.time_max) >= zMin &&
+                       _parseUTC(c.time_min) <= zMax;
             });
             if (inZoom.length) candidates = inZoom;
         }
@@ -410,6 +429,10 @@ const CycleProfile = (() => {
         if (idx === -1) idx = delta > 0 ? -1 : nums.length;
         idx = Math.max(0, Math.min(nums.length - 1, idx + delta));
         _cycleNum = nums[idx];
+        // A profile selected within the OLD cycle (e.g. profile 10 of cycle 22)
+        // doesn't necessarily belong to the new one — clear it so stepping cycles
+        // doesn't silently keep showing a single stale profile from before.
+        if (_profileNum !== null) { _profileNum = null; _syncProfileUI(); }
         _syncCycleUI();
         _fire();
     }

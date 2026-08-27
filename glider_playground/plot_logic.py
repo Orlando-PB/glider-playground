@@ -624,7 +624,10 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
 
         if t_dt is not None and len(t_dt) == len(new_dict[present[0]]):
             min_time = pd.Timestamp("1990-01-01")
-            now_time = pd.Timestamp.now()
+            # t_vals is naive UTC — pd.Timestamp.now() is naive LOCAL walltime,
+            # so comparing the two shifted this "future" cutoff by the server's
+            # UTC offset (see derive_logic._compute_time_qc for the same fix).
+            now_time = pd.Timestamp.utcnow().tz_localize(None)
             nat_mask = np.asarray(pd.isna(t_dt))
             range_ok = np.asarray((t_dt >= min_time) & (t_dt <= now_time))
             valid_time = ~nat_mask & range_ok
