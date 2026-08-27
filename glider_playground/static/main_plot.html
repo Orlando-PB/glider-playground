@@ -293,9 +293,9 @@
         function cbarActive() { return _multiview && !!cbarStops(); }
 
         // Index of the coloured scatter trace (the one the colour slider/auto-colour
-        // restyle). Highlight-QC draws a grey backdrop first, colour on top (idx 1).
+        // restyle targets). Always the first trace — QC filtering happens server-side
+        // now, so there's no separate grey/failed-QC backdrop trace to skip.
         function colouredTraceIdx() {
-            if (plotData && plotData.qc_applied && urlParams.get('highlight_qc') === 'true') return 1;
             return 0;
         }
 
@@ -754,7 +754,7 @@
         // descriptor), then each array's raw LE bytes in declared order. The arrays
         // become TypedArrays — Plotly's scattergl consumes those directly and treats
         // NaN as a gap, exactly as it did the old JSON nulls. Absent optional arrays
-        // (c with no colour var, qc_pass/in_selection outside highlight modes) default
+        // (c with no colour var, in_selection outside highlight-profile mode) default
         // to [] so the rest of the code sees the same shape as the JSON path.
         function parsePlotBinary(buf) {
             const dv = new DataView(buf);
@@ -762,7 +762,7 @@
             const meta = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, 4, headerLen)));
             const layout = meta.arrays || {};
             delete meta.arrays;
-            meta.x = []; meta.y = []; meta.c = []; meta.qc_pass = []; meta.in_selection = [];
+            meta.x = []; meta.y = []; meta.c = []; meta.in_selection = [];
             let off = 4 + headerLen;
             for (const name of Object.keys(layout)) {
                 const { dtype, len } = layout[name];
@@ -906,9 +906,9 @@
                     // Surface the request's data-affecting params so a "too few points"
                     // plot shows WHY (a stale profile/cycle/QC filter, a zoom param, etc.)
                     // right in the log rather than needing the Network tab.
-                    const FILTER_KEYS = ['x_var','y_var','c_var','apply_qc','qc_flags','filter_time',
+                    const FILTER_KEYS = ['x_var','y_var','c_var','qc_flags',
                         'profile_num','cycle_num','cycle_var','sci_phases','direction_filter',
-                        'ctd_interpolate','ctd_qc','zXmin','zXmax','zYmin','zYmax','max_points'];
+                        'zXmin','zXmax','zYmin','zYmax','max_points'];
                     const reqDetail = 'req: ' + FILTER_KEYS
                         .filter(k => apiParams.has(k) && apiParams.get(k) !== '' && apiParams.get(k) !== 'false')
                         .map(k => `${k}=${apiParams.get(k)}`).join('  ');
@@ -1200,70 +1200,40 @@
 
             let traces = densityContourTraces.slice();
 
-            if (data.qc_applied && urlParams.get('highlight_qc') === 'true') {
-                const gx=[], gy=[], gc=[], bx=[], by=[], bc=[];
-                for(let i=0; i<data.x.length; i++) {
-                    if(data.qc_pass[i]) {
-                        gx.push(data.x[i]); gy.push(data.y[i]); 
-                        gc.push(data.c ? data.c[i] : null);
-                    } else {
-                        bx.push(data.x[i]); by.push(data.y[i]);
-                        bc.push(data.c ? data.c[i] : null);
-                    }
-                }
-                
-                traces.push({
-                    x: bx, y: by, mode: 'markers', type: 'scattergl',
-                    marker: { size: plotConfig.defaultMarkerSize, color: '#9ca3af', opacity: 0.6 },
-                    hoverinfo: 'none', customdata: bc, name: 'Failed QC'
+            let px = data.x, py = data.y, pc = (data.c && data.c.length) ? data.c : null;
+            // Reorder so the chosen extreme draws last (on top) — keeps outliers
+            // (e.g. backscatter spikes) from hiding behind other points. Markers-
+            // only, so reordering doesn't affect WebGL render speed, and we leave
+            // data.x/data.c untouched for the running-mean trace below.
+            if (pc && orderActive) {
+                const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
+                // Plain Array, not pc.map(): pc may be a Float32Array (binary path),
+                // and a typed-array `order` would coerce the date-string x values to
+                // NaN in the maps below → blank plot.
+                const order = Array.from({ length: pc.length }, (_, i) => i).sort((a, b) => {
+                    const va = pc[a], vb = pc[b];
+                    const na = va === null || va === undefined, nb = vb === null || vb === undefined;
+                    if (na && nb) return 0;
+                    if (na) return -1;   // nulls to the bottom
+                    if (nb) return 1;
+                    return sign * (va - vb);
                 });
-                
-                traces.push({
-                    x: gx, y: gy, mode: 'markers', type: 'scattergl',
-                    marker: {
-                        size: plotConfig.defaultMarkerSize,
-                        color: gc.length && data.c ? gc : plotConfig.defaultColour, opacity: MARKER_OPACITY,
-                        colorscale: gc.length && data.c ? effectiveColorscale : undefined,
-                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
-                    },
-                    hoverinfo: 'none', customdata: gc, name: 'Passed QC'
-                });
-            } else {
-                let px = data.x, py = data.y, pc = (data.c && data.c.length) ? data.c : null;
-                // Reorder so the chosen extreme draws last (on top) — keeps outliers
-                // (e.g. backscatter spikes) from hiding behind other points. Markers-
-                // only, so reordering doesn't affect WebGL render speed, and we leave
-                // data.x/data.c untouched for the running-mean trace below.
-                if (pc && orderActive) {
-                    const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
-                    // Plain Array, not pc.map(): pc may be a Float32Array (binary path),
-                    // and a typed-array `order` would coerce the date-string x values to
-                    // NaN in the maps below → blank plot.
-                    const order = Array.from({ length: pc.length }, (_, i) => i).sort((a, b) => {
-                        const va = pc[a], vb = pc[b];
-                        const na = va === null || va === undefined, nb = vb === null || vb === undefined;
-                        if (na && nb) return 0;
-                        if (na) return -1;   // nulls to the bottom
-                        if (nb) return 1;
-                        return sign * (va - vb);
-                    });
-                    px = order.map(i => data.x[i]);
-                    py = order.map(i => data.y[i]);
-                    pc = order.map(i => data.c[i]);
-                }
-                traces.push({
-                    x: px, y: py, mode: 'markers', type: 'scattergl',
-                    marker: {
-                        size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
-                        color: pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour),
-                        opacity: MARKER_OPACITY,
-                        colorscale: pc ? effectiveColorscale : undefined,
-                        cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
-                    },
-                    hoverinfo: 'none', customdata: pc || []
-                });
+                px = order.map(i => data.x[i]);
+                py = order.map(i => data.y[i]);
+                pc = order.map(i => data.c[i]);
             }
-            
+            traces.push({
+                x: px, y: py, mode: 'markers', type: 'scattergl',
+                marker: {
+                    size: orderActive ? plotConfig.defaultMarkerSize / 2 : plotConfig.defaultMarkerSize,
+                    color: pc ? pc : (cmapName === 'black' ? 'black' : plotConfig.defaultColour),
+                    opacity: MARKER_OPACITY,
+                    colorscale: pc ? effectiveColorscale : undefined,
+                    cmin: data.c_min, cmax: data.c_max, showscale: false, cauto: false
+                },
+                hoverinfo: 'none', customdata: pc || []
+            });
+
             return traces;
         }
 
@@ -1316,7 +1286,6 @@
                     type: 'plotLoaded',
                     globalLimits: { xMin, xMax, yMin, yMax, cMin: plotData.c_min, cMax: plotData.c_max },
                     hasC: plotData.c && plotData.c.length > 0,
-                    qc_applied: plotData.qc_applied,
                     stats: plotData.stats
                 }, '*');
             });
@@ -1541,12 +1510,11 @@
         // colour bar are restyled in place (a cheap uniform update, no data rebuild),
         // and the new range + count are returned for the parent's slider/stat. Date x
         // is compared as ISO strings (which sort lexicographically) to avoid per-point
-        // Date parsing; colour percentiles honour the QC mask like the server does.
+        // Date parsing. QC filtering already happened server-side, so every point here
+        // already passed it.
         function _autoColourInView(box) {
             const xs = plotData.x, ys = plotData.y, cs = plotData.c, n = ys.length;
             const hasC = !!(cs && cs.length);
-            const qc = (plotData.qc_applied && plotData.qc_pass && plotData.qc_pass.length === n)
-                ? plotData.qc_pass : null;
             let inX;
             if (plotData.is_x_dt) {
                 const pad = k => String(k).padStart(2, '0');
@@ -1564,7 +1532,7 @@
                 cnt++;
                 if (hasC) {
                     const c = cs[i];
-                    if (c !== null && c === c && (!qc || qc[i])) vals.push(c);   // c===c rejects NaN
+                    if (c !== null && c === c) vals.push(c);   // c===c rejects NaN
                 }
             }
             let cMin = plotData.c_min, cMax = plotData.c_max;

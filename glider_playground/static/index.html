@@ -204,6 +204,12 @@
             border: 1px solid var(--border-strong);
             box-shadow: var(--shadow-md);
         }
+        #customTooltip.tip-table { max-width: 360px; }
+        #customTooltip .tip-header { font-weight: 600; margin-bottom: 6px; }
+        #customTooltip .tip-rows { display: grid; grid-template-columns: auto auto 1fr; gap: 3px 8px; align-items: baseline; }
+        #customTooltip .tip-rows .tip-id { font-weight: 700; text-align: right; opacity: 0.75; }
+        #customTooltip .tip-rows .tip-label { font-weight: 600; white-space: nowrap; }
+        #customTooltip .tip-rows .tip-desc { opacity: 0.9; }
 
         /* ---------- Toggle buttons ---------- */
         .toggle-btn {
@@ -849,6 +855,7 @@
         .var-row .var-units { font-size: 9.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
         .var-row .var-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
         .var-row .var-derived { font-size: 9px; font-weight: 600; color: #fff; background: var(--googleRed, #ea4335); padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+        .var-row .var-time-warning { font-size: 9px; font-weight: 600; color: #1f2937; background: #f9ab00; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
         .var-row .var-desc { font-size: 10px; color: var(--text-muted); line-height: 1.35; overflow: hidden; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .var-row.is-qc .var-name { color: var(--text-muted); font-style: italic; }
 
@@ -1388,28 +1395,13 @@
                 <div class="toolbar-group adv-only">
                     <span class="group-label">
                         QC
-                        <span class="info-dot" data-tip="Apply QC uses the file's _QC variables to keep only trusted samples."><span class="material-symbols-outlined">info</span></span>
+                        <span id="qcInfoDot" class="info-dot" data-tip="QC flags (Argo convention). Click a chip to show only that flag; click again to restore all. PRES/TEMP/CNDC gaps up to 5 minutes are always interpolated (flag 8); exact 0.0 fill values are always flagged missing (flag 9); NaT/out-of-order timestamps are always dropped, and other out-of-range TIME values are flagged bad (flag 4)."><span class="material-symbols-outlined">info</span></span>
                     </span>
-                    <button id="applyQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Keep only samples whose _QC flag is in the allowed list">Apply QC</button>
-                    <button id="highlightQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" style="display: none;" title="Show bad-QC samples in red instead of hiding them">Highlight</button>
-                    <div id="qcFlagsContainer" class="flex items-center gap-0.5" style="display: none;">
+                    <div id="qcFlagsContainer" class="flex items-center gap-0.5">
                         <!-- QC flag chips 0-9 built by buildQcChips() -->
                         <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
                     </div>
-                </div>
-
-                <!-- Advanced only: Filters (Filter Time always; CTD buttons are JS-conditional) -->
-                <div class="group-divider adv-only"></div>
-                <div class="toolbar-group adv-only" id="filtersGroup">
-                    <span class="group-label">
-                        Filters
-                        <span class="info-dot" data-tip="Filter Time removes NaT and out-of-range timestamps. Interpolate fills all N_MEASUREMENTS with PRES, TEMP and CNDC (filled points get QC=5). Clean flags 0.0 fill values, auto-scales CNDC S/m→mS/cm, and cross-flags out-of-range conductivity [20–50 mS/cm] on the CTD triad."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <button id="filterTimeBtn" class="toggle-btn active px-2.5 py-1.5 rounded" title="Drop NaN, pre-deployment, and future dates">Filter Time</button>
-                    <span id="ctdContainer" class="flex items-center gap-1.5" style="display: none;">
-                        <button id="ctdInterpBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Fill NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors. Interpolated points are QC-flagged 5.">Interpolate</button>
-                        <button id="ctdQcBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Flag 0.0 fill values (QC=9), auto-scale CNDC S/m → mS/cm, and cross-flag the CTD triad where CNDC falls outside [20–50 mS/cm] (QC=4).">Clean</button>
-                    </span>
+                    <button id="qcDefaultBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Reset to the default flags (0,1,2,5,8)">Default</button>
                 </div>
 
                 <!-- Advanced only: Phases (also JS-conditional) -->
@@ -1417,7 +1409,7 @@
                 <div id="phaseContainer" class="toolbar-group adv-only" style="display: none;">
                     <span class="group-label">
                         Phases
-                        <span class="info-dot" data-tip="Filter by SCI_PHASE value. All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
+                        <span id="phaseInfoDot" class="info-dot" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
                     <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
@@ -1612,9 +1604,6 @@
         const profileSidebarBtn = document.getElementById('profileSidebarBtn');
         const drawOrderSelect = document.getElementById('drawOrder');
         const qualitySelect = document.getElementById('quality');
-        const applyQcBtn = document.getElementById('applyQcBtn');
-        const highlightQcBtn = document.getElementById('highlightQcBtn');
-        const filterTimeBtn = document.getElementById('filterTimeBtn');
         
         const qcFlagsContainer = document.getElementById('qcFlagsContainer');
         const qcFlagsInput = document.getElementById('qcFlags');
@@ -1627,6 +1616,35 @@
             'No QC', 'Good', 'Probably Good', 'Probably Bad', 'Bad',
             'Changed', 'Not Used', 'Not Used', 'Interpolated', 'Missing',
         ];
+        const QC_DEFAULT_FLAGS = '0,1,2,5,8';
+
+        // Rows shown in the QC info-dot's hover tooltip — one line per flag,
+        // instead of a wall of paragraph text. Flags 6/7 (unused) and 9
+        // (missing — already excluded/nulled before it ever reaches a plot)
+        // aren't shown here since they never appear as a live chip choice a
+        // user needs explained.
+        const QC_TIP_ROWS = [
+            [0, 'No QC', 'No quality control has been performed'],
+            [1, 'Good', 'Passed all QC checks'],
+            [2, 'Probably good', 'Passed most QC checks'],
+            [3, 'Probably bad', 'Failed some QC checks'],
+            [4, 'Bad', 'Failed QC checks, or (for TIME) out-of-range / non-monotonic'],
+            [5, 'Changed', 'Value has been adjusted/corrected'],
+            [8, 'Interpolated', 'Value was filled in across a short (≤5 min) gap'],
+        ];
+        document.getElementById('qcInfoDot')?.setAttribute('data-tip-rows', JSON.stringify(QC_TIP_ROWS));
+
+        const PHASE_TIP_ROWS = [
+            [0, 'Unknown', "When the platform phases described below don't fit the platform behavior, or the behavior is unknown"],
+            [1, 'Ascent', 'The platform is commanded to move upward — climbing'],
+            [2, 'Descent', 'The platform is commanded to move downward — diving'],
+            [3, 'Surfacing', 'Performing a surfacing maneuver, or at the surface for communication/recovery/safety'],
+            [4, 'Parking', 'Maintained at a parking or hover depth, not moving relative to the water'],
+            [5, 'Inflection', 'Below the surface and changing from ascent to descent or descent to ascent'],
+            [6, 'Propelled', 'Moving laterally, parallel to the surface, using propellers/thrusters'],
+            [7, 'Transition', 'Changing from one defined phase to another'],
+        ];
+        document.getElementById('phaseInfoDot')?.setAttribute('data-tip-rows', JSON.stringify(PHASE_TIP_ROWS));
 
         function buildQcChips() {
             if (qcFlagsContainer.dataset.built) return;
@@ -1678,9 +1696,6 @@
             resetPlotState(false);
             updatePlot();
         }
-        const ctdContainer = document.getElementById('ctdContainer');
-        const ctdInterpBtn = document.getElementById('ctdInterpBtn');
-        const ctdQcBtn = document.getElementById('ctdQcBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         
         const datasetSelect = document.getElementById('dataset');
@@ -2120,12 +2135,7 @@
                 x: xSelect.value || '', y: ySelect.value || '', c: cVarSelect.value || '',
                 cmap: cmapInput.value || 'thermal',
                 invertY: invertYBtn.classList.contains('active'),
-                applyQc: applyQcBtn.classList.contains('active'),
-                highlightQc: highlightQcBtn.classList.contains('active'),
                 qcFlags: qcFlagsInput.value,
-                filterTime: filterTimeBtn.classList.contains('active'),
-                ctdInterp: ctdInterpBtn.classList.contains('active'),
-                ctdQc: ctdQcBtn.classList.contains('active'),
                 profileSidebar: profileSidebarBtn.classList.contains('active'),
                 drawOrder: drawOrderSelect.value || 'normal',
                 quality: qualitySelect.value || '',
@@ -2149,14 +2159,7 @@
                 if (s.c !== undefined) cVarSelect.value = s.c;
                 if (s.cmap) { cmapInput.value = s.cmap; if (typeof updateCmapGradient === 'function') updateCmapGradient(s.cmap); }
                 updateToggleBtn(invertYBtn, !!s.invertY);
-                updateToggleBtn(applyQcBtn, !!s.applyQc);
-                updateToggleBtn(highlightQcBtn, !!s.highlightQc);
                 if (s.qcFlags !== undefined) { qcFlagsInput.value = s.qcFlags; syncQcChips(); }
-                qcFlagsContainer.style.display = s.applyQc ? 'flex' : 'none';
-                highlightQcBtn.style.display = s.applyQc ? 'flex' : 'none';
-                updateToggleBtn(filterTimeBtn, !!s.filterTime);
-                updateToggleBtn(ctdInterpBtn, !!s.ctdInterp);
-                updateToggleBtn(ctdQcBtn, !!s.ctdQc);
                 updateToggleBtn(profileSidebarBtn, !!s.profileSidebar);
                 drawOrderSelect.value = s.drawOrder || 'normal';
                 qualitySelect.value = s.quality || '';
@@ -2196,9 +2199,7 @@
                 id: s.datasetId, x_var: s.x, y_var: s.y,
                 c_var: (s.c || ''),
                 cmap: s.cmap, invert_y: !!s.invertY,
-                apply_qc: !!s.applyQc, qc_flags: s.qcFlags || '',
-                highlight_qc: !!s.highlightQc, filter_time: !!s.filterTime,
-                ctd_interpolate: !!s.ctdInterp, ctd_qc: !!s.ctdQc,
+                qc_flags: s.qcFlags || '',
                 profile_sidebar: !!s.profileSidebar,
                 draw_order: s.drawOrder || 'normal',
             });
@@ -3627,21 +3628,9 @@
         }
 
         // Resolve a preset into a full panel state object (variables resolved
-        // against the current file), inheriting QC/filter settings from the
-        // current toolbar. Mirrors applyPreset() but returns state instead of
-        // mutating the widgets.
-        // The CTD Clean / Interpolate defaults for a fresh preset plot. A step is
-        // on whenever the file actually supports it (the recommended flags), so
-        // dashboard tiles always get clean/interp — the only time it's off is when
-        // there's no relevant CTD data. QC presence is deliberately ignored here.
-        function recommendedCtd() {
-            const rec = fileById(datasetSelect.value);
-            return {
-                interp: !!(rec && rec.ctd_interp_recommended),
-                qc:     !!(rec && rec.ctd_clean_recommended),
-            };
-        }
-
+        // against the current file), inheriting QC settings from the current
+        // toolbar. Mirrors applyPreset() but returns state instead of mutating
+        // the widgets.
         function stateFromPreset(presetKey) {
             const p = OceanPresets[presetKey];
             const s = captureToolbarState();
@@ -3657,11 +3646,6 @@
             s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
             s.drawOrder = p.drawOrder || 'normal';
             s.zoomBounds = null; s.cMin = null; s.cMax = null;
-            // A fresh preset plot (dashboard tile, new panel, Jelly) should honour
-            // the dataset's recommended CTD processing rather than inheriting
-            // whatever the toolbar happens to show for the active panel.
-            const ctd = recommendedCtd();
-            s.ctdInterp = ctd.interp; s.ctdQc = ctd.qc;
             // Don't inherit the active plot's colour-trim — it belongs to a
             // different variable. Start at full range (filled on first load).
             s.cTrimMin = ''; s.cTrimMax = '';
@@ -5010,12 +4994,17 @@
                     row.className = 'var-row' + (isQc ? ' is-qc' : '');
                     const units = (v.units || '').trim();
                     const desc = (v.description || '').trim();
+                    const tw = v.time_warning;
+                    const twTip = tw
+                        ? `${tw.dropped} of ${tw.total} samples are always dropped from every plot: ${tw.nat} NaT, ${tw.non_monotonic} non-monotonic (time running backwards)`
+                        : '';
                     row.innerHTML = `
                         <div class="var-head">
                             <span class="var-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
                             <div class="var-tags">
                                 ${units && units.toLowerCase() !== 'no units' ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
                                 ${v.derived ? `<span class="var-derived" title="Calculated by Glider Playground — not present in the original file">derived</span>` : ''}
+                                ${tw ? `<span class="var-time-warning" title="${escapeHtml(twTip)}">${tw.dropped} dropped</span>` : ''}
                             </div>
                         </div>
                         ${desc && desc.toLowerCase() !== 'no description available' ? `<div class="var-desc">${escapeHtml(desc)}</div>` : ''}
@@ -5137,7 +5126,6 @@
             }
 
             const hasAnyQc = data.variables.some(v => v.name.endsWith('_QC'));
-            const hasAnyCtd = ['PRES', 'TEMP', 'CNDC'].some(n => data.variables.some(v => v.name === n || v.name === n + '_ADJUSTED'));
 
             variableCache = data.variables.sort((a, b) => {
                 const getBase = name => name.endsWith('_QC') ? name.slice(0, -3) : name;
@@ -5145,60 +5133,8 @@
                 return baseA === baseB ? a.name.length - b.name.length : baseA.localeCompare(baseB);
             });
 
-            if (hasAnyCtd) {
-                const activeRec = fileById(datasetSelect.value);
-                const interpUseful = !!(activeRec && activeRec.ctd_interp_recommended);
-                const cleanUseful  = !!(activeRec && activeRec.ctd_clean_recommended);
-
-                ctdInterpBtn.style.display = interpUseful ? '' : 'none';
-                ctdQcBtn.style.display     = cleanUseful  ? '' : 'none';
-
-                // Hide the CTD buttons if neither does anything for this file.
-                const anyCtdUseful = interpUseful || cleanUseful;
-                ctdContainer.style.display = anyCtdUseful ? 'flex' : 'none';
-
-                // First time we activate this file, apply the file's recommended
-                // CTD defaults — the SAME rule the dashboard/preset path uses
-                // (recommendedCtd), so a file always lands on a consistent default
-                // whichever view loads it. Previously this also required `!hasAnyQc`,
-                // which left Interpolate/Clean OFF for QC-bearing files — so swapping
-                // to such a file rendered its CTD/derived vars (e.g. DENSITY)
-                // un-interpolated and sparse (the "1-point after swap" bug). QC
-                // presence is intentionally ignored here, matching recommendedCtd().
-                // Re-selecting the same file doesn't override the user's manual choice.
-                if (activeRec && activeRec.id !== _ctdDefaultsAppliedFor) {
-                    _ctdDefaultsAppliedFor = activeRec.id;
-                    updateToggleBtn(ctdInterpBtn, interpUseful);
-                    updateToggleBtn(ctdQcBtn, cleanUseful);
-                }
-            } else {
-                ctdContainer.style.display = 'none';
-                updateToggleBtn(ctdInterpBtn, false);
-                updateToggleBtn(ctdQcBtn, false);
-            }
-            
-            if (!hasAnyQc) {
-                updateToggleBtn(applyQcBtn, false);
-                applyQcBtn.disabled = true;
-                applyQcBtn.classList.add('opacity-40', 'cursor-not-allowed');
-                qcFlagsContainer.style.display = 'none';
-
-                updateToggleBtn(highlightQcBtn, false);
-                highlightQcBtn.style.display = 'none';
-
-                updateToggleBtn(filterTimeBtn, true);
-            } else {
-                applyQcBtn.disabled = false;
-                applyQcBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-
-                updateToggleBtn(applyQcBtn, true);
-                updateToggleBtn(filterTimeBtn, false);
-                updateToggleBtn(highlightQcBtn, false);
-
-                buildQcChips();
-                qcFlagsContainer.style.display = 'flex';
-                highlightQcBtn.style.display = 'flex';
-            }
+            buildQcChips();
+            qcFlagsContainer.style.display = hasAnyQc ? 'flex' : 'none';
 
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
 
@@ -5268,24 +5204,7 @@
             });
             scheduleSaveLayout();
         });
-        filterTimeBtn.addEventListener('click', () => handleToggle(filterTimeBtn, true));
-        
-        applyQcBtn.addEventListener('click', () => {
-            applyQcBtn.classList.toggle('active');
-            const qcOn = applyQcBtn.classList.contains('active');
-            if (qcOn) buildQcChips();
-            qcFlagsContainer.style.display = qcOn ? 'flex' : 'none';
-            highlightQcBtn.style.display = qcOn ? 'flex' : 'none';
-            resetPlotState(false);
-            updatePlot();
-        });
-        
-        highlightQcBtn.addEventListener('click', () => handleToggle(highlightQcBtn, false));
-
-        ctdInterpBtn.addEventListener('click', () => handleToggle(ctdInterpBtn, true));
-        ctdQcBtn.addEventListener('click', () => handleToggle(ctdQcBtn, true));
-
-        cVarSelect.addEventListener('change', () => { 
+        cVarSelect.addEventListener('change', () => {
             checkAndUpdatePreset();
             resetPlotState(false); 
             updatePlot(); 
@@ -5307,6 +5226,13 @@
         });
         
         qcFlagsInput.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
+
+        document.getElementById('qcDefaultBtn')?.addEventListener('click', () => {
+            qcFlagsInput.value = QC_DEFAULT_FLAGS;
+            syncQcChips();
+            resetPlotState(false);
+            updatePlot();
+        });
 
         downloadBtn.addEventListener('click', () => {
             if (plotIframe && plotIframe.contentWindow) {
@@ -5396,7 +5322,6 @@
         let _lastFileSigs = {};             // id -> "mtime:size", to detect in-place content updates (live gliders)
         let pollingTimer = null;            // active when any file is processing
         let pendingActivateId = null;       // file we want to load once it's ready
-        let _ctdDefaultsAppliedFor = null;  // file id whose CTD defaults were applied
 
         function fileById(id) {
             return fileRecords.find(f => f.id === id);
@@ -6365,13 +6290,29 @@
         initPanels();
         init();
 
-        // ---- Generic hover tooltip for anything with data-tip ----
+        // ---- Generic hover tooltip for anything with data-tip (or data-tip-rows,
+        // for a one-row-per-item table instead of a paragraph — see QC/Phase info-dots) ----
         document.addEventListener('mouseover', (e) => {
-            const t = e.target.closest && e.target.closest('[data-tip]');
+            const t = e.target.closest && e.target.closest('[data-tip], [data-tip-rows]');
             if (!t) return;
-            const tip = t.getAttribute('data-tip');
-            if (!tip) return;
-            customTooltip.textContent = tip;
+            const rowsJson = t.getAttribute('data-tip-rows');
+            if (rowsJson) {
+                const rows = JSON.parse(rowsJson);
+                const header = t.getAttribute('data-tip') || '';
+                customTooltip.innerHTML =
+                    (header ? `<div class="tip-header">${escapeHtmlSafe(header)}</div>` : '') +
+                    '<div class="tip-rows">' +
+                    rows.map(([id, label, desc]) =>
+                        `<span class="tip-id">${escapeHtmlSafe(id)}</span><span class="tip-label">${escapeHtmlSafe(label)}</span><span class="tip-desc">${escapeHtmlSafe(desc)}</span>`
+                    ).join('') +
+                    '</div>';
+                customTooltip.classList.add('tip-table');
+            } else {
+                const tip = t.getAttribute('data-tip');
+                if (!tip) return;
+                customTooltip.textContent = tip;
+                customTooltip.classList.remove('tip-table');
+            }
             customTooltip.style.transform = '';
             // Place at origin first so width can be measured without affecting layout
             customTooltip.style.left = '0px';
@@ -6386,7 +6327,7 @@
             customTooltip.style.opacity = '1';
         });
         document.addEventListener('mouseout', (e) => {
-            const t = e.target.closest && e.target.closest('[data-tip]');
+            const t = e.target.closest && e.target.closest('[data-tip], [data-tip-rows]');
             if (!t) return;
             customTooltip.style.opacity = '0';
         });

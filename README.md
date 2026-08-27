@@ -121,15 +121,13 @@ If a file contains dive profiles, a **Profiles** navigator appears. Step through
 
 ## Quality Control *(Advanced)*
 
-| Toggle | What it does |
-|---|---|
-| **Apply QC** | Keeps only samples whose `_QC` flag is in the allowed list (default `0,1,2,5,8`) |
-| **Highlight** | Shows bad-QC samples in red instead of hiding them |
-| **Filter Time** | Drops NaT and out-of-range timestamps (pre-deployment / future dates) |
-| **Interpolate** | Fills NaN gaps in PRES/TEMP/CNDC by time so they align with other sensors (filled points flagged QC=5) |
-| **Clean** | Flags `0.0` fill values, auto-scales CNDC (S/m → mS/cm), and cross-flags out-of-range conductivity on the CTD triad |
+QC flags follow the Argo convention: `0` No QC, `1` Good, `2` Probably good, `3` Probably bad, `4` Bad, `5` Changed, `8` Interpolated, `9` Missing. Samples are always filtered to the allowed set (default `0,1,2,5,8`) — click a **QC** chip to show only that flag, click again to restore all.
 
-Edit the **QC flags** chips to customise which flags count as good.
+There's no separate Filter Time / Interpolate / Clean toggle — that processing always runs, and the QC chips are the only control:
+
+- PRES gaps up to 5 minutes are always interpolated (flag `8`); a longer gap is a real data gap and is left unfilled.
+- Exact `0.0` fill values in PRES/TEMP/CNDC are always flagged missing (flag `9`) and nulled.
+- NaT and out-of-order timestamps are always dropped outright (not flag-gated — they aren't meaningful data). Other out-of-range timestamps (pre-1990 / future) are flagged bad (flag `4`) and filterable like anything else.
 
 ---
 

@@ -80,7 +80,31 @@ DATA_DIR = _resolve_data_dir()
 # v15: fix profile classifier crash on all-NaN PRES inflection bins (pandas>=3);
 #      SCI_PHASE/PROFILE_NUMBER now derive on multi-sensor NaN-heavy-PRES files
 # v16: derive BBP per beta channel (BBP700 + BBP532 + ...), not just the first
-CACHE_VERSION = "16"
+# v17: new profile classifier (pelagos_py port) - per-sample run-length phase
+#      detection instead of binned/peak-based; no more platform-specific (ALR)
+#      transect-phase hack, phase 4 (parking) never emitted
+# v18: "Clean" no longer auto-scales/range-filters CNDC (removed median-based
+#      S/m->mS/cm heuristic + [20,50] mS/cm cross-flagging); the salinity/
+#      density derivation now converts CNDC units->mS/cm itself, keyed off the
+#      file's actual CNDC units string rather than a value-based guess
+# v19: Interpolate/Clean/Filter Time are no longer separate toggles - CTD
+#      gap-fill (now capped at 5 min, flag 8 not 5) and zero-fill flagging
+#      (flag 9) always run; new derived TIME QC (flag 4 bad / 9 missing) lets
+#      TIME be filtered by the QC chips; NaT/non-monotonic TIME is now an
+#      unconditional hard drop instead of a filter_time-gated one
+# v20: dataset_info now flags the TIME variable's row with a "time_warning"
+#      (dropped NaT/non-monotonic counts) when the hard TIME drop is actually
+#      removing samples for this file
+# v21: restored ALR-vs-non-ALR detection for long flat non-surface "unknown"
+#      stretches (filename-based, as before the pelagos_py port): ALR platforms
+#      still get propelled (6), everything else now gets parking (4) instead
+#      of always propelled
+# v22: profile classifier now excludes NaT/non-monotonic/duplicate TIME
+#      samples before classifying (previously only sort_values()'d them) - a
+#      clock reset/backward jump was silently sending np.gradient's velocity
+#      computation to NaN/inf via a near-zero post-sort time delta, sweeping
+#      a large stretch of genuine dives into one long propelled/parking blob
+CACHE_VERSION = "22"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -153,13 +177,12 @@ STEP_3D = "spatial_3d"
 STEP_CTD_CLEAN = "ctd_clean"
 STEP_CTD_INTERP = "ctd_interp"
 STEP_CTD_BOTH = "ctd_both"
-STEP_CTD_RECS = "ctd_recs"
 # Best-effort prewarm of the default plot payloads — deliberately NOT in ALL_STEPS
 # so "ready" never waits on it (the file is fully usable without it; a missing
 # prewarm just means the first click computes live, as before).
 STEP_PLOT_PREWARM = "plot_prewarm"
 ALL_STEPS = (STEP_PRELOAD, STEP_DERIVE, STEP_DATASET_INFO, STEP_PROFILES, STEP_SPATIAL,
-             STEP_3D, STEP_CTD_CLEAN, STEP_CTD_INTERP, STEP_CTD_BOTH, STEP_CTD_RECS)
+             STEP_3D, STEP_CTD_CLEAN, STEP_CTD_INTERP, STEP_CTD_BOTH)
 
 _lock = threading.RLock()
 _registry: dict[str, dict] = {}
@@ -198,8 +221,6 @@ def _save_payload_sidecar(rec: dict):
         "mtime": rec.get("mtime", 0),
         "cache_version": CACHE_VERSION,
         "done_steps": list(rec.get("_done_steps", [])),
-        "ctd_interp_recommended": rec.get("ctd_interp_recommended", False),
-        "ctd_clean_recommended": rec.get("ctd_clean_recommended", False),
         "last_time": rec.get("last_time"),
         "last_lat": rec.get("last_lat"),
         "last_lon": rec.get("last_lon"),
@@ -237,8 +258,6 @@ def _load_payload_sidecar(rec: dict) -> set:
         return set()
     for k, v in (body.get("payloads") or {}).items():
         rec[k] = v
-    rec["ctd_interp_recommended"] = bool(body.get("ctd_interp_recommended", False))
-    rec["ctd_clean_recommended"] = bool(body.get("ctd_clean_recommended", False))
     if body.get("last_time"): rec["last_time"] = body["last_time"]
     if body.get("last_lat") is not None: rec["last_lat"] = body["last_lat"]
     if body.get("last_lon") is not None: rec["last_lon"] = body["last_lon"]
@@ -361,8 +380,6 @@ def _public_view(rec: dict) -> dict:
         "error": rec.get("error", ""),
         "exists": Path(rec["path"]).exists(),
         "uploaded": rec.get("path", "").startswith(str(UPLOADS_DIR)),
-        "ctd_interp_recommended": rec.get("ctd_interp_recommended", False),
-        "ctd_clean_recommended": rec.get("ctd_clean_recommended", False),
         "last_time": last_time,
         "last_lat": rec.get("last_lat"),
         "last_lon": rec.get("last_lon"),
@@ -760,9 +777,8 @@ def _mark_step_done(rec: dict, step: str):
 # lands under the exact key the browser will ask for. They MUST track the
 # index.html defaults:
 #   - x/y/c come from OceanPresets + findBest (prefer the _ADJUSTED variant).
-#   - apply_qc / filter_time follow QC presence (apply_qc on, filter_time off,
-#     when the file has any *_QC var; inverted otherwise) — see loadVariables.
-#   - ctd_interpolate / ctd_qc follow the file's recommended flags (recommendedCtd).
+#   - QC flags, CTD gap-fill/clean, and the hard TIME-validity drop are always
+#     applied now — no toggles left to mirror.
 #   - cycle_var is the auto-detected cycle variable (CycleProfile / /api/cycles).
 # A mismatch is harmless: the entry just won't be hit and the request computes
 # live, exactly as before. So this can never serve wrong data — worst case it's
@@ -810,12 +826,7 @@ def _prewarm_default_plots(rec: dict):
     if not x_var or not y_var:
         return
 
-    has_any_qc = any(n.endswith("_QC") for n in var_names)
-    apply_qc = has_any_qc
-    filter_time = not has_any_qc
     qc_flags = "0,1,2,5,8"
-    ctd_interp = bool(rec.get("ctd_interp_recommended"))
-    ctd_qc = bool(rec.get("ctd_clean_recommended"))
 
     try:
         cyc = cycle_profile_logic.get_cycles(path)
@@ -847,10 +858,10 @@ def _prewarm_default_plots(rec: dict):
         try:
             result = plot_logic.get_plot_data_json(
                 path, x_var, y_var, c_var,
-                apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=False,
-                filter_time=filter_time, profile_num=None,
+                qc_flags=qc_flags,
+                profile_num=None,
                 cycle_num=None, cycle_var=cycle_var, sci_phases=None, direction_filter=None,
-                ctd_interpolate=ctd_interp, ctd_qc=ctd_qc, highlight_profile=False,
+                highlight_profile=False,
                 max_points=max_points, binary=True,
             )
         except Exception:
@@ -860,10 +871,10 @@ def _prewarm_default_plots(rec: dict):
         data = bytes(result)
         for cv in cycle_var_keys:
             params_str = plot_logic.plot_cache_params_str(
-                x_var=x_var, y_var=y_var, c_var=c_var, apply_qc=apply_qc, qc_flags=qc_flags,
-                highlight_qc=False, filter_time=filter_time, profile_num=None,
+                x_var=x_var, y_var=y_var, c_var=c_var, qc_flags=qc_flags,
+                profile_num=None,
                 cycle_num=None, cycle_var=cv, sci_phases="", direction_filter="",
-                ctd_interpolate=ctd_interp, ctd_qc=ctd_qc, highlight_profile=False,
+                highlight_profile=False,
                 max_points=max_points, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None,
                 zoom_y_min=None, zoom_y_max=None,
             )
@@ -1056,16 +1067,6 @@ def _process(file_id: str):
                 _mark_step_done(rec, step)
                 done_steps.add(step)
 
-            if not _is_done(STEP_CTD_RECS):
-                _set(rec, progress=99, stage="checking CTD recommendations")
-                try:
-                    rec["ctd_interp_recommended"] = bool(plot_logic.ctd_interp_recommended(p))
-                    rec["ctd_clean_recommended"] = bool(plot_logic.ctd_clean_recommended(p))
-                except Exception:
-                    rec["ctd_interp_recommended"] = False
-                    rec["ctd_clean_recommended"] = False
-                _mark_step_done(rec, STEP_CTD_RECS)
-                done_steps.add(STEP_CTD_RECS)
         finally:
             plot_logic._ctd_stage_cb = None
 

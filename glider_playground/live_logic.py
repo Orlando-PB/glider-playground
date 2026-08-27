@@ -284,12 +284,11 @@ def _ensure_background_scanner():
 def _maybe_auto_update(listing: list[dict]):
     """Keep the local copy in sync with the live feed (best-effort):
 
-      * auto-download every active glider we don't already have, and
-      * re-download a managed file when the server has a newer copy.
+      * auto-download every active glider we don't already have,
+      * re-download a managed file when the server has a newer copy, and
+      * delete managed files once they age out of the live window.
 
-    Gliders the user binned are skipped (suppressed). Files that age out of the
-    live window are intentionally KEPT — they become permanent installed copies
-    and only ever leave when the user deletes them.
+    Gliders the user binned are skipped (suppressed).
     """
     global _last_auto_update
     now = time.time()
@@ -309,6 +308,13 @@ def _maybe_auto_update(listing: list[dict]):
             _enqueue_download(entry)        # new active glider → download it
         elif entry["server_mtime"] > float(info.get("server_mtime", 0)) + 1:
             _enqueue_download(entry)        # have it, but server has a newer copy
+
+    cutoff = now - DAYS_ACTIVE * 86400
+    for fname, info in marker.items():
+        if fname in _in_flight:
+            continue
+        if float(info.get("server_mtime", 0)) < cutoff:
+            _remove_managed_file(fname)     # aged out of the live window
 
 
 # ---------- public API ----------

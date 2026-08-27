@@ -80,9 +80,9 @@ def _pack_plot_binary(meta, arrays):
     hjson = json.dumps(header).encode("utf-8")
     return b"".join([struct.pack("<I", len(hjson)), hjson, *bufs])
 
-def plot_cache_params_str(*, x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc,
-                          filter_time, profile_num, cycle_num, cycle_var, sci_phases,
-                          direction_filter, ctd_interpolate, ctd_qc, highlight_profile,
+def plot_cache_params_str(*, x_var, y_var, c_var, qc_flags,
+                          profile_num, cycle_num, cycle_var, sci_phases,
+                          direction_filter, highlight_profile,
                           max_points, zoom_x_var, zoom_x_min, zoom_x_max,
                           zoom_y_min, zoom_y_max):
     """The output-affecting params, serialized into the binary plot-cache key.
@@ -95,9 +95,9 @@ def plot_cache_params_str(*, x_var, y_var, c_var, apply_qc, qc_flags, highlight_
     CACHE_VERSION if you do).
     """
     return "|".join(str(v) for v in (
-        x_var, y_var, c_var, apply_qc, qc_flags, highlight_qc, filter_time,
+        x_var, y_var, c_var, qc_flags,
         profile_num, cycle_num, cycle_var, sci_phases, direction_filter,
-        ctd_interpolate, ctd_qc, highlight_profile, max_points,
+        highlight_profile, max_points,
         zoom_x_var, zoom_x_min, zoom_x_max, zoom_y_min, zoom_y_max,
     ))
 
@@ -340,6 +340,12 @@ def _get_preloaded(filepath: str):
 CTD_VARS = ("PRES", "TEMP", "CNDC")
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
 
+# A PRES gap longer than this is a real data gap (e.g. a surface comms window),
+# not sensor noise, and is left unfilled rather than bridged by a straight-line
+# interpolation across it.
+CTD_INTERP_MAX_GAP_MINUTES = 5
+_CTD_INTERP_MAX_GAP_NS = CTD_INTERP_MAX_GAP_MINUTES * 60 * 1_000_000_000
+
 
 def _resolve_ctd_var_map(filepath):
     """Map canonical CTD names to the actual file variable, preferring the
@@ -534,67 +540,45 @@ def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
     return _ctd_processed_arrays_cached(filepath, interpolate, apply_ctd_qc)
 
 
-def ctd_interp_recommended(filepath) -> bool:
-    """True if interpolation fills any PRES gaps for this file.
-
-    Only PRES is interpolated, so this checks whether the overlay actually
-    reduces the NaN count in PRES. If PRES is already fully populated the
-    button is hidden as it would do nothing visible.
-    """
-    pre = _get_preloaded(filepath)
-    if pre is None:
-        return False
-    var_map = _resolve_ctd_var_map(filepath)
-    pres_actual = var_map.get("PRES")
-    if not pres_actual or pres_actual not in pre:
-        return False
-    pres = pre[pres_actual]
-    if not np.any(np.isnan(pres)):
-        return False  # already fully populated — nothing to fill
-    overlay = _ctd_processed_arrays(filepath, True, False)
-    if overlay is None or pres_actual not in overlay:
-        return False
-    orig_nan = int(np.isnan(pres).sum())
-    new_nan = int(np.isnan(overlay[pres_actual]).sum())
-    return (orig_nan - new_nan) > 0
+def _hard_time_valid_mask(t_vals):
+    """Unconditional TIME validity: NaT and any timestamp that runs backwards
+    relative to everything before it are always dropped, regardless of QC flag
+    selection — they aren't meaningful data, not just "bad" data. A merely
+    out-of-range (pre-1990 / future) but well-ordered timestamp is NOT dropped
+    here; that's flagged QC=4 (see derive_logic._compute_time_qc) and left to
+    the normal per-variable flag filtering, like everything else."""
+    t_int = np.asarray(t_vals).astype('datetime64[ns]').view('int64')
+    nat_mask = pd.isnull(t_vals)
+    valid = ~np.asarray(nat_mask)
+    INT_MIN = np.iinfo(np.int64).min
+    safe = np.where(valid, t_int, INT_MIN)
+    running_max = np.maximum.accumulate(safe)
+    prev_max = np.empty_like(running_max)
+    prev_max[0] = INT_MIN
+    prev_max[1:] = running_max[:-1]
+    return valid & (t_int >= prev_max)
 
 
-def ctd_clean_recommended(filepath) -> bool:
-    """True if the Clean step would actually change any values in this file.
-
-    Returns False for pre-processed files where there are no zero fill-values
-    and all CNDC readings already fall within [20, 50] mS/cm — in that case
-    the button is hidden rather than shown as a no-op.
-    """
-    pre = _get_preloaded(filepath)
-    if pre is None:
-        return False
-    var_map = _resolve_ctd_var_map(filepath)
-    if not var_map:
-        return False
-    overlay = _ctd_processed_arrays(filepath, False, True)
-    if overlay is None:
-        return False
-    for canon, actual in var_map.items():
-        if actual in overlay and actual in pre:
-            orig_nan = np.isnan(pre[actual])
-            new_nan = np.isnan(overlay[actual])
-            if np.any(new_nan & ~orig_nan):
-                return True
-    return False
+def _normalize_qc(qc_vals):
+    """Coerce a raw _QC array to int, treating NaN/missing as flag 0 (no QC
+    performed) rather than letting them silently fail every flags.isin() check."""
+    arr = np.asarray(qc_vals)
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.where(np.isnan(arr), 0, arr)
+    return arr.astype(int)
 
 
 def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, apply_ctd_qc=False):
     """Return a new data_dict with CTD interpolation and/or custom QC applied.
 
-    CTD QC: flag exact 0.0 values as 9, auto-scale CNDC from S/m to mS/cm,
-    then cross-flag all three CTD vars as 4 where CNDC falls outside [20, 50]
-    mS/cm after scaling. Synthesised QC arrays default to 1 (good).
+    CTD QC ("Clean"): flag exact 0.0 values as 9 (fill value) and null them.
+    Synthesised QC arrays default to 1 (good).
 
-    Interpolate: time-based fill of NaN in the CTD vars. Filled points get
-    QC=5 ("value changed"). When combined with CTD QC, bad values are first
-    nulled, then interpolation recovers them where a real neighbour exists
-    within ±2 h and ±5 m.
+    Interpolate: time-linear fill of NaN gaps in PRES, capped at
+    CTD_INTERP_MAX_GAP_MINUTES — a longer gap is a real data gap, not sensor
+    noise, and is left unfilled. Filled points get QC=8 ("interpolated").
+    When combined with CTD QC, bad (nulled) values are eligible to be filled
+    back in by this same pass.
     """
     if not (interpolate or apply_ctd_qc):
         return data_dict
@@ -625,33 +609,6 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                 new_dict[f"{v}_QC"][zero_mask] = 9
                 vals[zero_mask] = np.nan
 
-        _report_ctd_stage("CTD clean: scaling CNDC units & range filter")
-        # CNDC unit scaling (S/m -> mS/cm) so outlier check sees sensible magnitudes
-        if "CNDC" in new_dict:
-            cndc_vals = new_dict["CNDC"]
-            valid = ~np.isnan(cndc_vals)
-            if np.any(valid):
-                current_units = str((units_map or {}).get("CNDC", "")).strip().lower()
-                already_mscm = current_units in CTD_CNDC_MSCM_UNITS
-                if not already_mscm and np.nanmedian(cndc_vals[valid]) < 10.0:
-                    cndc_vals[valid] = cndc_vals[valid] * 10.0
-                    new_dict["CNDC"] = cndc_vals
-
-        # Hard range filter: CNDC must be in [20, 50] mS/cm; cross-flag all CTD vars
-        if "CNDC" in new_dict:
-            cndc_vals = new_dict["CNDC"]
-            cndc_qc = new_dict["CNDC_QC"]
-            valid_for_range = ~np.isnan(cndc_vals) & (cndc_qc != 9)
-            if np.any(valid_for_range):
-                range_bad = valid_for_range & ((cndc_vals < 20.0) | (cndc_vals > 50.0))
-                if np.any(range_bad):
-                    for v in present:
-                        qc = new_dict[f"{v}_QC"]
-                        overwrite = range_bad & ~np.isin(qc, [3, 4, 9])
-                        qc[overwrite] = 4
-                        new_dict[v][range_bad] = np.nan
-
-
     if interpolate and time_var and time_var in new_dict:
         _report_ctd_stage("CTD interp: parsing timestamps")
         t_vals = new_dict[time_var]
@@ -677,7 +634,7 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
             valid_time = valid_time & (t_int >= prev_max)
 
             if valid_time.any():
-                # --- PRES: straight time-linear interpolation ---
+                # --- PRES: time-linear interpolation, capped to gaps <= CTD_INTERP_MAX_GAP_MINUTES ---
                 if "PRES" in present:
                     pres = new_dict["PRES"]
                     target = np.isnan(pres) & valid_time
@@ -685,16 +642,35 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                     if target.any():
                         sub_vals = pres[valid_time]
                         sub_index = t_dt[valid_time]
+                        known = ~np.isnan(sub_vals)
                         interp_sub = (
                             pd.Series(sub_vals, index=sub_index)
                             .interpolate(method='time', limit_direction='both')
                             .to_numpy()
                         )
+
+                        # Cap: only accept a fill whose bounding real neighbours are
+                        # within CTD_INTERP_MAX_GAP_MINUTES of each other. sub_index
+                        # is monotonically non-decreasing (valid_time already enforces
+                        # that), so a forward/backward running extreme over known
+                        # positions gives each row its nearest real neighbour on each
+                        # side; known rows trivially have gap 0 and are never capped.
+                        # asi8 assumes the index's native unit, which varies (ns
+                        # historically, us/s possible as of pandas>=2) — normalize to
+                        # ns first or the ns-based gap cap below is silently off by a
+                        # unit-dependent factor.
+                        idx_i8 = sub_index.astype('datetime64[ns]').astype('int64')
+                        prev_known = np.maximum.accumulate(np.where(known, idx_i8, INT_MIN))
+                        next_known = np.minimum.accumulate(np.where(known, idx_i8, np.iinfo(np.int64).max)[::-1])[::-1]
+                        has_both = (prev_known != INT_MIN) & (next_known != np.iinfo(np.int64).max)
+                        gap_ok = has_both & ((next_known - prev_known) <= _CTD_INTERP_MAX_GAP_NS)
+                        interp_sub = np.where(gap_ok, interp_sub, np.nan)
+
                         out = pres.copy()
                         out[valid_time] = interp_sub
                         filled = target & ~np.isnan(out)
                         new_dict["PRES"] = out
-                        new_dict["PRES_QC"][filled] = 5
+                        new_dict["PRES_QC"][filled] = 8
 
 
     return new_dict
@@ -847,6 +823,29 @@ def get_dataset_info(filepath):
 
     variables.sort(key=lambda x: x["name"].lower())
 
+    # Surface TIME cleanliness as a warning on its row: NaT and non-monotonic
+    # samples are always hard-dropped from every plot (see
+    # _hard_time_valid_mask) — an advanced user should be able to see, at a
+    # glance, whether that's actually happening for this file.
+    time_var = "TIME" if "TIME" in existing else next((v for v in existing if "TIME" in v.upper()), None)
+    if time_var:
+        data = _read_vars_cached(filepath, (time_var,))
+        t_vals = data.get(time_var) if data else None
+        if t_vals is not None and len(t_vals) > 0:
+            valid = _hard_time_valid_mask(t_vals)
+            dropped = int(len(t_vals) - valid.sum())
+            if dropped > 0:
+                nat = int(pd.isnull(t_vals).sum())
+                for v in variables:
+                    if v["name"] == time_var:
+                        v["time_warning"] = {
+                            "dropped": dropped,
+                            "nat": nat,
+                            "non_monotonic": dropped - nat,
+                            "total": int(len(t_vals)),
+                        }
+                        break
+
     return {
         "dimension_name": main_dim_name,
         "variables": variables,
@@ -957,7 +956,7 @@ def _apply_direction_mask(data_dict, directions):
         return np.isin(dir_vals, allowed) & ~np.isnan(dir_vals)
 
 
-def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8", highlight_qc=False, filter_time=True, profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None, timings=None, binary=False):
+def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None, highlight_profile=False, max_points=None, zoom_x_var=None, zoom_x_min=None, zoom_x_max=None, zoom_y_min=None, zoom_y_max=None, timings=None, binary=False):
     # `timings` (optional dict) is filled in place with per-step ms so the endpoint
     # can surface a Server-Timing breakdown. perf_counter / dict writes are ~free.
     _tprev = time.perf_counter()
@@ -987,7 +986,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         time_vars = [v for v in var_names if 'TIME' in v.upper()]
         if time_vars: actual_time_var = time_vars[0]
 
-    if filter_time and actual_time_var in var_names:
+    if actual_time_var in var_names:
         vars_to_extract.add(actual_time_var)
 
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
@@ -1008,8 +1007,11 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     if highlight_profile and zoom_x_var and zoom_x_var in var_names:
         vars_to_extract.add(zoom_x_var)
 
-    ctd_var_map = _resolve_ctd_var_map(filepath) if (ctd_interpolate or ctd_qc) else {}
-    if ctd_interpolate or ctd_qc:
+    # CTD gap-fill (<=5 min, QC=8) and zero-fill-value flagging (QC=9) always run
+    # when the file has a CTD triad — visibility is controlled purely by the QC
+    # flag chips (Interpolate/Clean are no longer separate toggles).
+    ctd_var_map = _resolve_ctd_var_map(filepath)
+    if ctd_var_map:
         for actual in ctd_var_map.values():
             vars_to_extract.add(actual)
             if f"{actual}_QC" in var_names:
@@ -1017,24 +1019,23 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         if actual_time_var in var_names:
             vars_to_extract.add(actual_time_var)
 
-    if apply_qc:
-        qc_vars = {f"{v}_QC" for v in vars_to_extract}
-        vars_to_extract.update(qc_vars)
+    qc_vars = {f"{v}_QC" for v in vars_to_extract}
+    vars_to_extract.update(qc_vars)
 
     data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
     if data_dict is None:
         return {"error": "Failed to extract variables from dataset"}
     _mark("read")
 
-    if ctd_interpolate or ctd_qc:
-        overlay = _ctd_processed_arrays(filepath, ctd_interpolate, ctd_qc)
+    if ctd_var_map:
+        overlay = _ctd_processed_arrays(filepath, True, True)
         if overlay is not None:
             data_dict = {**data_dict, **overlay}
         else:
             canon = _build_ctd_canonical_dict(data_dict, ctd_var_map, actual_time_var)
             processed = _apply_ctd_processing(
                 canon, actual_time_var, _get_var_units(filepath),
-                interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+                interpolate=True, apply_ctd_qc=True,
             )
             data_dict = {**data_dict, **_emit_overlay(processed, ctd_var_map)}
         _mark("ctd")
@@ -1124,35 +1125,24 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         
     stats["nan_removed"] = int(stats["total"] - current_mask.sum())
 
-    if filter_time and actual_time_var in data_dict:
-        t_vals = data_dict[actual_time_var]
-        min_time = pd.to_datetime("1990-01-01").to_datetime64()
-        now_time = pd.Timestamp.now().to_datetime64()
-        with np.errstate(invalid='ignore'):
-            time_valid_mask = (t_vals >= min_time) & (t_vals <= now_time) & ~pd.isnull(t_vals)
-        
+    if actual_time_var in data_dict:
         old_sum = current_mask.sum()
-        current_mask &= time_valid_mask
+        current_mask &= _hard_time_valid_mask(data_dict[actual_time_var])
         stats["time_removed"] = int(old_sum - current_mask.sum())
 
-    qc_pass_mask = np.ones(len(x_vals), dtype=bool)
-    if apply_qc:
-        try:
-            allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
-        except:
-            allowed_flags = [1, 2, 5, 8]
-            
-        for v in [x_var, y_var, c_var]:
-            if v and f"{v}_QC" in data_dict:
-                qc_vals = data_dict[f"{v}_QC"]
-                qc_pass_mask &= np.isin(qc_vals, allowed_flags)
+    try:
+        allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
+    except Exception:
+        allowed_flags = [0, 1, 2, 5, 8]
 
-        if highlight_qc:
-            stats["qc_removed"] = int((current_mask & ~qc_pass_mask).sum())
-        else:
-            old_sum = current_mask.sum()
-            current_mask &= qc_pass_mask
-            stats["qc_removed"] = int(old_sum - current_mask.sum())
+    qc_pass_mask = np.ones(len(x_vals), dtype=bool)
+    for v in [x_var, y_var, c_var]:
+        if v and f"{v}_QC" in data_dict:
+            qc_pass_mask &= np.isin(_normalize_qc(data_dict[f"{v}_QC"]), allowed_flags)
+
+    old_sum = current_mask.sum()
+    current_mask &= qc_pass_mask
+    stats["qc_removed"] = int(old_sum - current_mask.sum())
 
     stats["valid"] = int(current_mask.sum())
     _mark("filter")
@@ -1160,7 +1150,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     plot_x = x_vals[current_mask]
     plot_y = y_vals[current_mask]
     plot_c = c_vals[current_mask] if c_vals is not None else None
-    plot_qc = qc_pass_mask[current_mask]
     # Per-point "is in the active selection" flag (highlight mode only).
     plot_sel = selection_mask[current_mask] if (highlight_profile and selection_mask is not None) else None
 
@@ -1182,7 +1171,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         if len(ctx_idx) > render_cap:
             ctx_idx = ctx_idx[:: int(np.ceil(len(ctx_idx) / render_cap))]
         keep = np.sort(np.concatenate([sel_idx, ctx_idx]))
-        plot_x = plot_x[keep]; plot_y = plot_y[keep]; plot_qc = plot_qc[keep]; plot_sel = plot_sel[keep]
+        plot_x = plot_x[keep]; plot_y = plot_y[keep]; plot_sel = plot_sel[keep]
         if plot_c is not None: plot_c = plot_c[keep]
     elif stats["valid"] > render_cap:
         # ceil, not floor: valid // cap floors to step=1 whenever valid < 2*cap
@@ -1191,7 +1180,6 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         step = int(np.ceil(stats["valid"] / render_cap))
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
-        plot_qc = plot_qc[::step]
         if plot_c is not None: plot_c = plot_c[::step]
         if plot_sel is not None: plot_sel = plot_sel[::step]
     _mark("downsample")
@@ -1204,18 +1192,15 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
     # already removed by current_mask, so a plain tolist() is safe.
     # Colour range — needed by both serializers, independent of array encoding.
     c_min, c_max = 0.0, 1.0
-    if plot_c is not None:
-        valid_c_for_scale = plot_c[plot_qc] if apply_qc else plot_c
-        if len(valid_c_for_scale) > 0:
-            c_min = float(np.nanpercentile(valid_c_for_scale, 0.1))
-            c_max = float(np.nanpercentile(valid_c_for_scale, 99.9))
+    if plot_c is not None and len(plot_c) > 0:
+        c_min = float(np.nanpercentile(plot_c, 0.1))
+        c_max = float(np.nanpercentile(plot_c, 99.9))
 
     units_map = _get_var_units(filepath)
     meta = {
         "is_x_dt": bool(is_x_dt),
         "c_min": c_min,
         "c_max": c_max,
-        "qc_applied": apply_qc,
         "profile_highlight": bool(highlight_profile and selection_mask is not None),
         "stats": stats,
         "x_var": x_var,
@@ -1228,14 +1213,12 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
 
     if binary:
         # x as f64 keeps datetime epoch-ms exact (and value-axis precision); y/c as
-        # f32 match the float32 source. qc_pass / in_selection ride along as bytes
-        # only when populated (highlight modes), mirroring the JSON path's [] default.
+        # f32 match the float32 source. in_selection rides along as bytes only when
+        # populated (highlight-profile mode), mirroring the JSON path's [] default.
         x_arr = (plot_x.astype('datetime64[ms]').astype('int64') if is_x_dt else plot_x)
         arrays = [("x", x_arr, "f64"), ("y", plot_y, "f32")]
         if plot_c is not None:
             arrays.append(("c", plot_c, "f32"))
-        if apply_qc:
-            arrays.append(("qc_pass", plot_qc, "u8"))
         if plot_sel is not None:
             arrays.append(("in_selection", plot_sel, "u8"))
         _mark("serialize")
@@ -1250,16 +1233,14 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flag
         "y": y_out,
         "c": c_out,
         **meta,
-        "qc_pass": plot_qc.tolist() if apply_qc else [],
         "in_selection": plot_sel.tolist() if plot_sel is not None else [],
     }
 
-def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_flags="1,2,5,8",
-                          highlight_qc=False, filter_time=True,
+def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
                           view_x_min=None, view_x_max=None, view_y_min=None, view_y_max=None,
                           profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
-                          ctd_interpolate=False, ctd_qc=False, highlight_profile=False, max_points=None):
+                          highlight_profile=False, max_points=None):
     if c_var == "None":
         c_var = ""
 
@@ -1279,7 +1260,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         time_vars = [v for v in var_names if 'TIME' in v.upper()]
         if time_vars: actual_time_var = time_vars[0]
 
-    if filter_time and actual_time_var in var_names:
+    if actual_time_var in var_names:
         vars_to_extract.add(actual_time_var)
     if profile_num is not None and "PROFILE_NUMBER" in var_names:
         vars_to_extract.add("PROFILE_NUMBER")
@@ -1289,30 +1270,32 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         vars_to_extract.add("SCI_PHASE")
     if direction_filter and "PROFILE_DIRECTION" in var_names:
         vars_to_extract.add("PROFILE_DIRECTION")
-    ctd_var_map = _resolve_ctd_var_map(filepath) if (ctd_interpolate or ctd_qc) else {}
-    if ctd_interpolate or ctd_qc:
+    # CTD gap-fill (<=5 min, QC=8) and zero-fill-value flagging (QC=9) always run
+    # when the file has a CTD triad — visibility is controlled purely by the QC
+    # flag chips (Interpolate/Clean are no longer separate toggles).
+    ctd_var_map = _resolve_ctd_var_map(filepath)
+    if ctd_var_map:
         for actual in ctd_var_map.values():
             vars_to_extract.add(actual)
             if f"{actual}_QC" in var_names:
                 vars_to_extract.add(f"{actual}_QC")
         if actual_time_var in var_names:
             vars_to_extract.add(actual_time_var)
-    if apply_qc:
-        vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
+    vars_to_extract.update({f"{v}_QC" for v in vars_to_extract})
 
     data_dict = _read_vars_cached(filepath, tuple(sorted(vars_to_extract)))
     if data_dict is None:
         return {"error": "Failed to extract variables from dataset"}
 
-    if ctd_interpolate or ctd_qc:
-        overlay = _ctd_processed_arrays(filepath, ctd_interpolate, ctd_qc)
+    if ctd_var_map:
+        overlay = _ctd_processed_arrays(filepath, True, True)
         if overlay is not None:
             data_dict = {**data_dict, **overlay}
         else:
             canon = _build_ctd_canonical_dict(data_dict, ctd_var_map, actual_time_var)
             processed = _apply_ctd_processing(
                 canon, actual_time_var, _get_var_units(filepath),
-                interpolate=ctd_interpolate, apply_ctd_qc=ctd_qc,
+                interpolate=True, apply_ctd_qc=True,
             )
             data_dict = {**data_dict, **_emit_overlay(processed, ctd_var_map)}
 
@@ -1341,23 +1324,17 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     if not highlight_profile and selection_mask is not None:
         valid_mask &= selection_mask
 
-    if apply_qc:
-        try:
-            allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
-        except:
-            allowed_flags = [1, 2, 5, 8]
-        for v in [x_var, y_var, c_var]:
-            if v and f"{v}_QC" in data_dict:
-                qc_pass_mask &= np.isin(data_dict[f"{v}_QC"], allowed_flags)
-        if not highlight_qc:
-            valid_mask &= qc_pass_mask
+    try:
+        allowed_flags = [int(f.strip()) for f in qc_flags.split(',') if f.strip().isdigit()]
+    except Exception:
+        allowed_flags = [0, 1, 2, 5, 8]
+    for v in [x_var, y_var, c_var]:
+        if v and f"{v}_QC" in data_dict:
+            qc_pass_mask &= np.isin(_normalize_qc(data_dict[f"{v}_QC"]), allowed_flags)
+    valid_mask &= qc_pass_mask
 
-    if filter_time and actual_time_var in data_dict:
-        t_vals = data_dict[actual_time_var]
-        min_time = pd.to_datetime("1990-01-01").to_datetime64()
-        now_time = pd.Timestamp.now().to_datetime64()
-        with np.errstate(invalid='ignore'):
-            valid_mask &= (t_vals >= min_time) & (t_vals <= now_time) & ~pd.isnull(t_vals)
+    if actual_time_var in data_dict:
+        valid_mask &= _hard_time_valid_mask(data_dict[actual_time_var])
 
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
@@ -1372,7 +1349,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     plot_x = x_vals[valid_mask]
     plot_y = y_vals[valid_mask].astype(float)
     plot_c = c_vals[valid_mask] if c_vals is not None else None
-    plot_qc = qc_pass_mask[valid_mask]
     plot_sel = selection_mask[valid_mask] if (highlight_profile and selection_mask is not None) else None
 
     if x_min is not None and x_max is not None:
@@ -1389,7 +1365,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
 
         plot_x = plot_x[bounds_mask]
         plot_y = plot_y[bounds_mask]
-        plot_qc = plot_qc[bounds_mask]
         if plot_c is not None:
             plot_c = plot_c[bounds_mask]
         if plot_sel is not None:
@@ -1435,7 +1410,6 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
         complete = step <= 1   # step of 1 keeps every point despite total > cap
         plot_x = plot_x[::step]
         plot_y = plot_y[::step]
-        plot_qc = plot_qc[::step]
         if plot_c is not None:
             plot_c = plot_c[::step]
         if plot_sel is not None:
@@ -1447,16 +1421,14 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", apply_qc=False, qc_fl
     c_out, c_min, c_max = [], 0.0, 1.0
     if plot_c is not None:
         c_out = _floats_to_list(plot_c)
-        valid_c = plot_c[plot_qc] if apply_qc else plot_c
-        if len(valid_c) > 0:
-            c_min = float(np.nanpercentile(valid_c, 0.1))
-            c_max = float(np.nanpercentile(valid_c, 99.9))
+        if len(plot_c) > 0:
+            c_min = float(np.nanpercentile(plot_c, 0.1))
+            c_max = float(np.nanpercentile(plot_c, 99.9))
 
     units_map = _get_var_units(filepath)
     return {
         "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
-        "c_min": c_min, "c_max": c_max, "qc_applied": apply_qc,
-        "qc_pass": plot_qc.tolist() if apply_qc else [],
+        "c_min": c_min, "c_max": c_max,
         "profile_highlight": bool(highlight_profile and selection_mask is not None),
         "in_selection": plot_sel.tolist() if plot_sel is not None else [],
         "x_var": x_var, "y_var": y_var, "c_var": c_var,

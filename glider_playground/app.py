@@ -575,10 +575,10 @@ def api_cycles(id: str):
 def api_plot_data(
     response: Response,
     id: str, x_var: str, y_var: str, c_var: str = "",
-    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
+    qc_flags: str = "0,1,2,5,8",
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
-    ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
+    highlight_profile: bool = False,
     max_points: int = None,
     zoom_x_var: str = None,
     zoom_x_min: float = None, zoom_x_max: float = None,
@@ -592,10 +592,10 @@ def api_plot_data(
     # skips the entire read→filter→downsample→pack pipeline. Only the binary form is
     # cached (it's what we send); the JSON path is the rare error/fallback case.
     cache_key = plot_logic.plot_cache_params_str(
-        x_var=x_var, y_var=y_var, c_var=c_var, apply_qc=apply_qc, qc_flags=qc_flags,
-        highlight_qc=highlight_qc, filter_time=filter_time, profile_num=profile_num,
+        x_var=x_var, y_var=y_var, c_var=c_var, qc_flags=qc_flags,
+        profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=sci_phases,
-        direction_filter=direction_filter, ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc,
+        direction_filter=direction_filter,
         highlight_profile=highlight_profile, max_points=max_points,
         zoom_x_var=zoom_x_var, zoom_x_min=zoom_x_min, zoom_x_max=zoom_x_max,
         zoom_y_min=zoom_y_min, zoom_y_max=zoom_y_max,
@@ -616,10 +616,10 @@ def api_plot_data(
     # returning a Response short-circuits that and is passed through untouched.
     result = plot_logic.get_plot_data_json(
         _resolve_path(id), x_var, y_var, c_var,
-        apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
-        filter_time=filter_time, profile_num=profile_num,
+        qc_flags=qc_flags,
+        profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
-        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc, highlight_profile=highlight_profile,
+        highlight_profile=highlight_profile,
         max_points=max_points,
         zoom_x_var=zoom_x_var, zoom_x_min=zoom_x_min, zoom_x_max=zoom_x_max,
         zoom_y_min=zoom_y_min, zoom_y_max=zoom_y_max,
@@ -641,25 +641,24 @@ def api_plot_data(
 @app.get("/api/plot_data_bounds")
 def api_plot_data_bounds(
     id: str, x_var: str, y_var: str, c_var: str = "",
-    apply_qc: bool = False, qc_flags: str = "1,2,5,8", highlight_qc: bool = False, filter_time: bool = True,
+    qc_flags: str = "0,1,2,5,8",
     x_min: float = None, x_max: float = None, y_min: float = None, y_max: float = None,
     view_x_min: float = None, view_x_max: float = None, view_y_min: float = None, view_y_max: float = None,
     profile_num: float = None,
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
-    ctd_interpolate: bool = False, ctd_qc: bool = False, highlight_profile: bool = False,
+    highlight_profile: bool = False,
     max_points: int = None,
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
     return plot_logic.get_plot_data_bounds(
         _resolve_path(id), x_var, y_var, c_var,
-        apply_qc=apply_qc, qc_flags=qc_flags, highlight_qc=highlight_qc,
-        filter_time=filter_time,
+        qc_flags=qc_flags,
         x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
         view_x_min=view_x_min, view_x_max=view_x_max, view_y_min=view_y_min, view_y_max=view_y_max,
         profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
-        ctd_interpolate=ctd_interpolate, ctd_qc=ctd_qc, highlight_profile=highlight_profile,
+        highlight_profile=highlight_profile,
         max_points=max_points,
     )
 

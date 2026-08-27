@@ -1,6 +1,7 @@
 """Derive CTD variables (practical/absolute salinity, conservative temperature,
-density) from conductivity using the TEOS-10 / GSW toolbox, and derive scientific
-phases and profile numbers from depth.
+density) from conductivity using the TEOS-10 / GSW toolbox, derive scientific
+phases and profile numbers from depth, and derive a TIME QC flag (NaT/bad-order/
+out-of-range) so TIME can be filtered by the QC flag chips like any other var.
 
 Run once per file during processing, AFTER preload (see cache_logic). 
 Results are written to the per-file derived store (plot_logic) so they appear 
@@ -10,7 +11,6 @@ and behave like native variables everywhere.
 import re
 import numpy as np
 import pandas as pd
-from scipy.signal import find_peaks
 
 from . import plot_logic
 from . import spatial_logic
@@ -30,17 +30,23 @@ _CALC = "Derived (not in original file) — "
 # Profile detection parameters. These are the hardcoded defaults of the
 # pelagos_py "Find Profiles" pipeline step, ported here verbatim so the
 # playground classifies profiles identically.
-PROF_TIME_WINDOW_SEC = 30        # resample / smoothing window (seconds)
-PROF_VELOCITY_THRESH = 0.033     # |vertical velocity| (m/s) for ascent/descent
-PROF_ACCEL_THRESH = 0.0005       # max |acceleration| for a stable transect
-PROF_TRANSITION_BUFFER_SEC = 30  # trimmed off each end of a phase block
-PROF_MIN_DURATION_MINS = 5       # minimum minutes for a phase block to count
-PROF_PEAK_PROMINENCE = 20        # prominence (depth units) for an inflection
-PROF_MIN_PEAK_DIST = 20          # minimum bins between inflection peaks
-PROF_GAP_THRESHOLD_MINS = 5      # time gap that splits the record into chunks
-PROF_SURFACE_DEPTH = 20          # depth below which a chunk extreme is a peak
-PROF_SURFACING_THRESHOLD = 5     # depth below which a turn is reclassed surfacing
-PROF_PARKING_GRADIENT = 0.005    # |gradient| (m/s) reverting parking to asc/desc
+PROF_SMOOTHING_WINDOW_SEC = 30        # rolling-mean window (seconds) applied to depth
+PROF_VELOCITY_THRESH = 0.033          # |vertical velocity| (depth units/s) for ascent/descent
+PROF_MIN_DURATION_SEC = 60            # minimum seconds for an ascent/descent run to be trusted
+PROF_GAP_THRESHOLD_MINS = 5           # time gap that splits the record into disconnected chunks
+PROF_SURFACING_DEPTH_THRESHOLD = 2.0  # depth below which a turn/propelled run is surfacing
+PROF_MIN_TRANSECT_DURATION_SEC = 300  # minimum duration for an unknown run to be propelled
+
+_UNKNOWN = 0
+_ASCENT = 1
+_DESCENT = 2
+_SURFACING = 3
+_PARKING = 4
+_INFLECTION = 5
+_PROPELLED = 6
+_TRANSITION = 7
+
+_PROF_DERIVED_COLUMNS = ["SCI_PHASE", "PROFILE_NUMBER", "PROFILE_DIRECTION", "CYCLE", "GRADIENT"]
 
 # CF-ish metadata for each derived variable.
 DERIVED_METADATA = {
@@ -92,6 +98,61 @@ def provided(n, existing):
 # Core Computations
 # ---------------------------------------------------------------------------
 
+def _compute_time_qc(filepath, log, names, existing, time_var):
+    """Derive a QC flag for TIME once per file, so TIME can be filtered by the
+    same QC-flag chips as everything else instead of a separate "Filter Time"
+    toggle: NaT -> 9 (missing), a timestamp that runs backwards relative to
+    everything before it -> 4 (bad), pre-1990/future -> 4 (bad), else -> 1
+    (good). Only runs if the file has no native <time_var>_QC.
+
+    NaT and non-monotonic rows are ALSO always hard-dropped by the plot
+    pipeline regardless of this flag (see plot_logic._hard_time_valid_mask) —
+    that drop is unconditional (not just "bad" data, not meaningful data at
+    all), so the flag value assigned to them here is for visibility/counting
+    only, not gating.
+    """
+    qc_name = f"{time_var}_QC" if time_var else None
+    if not time_var or not qc_name or qc_name in existing:
+        return [], {}, {}
+
+    data = plot_logic._read_vars_cached(filepath, (time_var,))
+    if not data or time_var not in data:
+        return [], {}, {}
+
+    t = pd.to_datetime(np.asarray(data[time_var]), errors="coerce")
+    n = len(t)
+    if n == 0:
+        return [], {}, {}
+    qc = np.ones(n, dtype=np.int8)
+
+    nat_mask = np.asarray(t.isna())
+    qc[nat_mask] = 9
+
+    valid = ~nat_mask
+    min_time = np.datetime64(pd.Timestamp("1990-01-01"))
+    now_time = np.datetime64(pd.Timestamp.now())
+    t_vals = t.to_numpy()
+    with np.errstate(invalid="ignore"):
+        out_of_range = valid & ((t_vals < min_time) | (t_vals > now_time))
+    qc[out_of_range] = 4
+
+    INT_MIN = np.iinfo(np.int64).min
+    t_int = t.asi8.copy()
+    safe = np.where(valid, t_int, INT_MIN)
+    running_max = np.maximum.accumulate(safe)
+    prev_max = np.empty(n, dtype=np.int64)
+    prev_max[0] = INT_MIN
+    prev_max[1:] = running_max[:-1]
+    non_monotonic = valid & (t_int < prev_max)
+    qc[non_monotonic] = 4
+
+    meta = {qc_name: {
+        "units": "1", "type": "numeric",
+        "description": _CALC + "Derived TIME QC (1=good, 4=bad [out-of-range or non-monotonic], 9=missing/NaT)",
+    }}
+    return [qc_name], {qc_name: qc}, meta
+
+
 def _compute_ctd(filepath, log, names, existing, time_var):
     wanted = [n for n in ("PRAC_SALINITY", "ABS_SALINITY", "CONS_TEMP", "DENSITY") if not provided(n, existing)]
     if not wanted or not _HAS_GSW:
@@ -118,9 +179,10 @@ def _compute_ctd(filepath, log, names, existing, time_var):
         return [], {}, {}
 
     log("CTD derive: cleaning conductivity / temperature / pressure")
+    units_map = plot_logic._get_var_units(filepath)
     canon = plot_logic._build_ctd_canonical_dict(data, var_map, time_var)
     cleaned = plot_logic._apply_ctd_processing(
-        canon, time_var, plot_logic._get_var_units(filepath),
+        canon, time_var, units_map,
         interpolate=True, apply_ctd_qc=True,
     )
 
@@ -133,6 +195,15 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     except Exception as e:
         log(f"CTD derive: input read failed ({e})")
         return [], {}, {}
+
+    # GSW's SP_from_C expects conductivity in mS/cm. Source files store CNDC in
+    # S/m (sometimes labelled with the old synonym "mhos/m") rather than mS/cm,
+    # so convert here based on the file's actual units — this conversion is only
+    # for the salinity/density calculation below, it never touches the CNDC
+    # values shown in the plot or written by "Clean".
+    cndc_units = str((units_map or {}).get("CNDC", "")).strip().lower()
+    if cndc_units not in plot_logic.CTD_CNDC_MSCM_UNITS:
+        cndc = cndc * 10.0
 
     tvals = data.get(time_var) if time_var else None
     cndc = _interp_over_time(cndc, tvals)
@@ -194,270 +265,263 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     return wanted, arrays, meta
 
 
-def _classify_profiles(df_raw, depth_col, target_transect_phase):
-    """Port of the pelagos_py "Find Profiles" classifier (hardcoded defaults).
+def _prof_compute_chunk_id(time_seconds, gap_threshold_seconds):
+    # Real data gaps split the record into disconnected chunks - velocity is
+    # never computed, and no run ever allowed, across one.
+    return np.concatenate((
+        [0], np.cumsum(np.diff(time_seconds) > gap_threshold_seconds)
+    )).astype(np.int32)
 
-    Takes a raw frame with ``TIME``, ``depth_col`` and an ``ORIG_IDX`` column and
-    returns a per-measurement frame carrying ``SCI_PHASE``, ``PROFILE_DIRECTION``,
-    ``PROFILE_NUMBER``, ``CYCLE`` and ``GRADIENT`` (plus the original columns),
-    or ``None`` if there isn't enough data to classify. Results stay on the raw
-    measurement axis; ``ORIG_IDX`` lets the caller scatter them back to file order.
-    """
-    # --- Clean & resample to the analysis grid -----------------------------
-    df = df_raw.dropna(subset=["TIME", depth_col]).sort_values("TIME")
-    df = df[df[depth_col] != 0].copy()
-    df = df.drop_duplicates(subset=["TIME"]).reset_index(drop=True)
-    if len(df) < 2:
-        return None
 
-    window_str = f"{PROF_TIME_WINDOW_SEC}s"
-    df = df.set_index("TIME").resample(window_str).mean().dropna(subset=[depth_col])
-    df.reset_index(inplace=True)
-    if len(df) < 2:
-        return None
+def _prof_gradient_per_chunk(values, time_seconds, chunk_id):
+    # np.gradient over the whole record would bridge real data gaps (e.g. surface
+    # comms windows, or an upcast-only glider whose data just stops mid-ascent),
+    # diluting the slope right at the edge of a gap. Compute it chunk-by-chunk.
+    result = np.zeros(len(values))
+    for cid in np.unique(chunk_id):
+        idx = np.flatnonzero(chunk_id == cid)
+        if idx.size >= 2:
+            result[idx] = np.gradient(values[idx], time_seconds[idx])
+    return result
 
-    # Seconds since the first bin. Relative (not epoch) seconds keep this correct
-    # regardless of the datetime resolution (ns vs us) — only differences are used
-    # (np.gradient, block durations, trims), so the offset is immaterial.
-    time_seconds = (df["TIME"] - df["TIME"].iloc[0]).dt.total_seconds().to_numpy()
-    depth = df[depth_col].values
 
-    # --- Smoothed vertical velocity & acceleration -------------------------
-    df.set_index("TIME", inplace=True)
-    smoothed_depth = df[depth_col].rolling(window_str, center=True, min_periods=1).mean().values
-    raw_velocity = np.gradient(smoothed_depth, time_seconds)
-    despiked_velocity = pd.Series(raw_velocity, index=df.index).rolling(window_str, center=True, min_periods=1).median()
-    smoothed_velocity = despiked_velocity.rolling("15s", center=True, min_periods=1).mean().values
-    raw_acceleration = np.gradient(smoothed_velocity, time_seconds)
-    despiked_acceleration = pd.Series(raw_acceleration, index=df.index).rolling(window_str, center=True, min_periods=1).median()
-    smoothed_acceleration = despiked_acceleration.rolling("15s", center=True, min_periods=1).mean().values
-    df.reset_index(inplace=True)
-
-    # --- Raw phase from velocity (asc/desc) and acceleration (transect) ----
-    raw_phases = np.zeros(len(df), dtype=int)
-    raw_phases[smoothed_velocity > PROF_VELOCITY_THRESH] = 2
-    raw_phases[smoothed_velocity < -PROF_VELOCITY_THRESH] = 1
-    transect_mask = (raw_phases == 0) & (np.abs(smoothed_acceleration) <= PROF_ACCEL_THRESH)
-    raw_phases[transect_mask] = target_transect_phase
-
-    # --- Keep only blocks longer than the minimum duration, trimmed at ends -
-    phases = np.zeros(len(df), dtype=int)
-    for p_val in [1, 2, target_transect_phase]:
-        mask = (raw_phases == p_val)
-        padded = np.concatenate(([False], mask, [False]))
-        starts = np.where(padded[1:] & ~padded[:-1])[0]
-        ends = np.where(~padded[1:] & padded[:-1])[0]
-
-        for s, e in zip(starts, ends):
-            start_time = time_seconds[s]
-            end_time = time_seconds[e - 1]
-            block_duration = end_time - start_time
-
-            if block_duration < (PROF_MIN_DURATION_MINS * 60):
-                continue
-
-            actual_trim = min(PROF_TRANSITION_BUFFER_SEC, block_duration / 3)
-
-            trim_s = s
-            while trim_s < e and (time_seconds[trim_s] - start_time) <= actual_trim:
-                trim_s += 1
-
-            trim_e = e - 1
-            while trim_e >= s and (end_time - time_seconds[trim_e]) <= actual_trim:
-                trim_e -= 1
-
-            if trim_s <= trim_e:
-                phases[trim_s:trim_e + 1] = p_val
-
-    # --- Inflection detection: depth peaks + gap-chunk extremes ------------
-    deep_peaks, _ = find_peaks(depth, prominence=PROF_PEAK_PROMINENCE, distance=PROF_MIN_PEAK_DIST)
-    shallow_peaks, _ = find_peaks(-depth, prominence=PROF_PEAK_PROMINENCE, distance=PROF_MIN_PEAK_DIST)
-
-    gap_mask = df["TIME"].diff() > pd.Timedelta(minutes=PROF_GAP_THRESHOLD_MINS)
-    chunk_ids = gap_mask.cumsum()
-
-    extra_peaks = []
-    for _, chunk in df.groupby(chunk_ids):
-        if chunk.empty:
-            continue
-        min_idx = chunk[depth_col].idxmin()
-        if chunk.loc[min_idx, depth_col] <= PROF_SURFACE_DEPTH:
-            extra_peaks.append(min_idx)
-        max_idx = chunk[depth_col].idxmax()
-        if chunk.loc[max_idx, depth_col] > PROF_SURFACE_DEPTH:
-            extra_peaks.append(max_idx)
-
-    all_peaks = np.unique(np.concatenate((deep_peaks, shallow_peaks, extra_peaks))).astype(int)
-    valid_peaks = [p for p in all_peaks if phases[p] != target_transect_phase]
-
-    # --- Inflections at the asc/desc edges of each transect block ----------
-    transect_inflections = []
-    padded_t = np.concatenate(([False], phases == target_transect_phase, [False]))
-    t_starts = np.where(padded_t[1:] & ~padded_t[:-1])[0]
-    t_ends = np.where(~padded_t[1:] & padded_t[:-1])[0] - 1
-
-    for s, e in zip(t_starts, t_ends):
-        idx = s - 1
-        while idx >= 0 and phases[idx] not in [1, 2]:
-            idx -= 1
-        if idx >= 0:
-            gap = depth[idx:s + 1]
-            infl_idx = idx + (np.argmax(gap) if phases[idx] == 2 else np.argmin(gap))
-            transect_inflections.append(infl_idx)
-
-        idx = e + 1
-        while idx < len(phases) and phases[idx] not in [1, 2]:
-            idx += 1
-        if idx < len(phases):
-            gap = depth[e:idx + 1]
-            infl_idx = e + (np.argmax(gap) if phases[idx] == 1 else np.argmin(gap))
-            transect_inflections.append(infl_idx)
-
-    all_inflections = np.unique(np.concatenate((valid_peaks, transect_inflections))).astype(int)
-    phases[all_inflections] = 5
-
-    # --- Surfacing: shallow inflection/transect points become phase 3 ------
-    shallow_mask = (depth <= PROF_SURFACING_THRESHOLD) & (np.isin(phases, [5, target_transect_phase]))
-    phases[shallow_mask] = 3
-
-    # --- Fill ambiguous zero blocks: same-on-both-sides, else transition ---
-    padded_zeros = np.concatenate(([False], phases == 0, [False]))
-    zero_starts = np.where(padded_zeros[1:] & ~padded_zeros[:-1])[0]
-    zero_ends = np.where(~padded_zeros[1:] & padded_zeros[:-1])[0] - 1
-
-    for s, e in zip(zero_starts, zero_ends):
-        left_val = phases[s - 1] if s > 0 else None
-        right_val = phases[e + 1] if e < len(phases) - 1 else None
-        if left_val is not None and right_val is not None:
-            phases[s:e + 1] = left_val if left_val == right_val else 7
-        else:
-            phases[s:e + 1] = 7
-
-    # --- Drifting parking/propelled blocks revert to ascent/descent --------
-    parking_mask = np.isin(phases, [4, 6])
-    padded_parking = np.concatenate(([False], parking_mask, [False]))
-    p_starts = np.where(padded_parking[1:] & ~padded_parking[:-1])[0]
-    p_ends = np.where(~padded_parking[1:] & padded_parking[:-1])[0]
-
-    for s, e in zip(p_starts, p_ends):
-        if (e - s) < 2:
-            continue
-        t_blk = time_seconds[s:e]
-        m, _ = np.polyfit(t_blk - t_blk[0], depth[s:e], 1)
-        if abs(m) > PROF_PARKING_GRADIENT:
-            phases[s:e] = 2 if m > 0 else 1
-
-    df["PHASE"] = phases
-
-    # --- Map binned phases back onto every raw measurement -----------------
-    df_merge = df[["TIME", "PHASE"]].copy()
-    df_merge["BIN_TIME"] = df_merge["TIME"]
-    mapped_df = pd.merge_asof(
-        df_raw.dropna(subset=["TIME"]).sort_values("TIME"),
-        df_merge.sort_values("TIME"),
-        on="TIME",
-        direction="nearest",
+def _prof_smoothed_velocity(depth, time, time_seconds, chunk_id, window):
+    # Smooth depth, differentiate per-chunk, then smooth the resulting velocity
+    # itself (median, to despike) - both rolling passes are time-windowed so
+    # they stay meaningful under irregular sampling.
+    depth_series = pd.Series(depth, index=pd.DatetimeIndex(time))
+    smoothed_depth = depth_series.rolling(window, center=True, min_periods=1).mean().to_numpy()
+    velocity = _prof_gradient_per_chunk(smoothed_depth, time_seconds, chunk_id)
+    return (
+        pd.Series(velocity, index=depth_series.index)
+        .rolling(window, center=True, min_periods=1)
+        .median()
+        .to_numpy()
     )
-    mapped_df["PHASE"] = mapped_df["PHASE"].fillna(7).astype(int)
 
-    # An inflection bin spans several raw points; demote them all to transition,
-    # then re-flag only the single most extreme raw point in each as inflection.
-    inflection_times = df.loc[df["PHASE"] == 5, "TIME"]
-    mapped_df.loc[mapped_df["PHASE"] == 5, "PHASE"] = 7
-    for t in inflection_times:
-        mapped_mask = mapped_df["BIN_TIME"] == t
-        if not mapped_mask.any():
+
+def _prof_runs_by_chunk(mask, chunk_id):
+    # Yields (start, end) for each maximal run of True in `mask`, additionally
+    # split wherever chunk_id changes inside it, so a run never bridges a gap.
+    n = len(mask)
+    if n == 0 or not mask.any():
+        return
+    boundary = np.empty(n, dtype=bool)
+    boundary[0] = True
+    boundary[1:] = (mask[1:] != mask[:-1]) | (chunk_id[1:] != chunk_id[:-1])
+    edges = np.flatnonzero(boundary)
+    edges = np.append(edges, n)
+    for s, e in zip(edges[:-1], edges[1:]):
+        if mask[s]:
+            yield int(s), int(e)
+
+
+def _prof_classify_ascent_descent(smoothed_velocity, time_seconds, chunk_id, velocity_threshold, min_duration_seconds):
+    # Threshold velocity into raw ascent/descent, then run-length merge, dropping
+    # runs too short to trust (sensor noise) or that straddle a chunk boundary.
+    n = len(smoothed_velocity)
+    raw_phase = np.zeros(n, dtype=np.int8)
+    raw_phase[smoothed_velocity > velocity_threshold] = _DESCENT
+    raw_phase[smoothed_velocity < -velocity_threshold] = _ASCENT
+
+    change = np.empty(n, dtype=bool)
+    change[0] = True
+    change[1:] = (raw_phase[1:] != raw_phase[:-1]) | (chunk_id[1:] != chunk_id[:-1])
+    run_starts = np.flatnonzero(change)
+    run_ends = np.append(run_starts[1:], n)
+    run_values = raw_phase[run_starts]
+    run_durations = time_seconds[run_ends - 1] - time_seconds[run_starts]
+    keep = (run_values != _UNKNOWN) & (run_durations >= min_duration_seconds)
+
+    return np.repeat(np.where(keep, run_values, _UNKNOWN), run_ends - run_starts).astype(np.int8)
+
+
+def _prof_classify_propelled_surfacing(phase, depth, time_seconds, chunk_id,
+                                        surfacing_depth_threshold, min_duration_seconds,
+                                        min_transect_duration_seconds, transect_phase):
+    # Applied only to what ascent/descent left unknown. A flat, undulating stretch
+    # away from the surface, gated by a much longer minimum duration than surfacing
+    # so a turnaround isn't mistaken for one (a turn also sits near-zero velocity
+    # briefly, but only for seconds, not minutes), is either propelled (ALR-class
+    # platforms, which actually have thrusters) or parking (everything else, which
+    # can only be drifting) - see `transect_phase`.
+    for rs, re in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
+        duration = time_seconds[re - 1] - time_seconds[rs]
+        if np.median(depth[rs:re]) <= surfacing_depth_threshold:
+            if duration >= min_duration_seconds:
+                phase[rs:re] = _SURFACING
+        elif duration >= min_transect_duration_seconds:
+            phase[rs:re] = transect_phase
+
+
+def _prof_classify_inflection(phase, depth, chunk_id, surfacing_depth_threshold):
+    # The single apex of a turn between a descent and an ascent (or vice versa,
+    # for a mid-water W-cast). Only the one deepest/shallowest sample is marked,
+    # unless that apex itself is shallow, in which case it's surfacing instead.
+    # The run's leading edge may be missing entirely (record starts mid-turn,
+    # e.g. no descent ever sampled) as long as the trailing edge confirms the
+    # turn; a missing trailing edge is genuinely ambiguous and always skipped.
+    n = len(phase)
+    for s, e in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
+        if e == n or chunk_id[e] != chunk_id[e - 1]:
             continue
-        idx = df.index[df["TIME"] == t][0]
-        curr_d = df.loc[idx, depth_col]
-        d_prev = df.loc[idx - 1, depth_col] if idx > 0 else curr_d
-        d_next = df.loc[idx + 1, depth_col] if idx < len(df) - 1 else curr_d
-        raw_subset = mapped_df[mapped_mask]
-        # On multi-sensor axes PRES is NaN on non-CTD rows; an inflection bin can
-        # map only onto such rows, leaving an all-NaN subset. idxmax/idxmin raise
-        # on that in pandas >=3, so skip re-flagging when there's no finite depth.
-        if raw_subset[depth_col].notna().sum() == 0:
-            continue
-        if curr_d >= (d_prev + d_next) / 2:
-            extreme_idx = raw_subset[depth_col].idxmax()
+        start_gap = s == 0 or chunk_id[s - 1] != chunk_id[s]
+        before = None if start_gap else phase[s - 1]
+        after = phase[e]
+        lo = s if start_gap else s - 1
+
+        if after == _ASCENT and before in (_DESCENT, None):
+            idx = lo + np.argmax(depth[lo:e + 1])
+        elif after == _DESCENT and before in (_ASCENT, None):
+            idx = lo + np.argmin(depth[lo:e + 1])
         else:
-            extreme_idx = raw_subset[depth_col].idxmin()
-        mapped_df.loc[extreme_idx, "PHASE"] = 5
+            continue
+        phase[idx] = _SURFACING if depth[idx] <= surfacing_depth_threshold else _INFLECTION
 
-    mapped_df.drop(columns=["BIN_TIME"], inplace=True)
-    mapped_df["SCI_PHASE"] = mapped_df["PHASE"]
 
-    # --- Direction -----------------------------------------------------------
-    phases_arr = mapped_df["SCI_PHASE"].to_numpy()
-    n = len(phases_arr)
+def _prof_classify_transition(phase, depth, chunk_id, surfacing_depth_threshold):
+    # Whatever's still unknown immediately either side of a turn - the shoulder
+    # between an inflection/surfacing point and the ascent/descent it leads into
+    # or out of. Shallow, it's surfacing instead, same backstop as above. Same
+    # leading/trailing asymmetry as the inflection pass: the shoulder heading
+    # into a turn can have nothing before it at all (the turn point itself
+    # confirms it), but the shoulder coming out always needs a real ascent/descent
+    # after it, or it's left unknown.
+    n = len(phase)
+    for s, e in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
+        if e == n or chunk_id[e] != chunk_id[e - 1]:
+            continue
+        start_gap = s == 0 or chunk_id[s - 1] != chunk_id[s]
+        before = None if start_gap else phase[s - 1]
+        after = phase[e]
+        turn_to_core = before in (_SURFACING, _INFLECTION) and after in (_ASCENT, _DESCENT)
+        core_to_turn = after in (_SURFACING, _INFLECTION) and before in (_ASCENT, _DESCENT, None)
+        if not (turn_to_core or core_to_turn):
+            continue
+        phase[s:e] = _SURFACING if np.median(depth[s:e]) <= surfacing_depth_threshold else _TRANSITION
 
-    direction = np.full(n, np.nan)
-    direction[phases_arr == 1] = -1
-    direction[phases_arr == 2] = 1
-    direction[np.isin(phases_arr, [3, 4, 6])] = 0
-    mapped_df["PROFILE_DIRECTION"] = direction
 
-    # --- Profile number: each asc/desc core, extended to its boundaries ----
-    core_mask = np.isin(phases_arr, [1, 2])
-    padded_core = np.concatenate(([False], core_mask, [False]))
-    c_starts = np.where(padded_core[1:] & ~padded_core[:-1])[0]
-    c_ends = np.where(~padded_core[1:] & padded_core[:-1])[0]  # exclusive
-    core_blocks = list(zip(c_starts, c_ends))
+def _prof_assign_profile_and_cycle(phase, chunk_id):
+    # Each ascent/descent run is its own profile - no pairing required, so an
+    # upcast with no downcast is still a valid, numbered profile. A profile also
+    # claims its adjacent transition shoulders, and - only on its leading edge -
+    # the single bottom inflection point that marks where it started. It never
+    # reaches past surfacing/propelled/a top inflection: those always belong to
+    # whatever comes after them, so a bottom turn is never claimed by both the
+    # descent before it and the ascent after.
+    #
+    # Cycle: a new one starts as soon as a descent begins (from the same
+    # extended point PROFILE_NUMBER gives it), running up to but not including
+    # the start of the next descent - so it carries through the bottom
+    # inflection, the ascent, its trailing transition, and surfacing, all as one
+    # cycle. An ascent with nothing directly adjacent before its own extended
+    # start (upcast-only) starts a fresh cycle the same way a descent would -
+    # which is also what makes a mostly-propelled platform start a new cycle
+    # each time it actually goes underwater.
+    n = len(phase)
+    core_mask = (phase == _ASCENT) | (phase == _DESCENT)
+    padded = np.concatenate(([False], core_mask, [False]))
+    starts = np.flatnonzero(padded[1:] & ~padded[:-1])
+    ends = np.flatnonzero(~padded[1:] & padded[:-1])  # exclusive
 
     profile_num = np.full(n, np.nan)
-    if core_blocks:
-        boundaries = []  # inclusive last-index of each profile (except the last)
-        for i in range(len(core_blocks) - 1):
-            end_i = core_blocks[i][1]
-            start_next = core_blocks[i + 1][0]
-            if start_next <= end_i:
-                boundaries.append(end_i - 1)
-                continue
+    cycle = np.ones(n, dtype=np.int32)
+    prev_hi = None
+    current_cycle = 1
+    for k, (s, e) in enumerate(zip(starts, ends), start=1):
+        lo = s
+        while lo > 0 and phase[lo - 1] == _TRANSITION and chunk_id[lo - 1] == chunk_id[lo]:
+            lo -= 1
+        if phase[s] == _ASCENT and lo > 0 and phase[lo - 1] == _INFLECTION and chunk_id[lo - 1] == chunk_id[lo]:
+            lo -= 1
 
-            region = np.arange(end_i, start_next)
-            region_phases = phases_arr[region]
-            infl = region[region_phases == 5]
-            surf = region[region_phases == 3]
-            if len(infl) > 0:
-                split = int(infl[-1])
-            elif len(surf) > 0:
-                split = int(surf[-1])
-            else:
-                split = (end_i + start_next - 1) // 2
-            boundaries.append(split)
+        hi = e
+        while hi < n and phase[hi] == _TRANSITION and chunk_id[hi] == chunk_id[hi - 1]:
+            hi += 1
 
-        prev_end = 0
-        for k in range(len(core_blocks)):
-            this_end = boundaries[k] + 1 if k < len(boundaries) else n
-            profile_num[prev_end:this_end] = k + 1
-            prev_end = this_end
+        profile_num[lo:hi] = k
 
-    # Surfacing rows belong to the cycle but not to any profile.
-    profile_num[phases_arr == 3] = np.nan
-    mapped_df["PROFILE_NUMBER"] = profile_num
+        is_new_cycle = prev_hi is None or phase[s] == _DESCENT or lo != prev_hi
+        if is_new_cycle and prev_hi is not None:
+            current_cycle += 1
+        cycle[lo:] = current_cycle
+        prev_hi = hi
 
-    # --- Cycle: increments on each surfacing -> descent transition ---------
-    surf_mask = mapped_df["SCI_PHASE"] == 3
-    down_mask = mapped_df["SCI_PHASE"] == 2
-    state_subset = mapped_df.loc[surf_mask | down_mask]
-    is_new_cycle = (state_subset["SCI_PHASE"] == 2) & (state_subset["SCI_PHASE"].shift(1) == 3)
-    cycle_trigger = pd.Series(0, index=mapped_df.index)
-    cycle_trigger.loc[state_subset[is_new_cycle].index] = 1
-    mapped_df["CYCLE"] = cycle_trigger.cumsum() + 1
+    return profile_num, cycle
 
-    # --- Gradient: per-profile linear depth-vs-time fit over the core rows --
-    mapped_df["GRADIENT"] = np.nan
-    core_series = pd.Series(core_mask, index=mapped_df.index)
-    core_rows = mapped_df[core_series & mapped_df["PROFILE_NUMBER"].notna()]
-    for _, group in core_rows.groupby("PROFILE_NUMBER"):
-        x = (group["TIME"] - group["TIME"].iloc[0]).dt.total_seconds().values
-        y = group[depth_col].values
-        if len(x) > 1:
-            m, _ = np.polyfit(x, y, 1)
-            pnum = group["PROFILE_NUMBER"].iloc[0]
-            mapped_df.loc[mapped_df["PROFILE_NUMBER"] == pnum, "GRADIENT"] = m
 
-    return mapped_df
+def _classify_profiles(df_raw, depth_col, transect_phase=_PARKING):
+    """Port of the pelagos_py "Find Profiles" classifier (hardcoded defaults).
+
+    Works directly on the raw measurement grid (no resampling/peak-finding),
+    which makes it both more reliable and considerably faster than the previous
+    classifier. Takes a raw frame with ``TIME``/``depth_col`` (any row order,
+    NaNs allowed) and returns a frame of the same shape/order carrying
+    ``SCI_PHASE``, ``PROFILE_DIRECTION``, ``PROFILE_NUMBER``, ``CYCLE`` and
+    ``GRADIENT`` alongside the original columns.
+
+    ``transect_phase``: the SCI_PHASE assigned to a long, flat, non-surface
+    "unknown" stretch — ``_PROPELLED`` (6) for ALR-class platforms, which
+    genuinely have thrusters, ``_PARKING`` (4) for anything else, which can
+    only be drifting. Caller decides which (see ``_compute_profiles``).
+    """
+    df = df_raw.dropna(subset=["TIME", depth_col]).sort_values("TIME")
+
+    if df.empty:
+        out = df_raw.copy()
+        out["SCI_PHASE"] = _UNKNOWN
+        out["PROFILE_NUMBER"] = np.nan
+        out["PROFILE_DIRECTION"] = np.nan
+        out["CYCLE"] = 1
+        out["GRADIENT"] = np.nan
+        return out
+
+    # astype("int64") on a datetime64 array assumes its native unit; pandas'
+    # default resolution varies by version/source (ns historically, us as of
+    # pandas 3), so normalize to ns first or the deltas below are silently
+    # off by a unit-dependent factor (e.g. 1000x under datetime64[us]).
+    time_seconds = df["TIME"].to_numpy().astype("datetime64[ns]").astype("int64") / 1e9
+    depth = df[depth_col].to_numpy(dtype=float)
+
+    chunk_id = _prof_compute_chunk_id(time_seconds, PROF_GAP_THRESHOLD_MINS * 60)
+    smoothed_velocity = _prof_smoothed_velocity(
+        depth, df["TIME"].to_numpy(), time_seconds, chunk_id, f"{PROF_SMOOTHING_WINDOW_SEC}s"
+    )
+
+    phase = _prof_classify_ascent_descent(
+        smoothed_velocity, time_seconds, chunk_id, PROF_VELOCITY_THRESH, PROF_MIN_DURATION_SEC
+    )
+    _prof_classify_propelled_surfacing(
+        phase, depth, time_seconds, chunk_id,
+        PROF_SURFACING_DEPTH_THRESHOLD, PROF_MIN_DURATION_SEC, PROF_MIN_TRANSECT_DURATION_SEC,
+        transect_phase,
+    )
+    _prof_classify_inflection(phase, depth, chunk_id, PROF_SURFACING_DEPTH_THRESHOLD)
+    _prof_classify_transition(phase, depth, chunk_id, PROF_SURFACING_DEPTH_THRESHOLD)
+
+    direction = np.full(len(phase), np.nan)
+    direction[phase == _ASCENT] = -1
+    direction[phase == _DESCENT] = 1
+    direction[(phase == _SURFACING) | (phase == _PROPELLED) | (phase == _PARKING)] = 0
+
+    profile_num, cycle = _prof_assign_profile_and_cycle(phase, chunk_id)
+
+    result = pd.DataFrame(
+        {
+            "SCI_PHASE": phase,
+            "PROFILE_NUMBER": profile_num,
+            "PROFILE_DIRECTION": direction,
+            "CYCLE": cycle,
+            "GRADIENT": smoothed_velocity,
+        },
+        index=df.index,
+    )
+
+    out = df_raw.copy()
+    out[_PROF_DERIVED_COLUMNS] = result.reindex(out.index)
+    out["SCI_PHASE"] = out["SCI_PHASE"].fillna(_UNKNOWN).astype(int)
+    out["CYCLE"] = out["CYCLE"].ffill().fillna(1).astype(int)
+    return out
 
 
 def _compute_profiles(filepath, log, names, existing, time_var):
@@ -483,33 +547,47 @@ def _compute_profiles(filepath, log, names, existing, time_var):
     if n_orig < 2:
         return [], {}, {}
 
-    # ALR-class platforms are propelled (transect phase 6); everything else parks (4).
-    target_transect = 6 if "ALR" in str(filepath).upper() else 4
+    # A clock reset/backward jump (NaT or a timestamp earlier than everything
+    # before it) must be excluded before classification, not just sorted into
+    # place: sort_values() below would otherwise interleave the reordered
+    # samples with their new chronological neighbours at a near-zero time
+    # delta, which sends np.gradient's velocity computation to +/-inf/NaN -
+    # silently misclassifying a real (and sometimes huge) stretch of genuine
+    # dives as one long "unknown" run that then gets swept into propelled/
+    # parking. Same hard rule as the general plot pipeline (see
+    # plot_logic._hard_time_valid_mask).
+    time_ok = plot_logic._hard_time_valid_mask(t_arr)
+    t_masked = np.asarray(t_parsed).copy()
+    t_masked[~time_ok] = np.datetime64("NaT")
 
-    df_raw = pd.DataFrame({"TIME": t_parsed, "PRES": pres_arr})
-    df_raw["ORIG_IDX"] = np.arange(n_orig)
+    # An exact-duplicate timestamp (e.g. two overlapping recording segments
+    # after a clock reset) is just as fatal here - a zero time delta between
+    # adjacent samples divides by zero in np.gradient - but isn't "backward,"
+    # so the hard-drop above doesn't catch it. Keep only the first occurrence.
+    # Scoped to profiling only: elsewhere (a plain scatter plot) two points
+    # sharing a timestamp are harmless.
+    dup = pd.Series(t_masked).duplicated(keep="first").to_numpy() & ~pd.isnull(t_masked)
+    t_masked[dup] = np.datetime64("NaT")
 
-    mapped_df = _classify_profiles(df_raw, "PRES", target_transect)
-    if mapped_df is None or mapped_df.empty:
-        return [], {}, {}
+    df_raw = pd.DataFrame({"TIME": t_masked, "PRES": pres_arr})
 
-    # Scatter the per-measurement results back onto the original file axis.
-    valid_idx = mapped_df["ORIG_IDX"].to_numpy().astype(int)
-    out = {
-        "SCI_PHASE": np.zeros(n_orig, dtype=int),
-        "PROFILE_NUMBER": np.full(n_orig, np.nan),
-        "PROFILE_DIRECTION": np.full(n_orig, np.nan),
-        "CYCLE": np.full(n_orig, np.nan),
-        "PROFILE_GRADIENT": np.full(n_orig, np.nan),
-    }
-    out["SCI_PHASE"][valid_idx] = mapped_df["SCI_PHASE"].to_numpy()
-    out["PROFILE_NUMBER"][valid_idx] = mapped_df["PROFILE_NUMBER"].to_numpy()
-    out["PROFILE_DIRECTION"][valid_idx] = mapped_df["PROFILE_DIRECTION"].to_numpy()
-    out["CYCLE"][valid_idx] = mapped_df["CYCLE"].to_numpy()
-    out["PROFILE_GRADIENT"][valid_idx] = mapped_df["GRADIENT"].to_numpy()
+    # ALR-class platforms genuinely have thrusters, so their long flat non-surface
+    # stretches are propelled (6); everything else can only be drifting there, so
+    # it's parking (4). No ALR marker variable exists in OG1 files, so - as
+    # before the pelagos_py port - this is detected from the filename/path.
+    is_alr = "ALR" in str(filepath).upper()
+    transect_phase = _PROPELLED if is_alr else _PARKING
+    mapped_df = _classify_profiles(df_raw, "PRES", transect_phase)
 
     arrays, meta = {}, {}
-    mapped_mask = np.isin(np.arange(n_orig), valid_idx)
+    mapped_mask = df_raw[["TIME", "PRES"]].notna().all(axis=1).to_numpy()
+    out = {
+        "SCI_PHASE": mapped_df["SCI_PHASE"].to_numpy(),
+        "PROFILE_NUMBER": mapped_df["PROFILE_NUMBER"].to_numpy(),
+        "PROFILE_DIRECTION": mapped_df["PROFILE_DIRECTION"].to_numpy(),
+        "CYCLE": mapped_df["CYCLE"].to_numpy(),
+        "PROFILE_GRADIENT": mapped_df["GRADIENT"].to_numpy(),
+    }
     for name in wanted:
         arrays[name] = out[name]
         meta[name] = {**DERIVED_METADATA[name], "type": "numeric"}
@@ -629,6 +707,14 @@ def derive_all_extra_variables(filepath, log_cb=None):
     all_wanted = []
     all_arrays = {}
     all_meta = {}
+
+    try:
+        tw, ta, tm = _compute_time_qc(filepath, log, names, existing, time_var)
+        all_wanted.extend(tw)
+        all_arrays.update(ta)
+        all_meta.update(tm)
+    except Exception as e:
+        log(f"TIME QC derivation failed ({e})")
 
     try:
         cw, ca, cm = _compute_ctd(filepath, log, names, existing, time_var)
