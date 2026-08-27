@@ -19,12 +19,12 @@ dependencies = [
     "xarray",
     "pandas",
     "numpy",
-    "httpx",
     "requests",
     "h5netcdf",
     "netcdf4",
     "gsw",
-    "scipy"
+    "scipy",
+    "copernicusmarine"
 ]
 
 [project.scripts]

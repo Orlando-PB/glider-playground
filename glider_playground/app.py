@@ -23,6 +23,10 @@ from . import plot_logic
 from . import spatial_logic
 from . import update_logic
 from . import waypoint_logic
+from . import server_config
+
+server_config.configure_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -55,9 +59,6 @@ async def _json_500(request: Request, exc: Exception):
 # "other" time on the very first overlay). Daemon thread; failures are harmless.
 import threading as _threading
 _threading.Thread(target=overlay_logic.warm_up, name="cm-warmup", daemon=True).start()
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -135,7 +136,7 @@ _PLUGIN_BODY: list[str] = []
 
 
 def _is_server() -> bool:
-    return os.getenv("IS_SERVER") == "True"
+    return server_config.IS_SERVER
 
 
 def _index_html() -> str:
@@ -255,12 +256,12 @@ def get_config():
         version = importlib.metadata.version("glider-playground")
     except Exception:
         version = "unknown"
-    is_server = os.getenv("IS_SERVER") == "True"
+    is_server = server_config.IS_SERVER
     return {
         "is_server": is_server,
         "version": version,
         "throttle": is_server,
-        "low_memory": os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes"),
+        "low_memory": server_config.LOW_MEMORY,
     }
 
 
@@ -281,7 +282,7 @@ def get_file(file_id: str):
 
 @app.delete("/api/files/{file_id}")
 def delete_file(file_id: str):
-    if os.getenv("IS_SERVER") == "True":
+    if server_config.IS_SERVER:
         raise HTTPException(status_code=403, detail="File deletion not available in server mode")
     if not cache_logic.remove_file(file_id):
         raise HTTPException(status_code=404, detail="Unknown file id")
@@ -340,7 +341,7 @@ def _register_paths(paths):
 @app.post("/api/files/pick")
 def pick_files():
     """Native multi-file picker (local only)."""
-    if os.getenv("IS_SERVER") == "True":
+    if server_config.IS_SERVER:
         return {"status": "error", "message": "File picker not available in server mode"}
 
     darwin = [
@@ -372,7 +373,7 @@ def pick_files():
 @app.post("/api/files/pick_folder")
 def pick_folder():
     """Native folder picker; registers every .nc inside (recursively)."""
-    if os.getenv("IS_SERVER") == "True":
+    if server_config.IS_SERVER:
         return {"status": "error", "message": "Folder picker not available in server mode"}
 
     darwin = [
@@ -681,7 +682,7 @@ def api_copernicus_status():
 async def api_copernicus_login(request: Request):
     """Validate + persist Copernicus Marine credentials entered in the app, so
     overlays work without running 'copernicusmarine login' in a terminal."""
-    if os.getenv("IS_SERVER") == "True":
+    if server_config.IS_SERVER:
         raise HTTPException(status_code=403, detail="Copernicus login not available in server mode")
     body = await request.json()
     return overlay_logic.login(body.get("username"), body.get("password"))

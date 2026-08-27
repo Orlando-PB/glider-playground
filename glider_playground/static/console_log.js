@@ -9,6 +9,26 @@
         return _origWarn.apply(console, args);
     };
 
+    // --- Diagnostics toggle ---
+    // Off by default: the only thing logged is the one-line startup banner
+    // (logVersion). On: the full API/PLOT/RENDER/REDRAW timing breakdowns
+    // below, useful for perf or memory-leak investigation. Persisted in
+    // localStorage, which — since every panel is a same-origin iframe — is
+    // shared instantly across all of them. Toggle from any panel's devtools
+    // console: gpSetDebug(true) / gpSetDebug(false).
+    function _readDebugFlag() {
+        try { return localStorage.getItem('gp_debug') === '1'; } catch (_) { return false; }
+    }
+    window.GP_DEBUG = _readDebugFlag();
+    window.gpSetDebug = function (on) {
+        window.GP_DEBUG = !!on;
+        try { localStorage.setItem('gp_debug', on ? '1' : '0'); } catch (_) {}
+        console.log(
+            `%c Diagnostics ${on ? 'ON' : 'OFF'} `,
+            `background:${on ? '#14532d' : '#3a1a1a'};color:${on ? '#86efac' : '#fca5a5'};padding:2px 6px;border-radius:3px`
+        );
+    };
+
     // --- API call batching ---
     // Calls within a 150ms window are grouped and deduplicated.
     // /api/files is very high-frequency polling — demoted to console.debug (hidden unless Verbose).
@@ -60,7 +80,7 @@
         _skipNextApiLog = false;
         const response = await _origFetch.apply(this, args);
         const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
-        if (!skipLog && url.indexOf('/api/') !== -1) {
+        if (window.GP_DEBUG && !skipLog && url.indexOf('/api/') !== -1) {
             const t = response.headers && response.headers.get('X-Process-Time');
             if (t) {
                 try {
@@ -89,6 +109,7 @@
     // timing pipeline — zoom-in high-res swaps and zoom-out/reset. `points` is the
     // count now on the plot, so you can watch it change as you zoom in and back out.
     window.logRedraw = function (action, points, ms) {
+        if (!window.GP_DEBUG) return;
         const pts = (typeof points === 'number') ? points.toLocaleString() + ' pts' : '';
         const t = (typeof ms === 'number') ? `  %c${(ms).toFixed(0)}ms` : '';
         const styles = [
@@ -101,6 +122,7 @@
     };
 
     window.logRender = function (label, ms) {
+        if (!window.GP_DEBUG) return;
         const seconds = (ms / 1000).toFixed(3);
         console.log(
             `%c RENDER %c ${label}  %c${seconds}s`,
@@ -136,6 +158,7 @@
     //             header chip (defaults to the green "PLOT" badge). Lets other
     //             pipelines (e.g. overlays) reuse this same breakdown view.
     window.logPlotTiming = function (label, phases, totalMs, note, detail, opts) {
+        if (!window.GP_DEBUG) return;
         opts = opts || {};
         const badge = opts.badge || 'PLOT';
         const badgeBg = opts.badgeBg || '#14532d';
@@ -220,5 +243,8 @@
             parts.push('background:#3a1a1a;color:#fca5a5;padding:2px 6px;border-radius:0 3px 3px 0');
         }
         console.log(...parts);
+        if (!window.GP_DEBUG) {
+            console.log('%cdiagnostics off — run gpSetDebug(true) for API/PLOT/RENDER timing logs', 'color:#5b6472');
+        }
     };
 })();

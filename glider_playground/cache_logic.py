@@ -17,6 +17,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -32,6 +33,9 @@ import xarray as xr
 from . import plot_logic
 from . import spatial_logic
 from . import derive_logic
+from . import server_config
+
+logger = logging.getLogger(__name__)
 
 # --- Configurable Variables ---
 THROTTLE_PI_VARIABLES = 0.05
@@ -148,7 +152,7 @@ def _lower_worker_priority():
     Skipped off-server: on macOS niceness is per-process, and the local
     box has spare cores anyway, so we never want to slow it down.
     """
-    if os.getenv("IS_SERVER") != "True":
+    if not server_config.IS_SERVER:
         return
     try:
         os.setpriority(os.PRIO_PROCESS, 0, 10)
@@ -648,7 +652,7 @@ def _is_removed(rec: dict) -> bool:
     return rec.get("_removed", False)
 
 
-_LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
+_LOW_MEMORY = server_config.LOW_MEMORY
 
 
 # ---------- binary plot-payload cache ----------
@@ -834,7 +838,7 @@ def _prewarm_default_plots(rec: dict):
     except Exception:
         cycle_var = None
 
-    is_server = os.getenv("IS_SERVER") == "True"
+    is_server = server_config.IS_SERVER
     # Match the frontend's Auto budget: 60k on the server, 100k locally.
     max_points = 60000 if is_server else 100000
 
@@ -895,7 +899,7 @@ def _process(file_id: str):
             _persist_locked()
         return
 
-    is_server = os.getenv("IS_SERVER") == "True"
+    is_server = server_config.IS_SERVER
     _lower_worker_priority()
     done_steps = set(rec.get("_done_steps") or [])
 
@@ -969,7 +973,7 @@ def _process(file_id: str):
             try:
                 derive_logic.derive_all_extra_variables(p, log_cb=_derive_cb)
             except Exception as e:
-                print(f"Derivation failed for {p}: {e}")
+                logger.warning("Derivation failed for %s: %s", p, e)
 
             _release_memory()
             _mark_step_done(rec, STEP_DERIVE)

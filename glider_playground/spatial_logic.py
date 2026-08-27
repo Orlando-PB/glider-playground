@@ -160,81 +160,51 @@ def _to_float_array(arr):
 
 
 def _read_lat_lon_pres_temp(filepath):
-    """Read LAT/LON/PRES/TEMP as plain float arrays, preferring preloaded RAM."""
-    pre = plot_logic._get_preloaded(filepath)
-    if pre is not None:
-        lat_name, lon_name = _resolve_latlon_names(pre)
-        if lat_name is None or lon_name is None:
-            raise ValueError("No LATITUDE/LONGITUDE in this file")
-        lat = pre[lat_name]
-        lon = pre[lon_name]
-        pres = pre['PRES'] if 'PRES' in pre else np.zeros_like(lat)
-        temp = pre.get('TEMP')
-    else:
+    """Read LAT/LON/PRES/TEMP as plain float arrays, via the shared var-read cache."""
+    needed = list(LAT_NAMES) + list(LON_NAMES) + ['PRES', 'TEMP']
+    arrs = _read_named_arrays(filepath, needed)
+    lat_name, lon_name = _resolve_latlon_names(arrs)
+    if lat_name is None or lon_name is None:
         if not os.path.exists(filepath):
             raise FileNotFoundError("File not found")
-        with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
-            lat_name, lon_name = _resolve_latlon_names(nc.variables)
-            if lat_name is None or lon_name is None:
-                raise ValueError("No LATITUDE/LONGITUDE in this file")
-            lat = nc.variables[lat_name][:]
-            lon = nc.variables[lon_name][:]
-            pres = nc.variables['PRES'][:] if 'PRES' in nc.variables else np.zeros_like(lat)
-            temp = nc.variables['TEMP'][:] if 'TEMP' in nc.variables else None
-
-    lat = _to_float_array(lat)
-    lon = _to_float_array(lon)
-    pres = _to_float_array(pres)
-    temp = _to_float_array(temp) if temp is not None else None
+        raise ValueError("No LATITUDE/LONGITUDE in this file")
+    lat = arrs[lat_name]
+    lon = arrs[lon_name]
+    pres = arrs.get('PRES', np.zeros_like(lat))
+    temp = arrs.get('TEMP')
     return lat, lon, pres, temp
 
 
 def _read_named_arrays(filepath, names):
-    """Read the given variables as float arrays, preferring preloaded RAM/disk.
+    """Read the given variables as float arrays, via the shared var-read cache
+    (`plot_logic._read_vars_cached`) — same preloaded-RAM/disk/raw-file fallback
+    the main plot pipeline uses, so a low-memory/server deployment reads only
+    the requested variables from disk (not every preloaded array) and reuses
+    the result across repeated calls instead of re-reading every time.
 
     Missing variables are simply omitted from the result rather than raising,
     so callers can probe for optional fields (e.g. DAC, QC flags).
     """
-    pre = plot_logic._get_preloaded(filepath)
-    out = {}
-    if pre is not None:
-        for n in names:
-            if n in pre:
-                out[n] = _to_float_array(pre[n])
-        return out
-    if not os.path.exists(filepath):
-        raise FileNotFoundError("File not found")
-    with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
-        for n in names:
-            if n in nc.variables:
-                out[n] = _to_float_array(nc.variables[n][:])
-    return out
+    result = plot_logic._read_vars_cached(filepath, tuple(names)) or {}
+    return {n: _to_float_array(arr) for n, arr in result.items()}
 
 
 def _read_track_times(filepath):
     """Return the TIME coordinate as float epoch seconds (NaN where invalid).
 
-    Two storage forms must be handled: the RAM/disk preload goes through
-    xarray which decodes CF time to ``datetime64[ns]``, while the netCDF4
-    fallback yields the raw numeric ``seconds since 1970``. Both collapse to
-    epoch seconds here so callers can do plain second-based arithmetic.
+    `_read_vars_cached` always goes through xarray (preloaded or raw-file
+    fallback alike), which decodes CF time to ``datetime64[ns]``. That's
+    collapsed to epoch seconds here so callers can do plain second-based
+    arithmetic; the numeric branch below is a defensive fallback in case a
+    caller ever hands this a raw (already-numeric) time array.
     """
-    pre = plot_logic._get_preloaded(filepath)
-    raw = None
-    if pre is not None:
-        for k in ('TIME', 'TIME_GPS'):
-            if k in pre:
-                raw = pre[k]
-                break
-    else:
-        try:
-            with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
-                for k in ('TIME', 'TIME_GPS'):
-                    if k in nc.variables:
-                        raw = nc.variables[k][:]
-                        break
-        except Exception:
-            return None
+    try:
+        result = plot_logic._read_vars_cached(filepath, ('TIME', 'TIME_GPS')) or {}
+    except Exception:
+        return None
+    raw = result.get('TIME')
+    if raw is None:
+        raw = result.get('TIME_GPS')
     if raw is None:
         return None
 

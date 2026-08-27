@@ -18,6 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import server_config
+
 logger = logging.getLogger(__name__)
 
 # The copernicusmarine toolbox stores credentials in a single file under the
@@ -46,6 +48,7 @@ def login(username: str, password: str) -> dict:
         import copernicusmarine
     except ImportError:
         return {"status": "error", "message": "copernicusmarine package is not installed"}
+    server_config.tame_copernicus_logging()
     try:
         # check_credentials_valid=True verifies online before writing: invalid
         # creds return False and leave any existing file untouched.
@@ -110,7 +113,8 @@ def warm_up() -> None:
     try:
         import copernicusmarine  # noqa: F401
     except Exception:
-        pass
+        return
+    server_config.tame_copernicus_logging()
 
 # Keep the cell grid under this per side so the globe stays responsive. The
 # satellite CHL-a grid is 1/24° (≈4 km), so 800 keeps a box of up to ~33° per
@@ -197,6 +201,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
             "hint": "Run: pip install copernicusmarine",
             "setup": "install",
         }
+    server_config.tame_copernicus_logging()
 
     # Fetch a ~12° (TARGET) box of latitude centred on the deployment, and a
     # longitude span widened by 1/cos(lat) so the box covers a *physically* square
@@ -234,22 +239,22 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     key = _cache_key(var, min_lat, max_lat, min_lon, max_lon, date_str)
     if key in _CACHE:
         logger.info("Overlay %s cache hit for %s", var, date_str)
-        print(f"[{var}] Cache hit for {date_str}", flush=True)
         # Don't mutate the cached object — hand back a shallow copy whose
         # `_timing` reflects *this* (cache-hit) request, not the original fetch.
         out = dict(_CACHE[key])
         out["_timing"] = {"prep": prep, "cache_hit": True}
         return out
 
-    print(f"[{var}] Fetching for date={date_str} bbox=({min_lat:.1f},{min_lon:.1f})-({max_lat:.1f},{max_lon:.1f})", flush=True)
+    logger.debug("[%s] Fetching for date=%s bbox=(%.1f,%.1f)-(%.1f,%.1f)",
+                  var, date_str, min_lat, min_lon, max_lat, max_lon)
     timing = {"download": 0.0, "extract": 0.0, "attempts": 0}
     t0 = time.time()
     result = runner(copernicusmarine, min_lat, max_lat, min_lon, max_lon, date_str, timing)
     elapsed = time.time() - t0
     if "error" in result:
-        print(f"[{var}] Fetch failed in {elapsed:.1f}s: {result['error']}", flush=True)
+        logger.warning("[%s] Fetch failed in %.1fs: %s", var, elapsed, result["error"])
     else:
-        print(f"[{var}] Fetch OK in {elapsed:.1f}s — {size_of(result)}, date={result['date']}", flush=True)
+        logger.debug("[%s] Fetch OK in %.1fs — %s, date=%s", var, elapsed, size_of(result), result["date"])
         # Attach the accumulated download/extract phases plus prep for the client.
         timing["prep"] = prep
         result["_timing"] = timing
@@ -359,7 +364,6 @@ def _try_datasets(dataset_ids, open_fn, date_str):
 
 def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     logger.info("Fetching %s from %s for %s", spec["variable"], dataset_id, date_str)
-    print(f"[{spec['variable']}] open_dataset {dataset_id} …", flush=True)
     t0 = time.time()
     kwargs = dict(
         dataset_id=dataset_id,
@@ -384,7 +388,7 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
             timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
             timing["attempts"] = timing.get("attempts", 0) + 1
     t_open = time.time() - t0
-    print(f"[{spec['variable']}] open_dataset done in {t_open:.1f}s", flush=True)
+    logger.debug("[%s] open_dataset done in %.1fs", spec["variable"], t_open)
     t1 = time.time()
     result = _extract(ds, spec["variable"], date_str, demean=spec.get("demean", False))
     if timing is not None:
@@ -395,7 +399,6 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
 def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     variables = CURRENTS["variables"]
     logger.info("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
-    print(f"[currents] open_dataset {dataset_id} …", flush=True)
     t0 = time.time()
     try:
         ds = cm.open_dataset(
@@ -415,7 +418,7 @@ def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, da
             timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
             timing["attempts"] = timing.get("attempts", 0) + 1
     t_open = time.time() - t0
-    print(f"[currents] open_dataset done in {t_open:.1f}s", flush=True)
+    logger.debug("[currents] open_dataset done in %.1fs", t_open)
     t1 = time.time()
     result = _extract_vec(ds, variables, date_str)
     if timing is not None:

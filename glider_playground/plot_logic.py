@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import struct
 import shutil
 import xarray as xr
@@ -12,6 +13,10 @@ import functools
 import threading
 import time
 from pathlib import Path
+
+from . import server_config
+
+logger = logging.getLogger(__name__)
 
 # Max points sent to the WebGL plot. The on-screen draw cost scales with this, and
 # bg-fetch refines detail on zoom, so the zoomed-out view can decimate hard without
@@ -106,7 +111,7 @@ def plot_cache_params_str(*, x_var, y_var, c_var, qc_flags,
 # on disk instead of kept permanently in RAM. Each request loads only what it
 # needs, uses it, then the memory is freed. Full prewarming still happens — it
 # just writes to the SSD rather than filling RAM.
-_LOW_MEMORY = os.getenv("LOW_MEMORY_MODE", "").lower() in ("1", "true", "yes")
+_LOW_MEMORY = server_config.LOW_MEMORY
 _DISK_CACHE_ROOT = Path.home() / ".glider_playground"
 _PRELOAD_CACHE_DIR = _DISK_CACHE_ROOT / "preload"
 _CTD_CACHE_DIR = _DISK_CACHE_ROOT / "ctd_cache"
@@ -770,7 +775,7 @@ def get_variables(filepath):
                         "description": description
                     })
     except Exception as e:
-        print(f"Error opening {filepath}: {e}")
+        logger.warning("Error opening %s: %s", filepath, e)
         return []
     existing = {v["name"] for v in variables}
     for name, m in get_derived_meta(filepath).items():

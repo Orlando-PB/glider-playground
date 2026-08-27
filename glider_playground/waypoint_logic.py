@@ -15,12 +15,12 @@ waypoints aren't derived from file content.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 import uuid
 
 from . import cache_logic
+from . import server_config
 
 WAYPOINTS_FILE = cache_logic.CACHE_ROOT / "waypoints.json"
 
@@ -53,7 +53,7 @@ _SEED_WAYPOINTS = [
 def _seed_if_empty() -> None:
     """Write the seed list straight to disk (bypassing add_waypoint, which
     would call back into _load and recurse into this same check)."""
-    if os.getenv("IS_SERVER") != "True" or WAYPOINTS_FILE.exists():
+    if not server_config.IS_SERVER or WAYPOINTS_FILE.exists():
         return
     now = time.time()
     seeded = [

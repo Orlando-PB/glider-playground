@@ -131,9 +131,9 @@ There's no separate Filter Time / Interpolate / Clean toggle — that processing
 
 ---
 
-## Jelly — AI Assistant
+## Jelly — Notifications
 
-**Jelly** is an optional AI helper (the bubble, bottom-right). Paste an OpenAI API key and it can answer questions and drive the app for you — switch presets, build dashboards, toggle overlays, and more. The key is stored locally in a `.env` file and never leaves your machine.
+**Jelly** is a passive notification bubble (bottom-right). It stays hidden until there's something worth showing — a new release, or Copernicus overlay setup help — then reveals itself with a dot and lists the notes.
 
 ---
 
