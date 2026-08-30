@@ -261,6 +261,30 @@
             cursor: not-allowed;
         }
 
+        /* Consistent height across the main toolbar-tier controls (jelly,
+           settings, theme, sync, download, share, Invert Y, Profile, and the
+           X/Y/Colour/Order/Size/Quality selects) — each previously derived
+           its height only from its own padding + content (icon vs SVG vs
+           text vs icon+text), so they didn't line up. Fix a shared height
+           matching the existing 28px (h-7) cmap swatch button, zero out
+           vertical padding (which would otherwise still count against the
+           now-fixed height) and centre content with flex instead. */
+        .toolbar-actions .toggle-btn, #invertYBtn, #profileSidebarBtn {
+            height: 28px;
+            box-sizing: border-box;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        #xVar, #yVar, #cVar, #drawOrder, #drawOrderSize, #quality {
+            height: 28px;
+            box-sizing: border-box;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+
         /* Segmented "view layout" selector (Classic / Map / Overview / Dashboard):
            a rounded pill rail with a sliding accent for the active option. */
         .view-seg {
@@ -823,7 +847,7 @@
         /* Colour-trim rail — blended into the plot area background, not a
            separate floating card. */
         #cTrimContainer {
-            background: transparent;
+            background: var(--bg-panel);
         }
         /* While any plot panel exists the rail stays mounted: a dimmed,
            non-interactive placeholder (cTrim-inactive) when there's no active
@@ -1017,17 +1041,20 @@
         }
 
         /* ---------- Toolbar ----------
-           Two independent flex rows, not a single row that JS reflows: the
-           first .toolbar-row (logo/files/view/presets + right-side actions)
-           is always visible and never changes shape based on settings state,
-           so it can never shift on load or on toggle. #settingsRow (axes/QC/
-           phases/profiles) is a second row, shown/hidden as a whole by CSS
-           off data-settings-open — nothing inside it needs its own
-           show/hide class. */
+           .toolbar-row is one flex-wrap container, not a single row that JS
+           reflows. .toolbar-topline (logo/files/view + right-side actions)
+           is width:100% so it always claims its own line first and never
+           changes shape based on settings state. Presets and — when open —
+           #settingsRow's groups (axes/QC/phases/profiles) are the remaining
+           children, so they wrap together in whatever space is left rather
+           than each claiming a separate boxed row. #settingsRow itself is
+           shown/hidden as a whole by CSS off data-settings-open (display:
+           contents when open, so its groups act as direct .toolbar-row
+           flex items) — nothing inside it needs its own show/hide class. */
         .toolbar-row {
             display: flex;
             flex-wrap: wrap;
-            align-items: flex-start;
+            align-items: center;
             gap: 4px 10px;
             padding: 8px 14px;
             border-bottom: 1px solid var(--border);
@@ -1061,26 +1088,18 @@
             flex: 0 0 auto;
         }
         /* Settings button shows "Settings <chevron>"; swapped for a lone
-           tune (sliders) icon below 1450px alongside the rest of .group-label. */
+           tune (sliders) icon below 1500px alongside the rest of .group-label. */
         .settings-toggle-icon { display: none; }
         .settings-toggle-text { display: inline-flex; align-items: center; gap: 4px; }
-        #settingsRow {
-            display: none;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 4px 8px;
-            padding: 8px 14px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg-panel);
-        }
-        html[data-settings-open] #settingsRow { display: flex; }
-        /* Flatten the Axes/QC/Phases/Profiles .toolbar-groups into #settingsRow's
-           own flex layout (rather than each group wrapping as one rigid block)
-           so individual controls — the X/Y/Colour selects, Invert Y, Order,
-           Size, Quality, the QC chips, etc. — each wrap on their own and pack
-           the available width efficiently. Group labels/dividers ride along as
-           ordinary flex items, still marking where one group ends and the next
-           begins. */
+        #settingsRow { display: none; }
+        html[data-settings-open] #settingsRow { display: contents; }
+        /* Flatten the Axes/QC/Phases/Profiles .toolbar-groups into .toolbar-row's
+           flex layout (rather than each group wrapping as one rigid block) so
+           individual controls — the X/Y/Colour selects, Invert Y, Order, Size,
+           Quality, the QC chips, etc. — each wrap on their own and pack the
+           available width efficiently, right alongside the preset chips. Group
+           labels/dividers ride along as ordinary flex items, still marking
+           where one group ends and the next begins. */
         #settingsRow .toolbar-group { display: contents; }
         .toolbar-group {
             display: flex;
@@ -1088,21 +1107,22 @@
             gap: 6px;
             padding: 0 6px;
         }
-        /* Presets always claims a full row of its own rather than competing
-           for leftover space next to Files/View — with heterogeneous-width
-           groups, plain flex-wrap leaves gaps (a wide group that doesn't fit
-           drops whole to the next line) and squeezes whatever wraps in after
-           it. flex-basis:100% guarantees Presets never shares a line, so it
-           always gets the full toolbar-row width to lay its chips out in — it's
-           a direct .toolbar-row child (not nested in .toolbar-main) precisely so
-           it isn't pinched by .toolbar-actions' width once wrapped onto its own
-           line below both. */
-        #presetsGroup { flex: 1 1 100%; }
-        /* Below 1450px: drop the per-group labels ("Files", "Axes", ...) and
+        /* Presets is a direct .toolbar-row child (not nested in .toolbar-main)
+           so it isn't pinched by .toolbar-actions' width once it wraps below
+           .toolbar-topline (which is width:100%, so it always claims its own
+           line first). Like the Settings groups, #presetsGroup and #presetContainer
+           are flattened (display:contents) so each preset chip becomes a direct
+           .toolbar-row flex item — if left as its own nested flex-wrap box,
+           #presetContainer only gets whatever narrow width is left over on its
+           line, so it wraps chips (e.g. PAR) inside that cramped box instead of
+           using the rest of the row. Flattened, chips wrap using the full row
+           width, alongside the Settings groups when open. */
+        #presetsGroup, #presetContainer { display: contents; }
+        /* Below 1500px: drop the per-group labels ("Files", "Axes", ...) and
            their (i) tooltips — pure clutter at that width, controls still
            work the same — and collapse the Settings button to a lone tune
            (sliders) icon instead of the word. Sizing is unchanged either way. */
-        @media (max-width: 1450px) {
+        @media (max-width: 1500px) {
             .group-label { display: none; }
             .settings-toggle-icon { display: inline-flex; }
             .settings-toggle-text { display: none; }
@@ -1113,6 +1133,7 @@
            release, or Copernicus setup help). ---------- */
         #jellyBubble { position: relative; }
         #jelly-icon { display: block; }
+        :root[data-theme="dark"] #jelly-icon { filter: invert(1); }
         #jellyPanel {
             position: absolute; top: 100%; right: 0; margin-top: 6px;
             background: var(--bg-panel) !important;
@@ -1136,29 +1157,35 @@
             box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
         }
 
-        .jelly-bubble {
-            max-width: 85%;
-            padding: 8px 12px;
+        /* Each notification renders as a small icon+title+body card — not a chat
+           bubble, since Jelly only ever has two things to say: an update is
+           available, or Copernicus overlays need setup. */
+        .jelly-card {
+            display: flex;
+            gap: 10px;
+            max-width: 100%;
+            padding: 9px 10px;
             border-radius: var(--radius-md);
+            background: var(--bg-panel-3);
+            border: 1px solid var(--border);
             font-size: 11.5px;
             line-height: 1.5;
-            word-wrap: break-word;
         }
-        .jelly-bubble.jelly {
-            background: var(--bg-panel-3);
-            color: var(--text-primary);
-            align-self: flex-start;
-            border: 1px solid var(--border);
-            border-bottom-left-radius: 3px;
+        .jelly-card-icon {
+            flex: 0 0 auto;
+            width: 26px; height: 26px;
+            border-radius: 7px;
+            display: flex; align-items: center; justify-content: center;
+            background: color-mix(in srgb, var(--accent) 16%, transparent);
+            color: var(--accent);
         }
-        .jelly-bubble.error {
-            background: rgba(248,113,113,0.12);
-            color: #fca5a5;
-            align-self: stretch;
-            text-align: center;
-            border-radius: var(--radius-md);
-            border: 1px solid rgba(248,113,113,0.3);
+        .jelly-card-icon .material-symbols-outlined { font-size: 16px; }
+        .jelly-card-copernicus .jelly-card-icon {
+            background: color-mix(in srgb, #38bdf8 18%, transparent);
+            color: #38bdf8;
         }
+        .jelly-card-body { flex: 1 1 auto; min-width: 0; }
+        .jelly-card-text { color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; }
         .jelly-actions { font-size: 9px; color: var(--text-muted); margin-top: 3px; }
         /* Copyable command block inside a Jelly bubble (e.g. update instructions). */
         .jelly-cmd {
@@ -1254,9 +1281,9 @@
 
                 <!-- Files -->
                 <div class="toolbar-group" id="datasetGroup" style="position: relative;">
-                    <span class="group-label">
+                    <span class="group-label" data-tip="Select OG1 files to display. Each file is processed once on upload. You can also view BODC's live deployments when available.">
                         Files
-                        <span class="info-dot" data-tip="Select OG1 files to display. Each file is processed once on upload. You can also view BODC's live deployments when available."><span class="material-symbols-outlined">info</span></span>
+                        <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <button id="datasetTrigger" class="dataset-trigger" type="button" aria-haspopup="dialog">
                         <span class="material-symbols-outlined text-[16px]" id="datasetTriggerIcon">database</span>
@@ -1317,9 +1344,9 @@
                      overlays, chat) that swaps the whole-page layout. Distinct from the
                      plot presets below. "Classic" is the default single-plot view. -->
                 <div class="toolbar-group">
-                    <span class="group-label">
+                    <span class="group-label" data-tip="Switch the layout.">
                         View
-                        <span class="info-dot" data-tip="Switch the layout."><span class="material-symbols-outlined">info</span></span>
+                        <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                     </span>
                     <div id="viewSelector" class="view-seg">
                         <button class="view-seg-btn" data-view="classic" title="Single plot + globe + 3D (the default)"><span class="material-symbols-outlined text-[14px]">show_chart</span>Classic</button>
@@ -1342,15 +1369,12 @@
                      show (a new release, or Copernicus setup help). Clicking it opens
                      the notifications panel anchored beneath it. -->
                 <div id="jellyBubble" class="hidden">
-                    <button id="jellyToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Notifications" aria-label="Notifications">
-                        <svg id="jelly-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M6 11a6 6 0 0 1 12 0c0 1.4-1 1.8-2.6 1.9a1.6 1.6 0 0 0-1.4 1.6c0 .9-.7 1.5-2 1.5s-2-.6-2-1.5a1.6 1.6 0 0 0-1.4-1.6C7 12.8 6 12.4 6 11Z" fill="currentColor" stroke="none"/>
-                            <path d="M8 15.5c0 1.8.9 1.8.9 3.5M11.2 16.2c0 2 .9 2 .9 4M14.4 16.2c0 2-.9 2-.9 4M17 15.5c0 1.8-.9 1.8-.9 3.5" />
-                        </svg>
+                    <button id="jellyToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Update available" aria-label="Update available">
+                        <img id="jelly-icon" src="/static/jelly-icon.png" width="18" height="18" alt="Jelly">
                     </button>
                     <div id="jellyPanel" class="w-72 max-w-[95vw] flex-col hidden">
                         <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--border);">
-                            <span class="font-semibold text-xs">Notifications</span>
+                            <span id="jellyPanelTitle" class="font-semibold text-xs">Update available</span>
                             <div class="flex items-center gap-0.5">
                                 <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Dismiss notifications">
                                     <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
@@ -1389,25 +1413,26 @@
                  (basis 100%) Presets only wraps beneath .toolbar-topline once it's
                  claimed line 1, then gets the row's full width to itself. -->
             <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
-                <span class="group-label shrink-0">
+                <span class="group-label shrink-0" data-tip="Select your view, or make custom plots in Settings.">
                     Presets
-                    <span class="info-dot" data-tip="Select your view, or make custom plots in Settings."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
             </div>
-        </div>
 
-        <!-- Settings row: Axes / QC / Phases / Profiles. Whole row is shown or
-             hidden as one unit (see #settingsRow CSS, keyed off data-settings-open
-             on <html>) — nothing inside needs its own show/hide class. Phases and
-             Profiles additionally hide themselves (inline style, via CycleProfile.init
-             in cycle_profile.js) when the loaded file has no SCI_PHASE / cycle data. -->
-        <div id="settingsRow">
+            <!-- Settings: Axes / QC / Phases / Profiles. #settingsRow itself is
+                 display:contents when open (see CSS, keyed off data-settings-open
+                 on <html>) so its groups become items of the same wrapping flex
+                 row as Presets above, instead of a separate boxed row — nothing
+                 inside needs its own show/hide class. Phases and Profiles
+                 additionally hide themselves (inline style, via CycleProfile.init
+                 in cycle_profile.js) when the loaded file has no SCI_PHASE / cycle data. -->
+            <div id="settingsRow">
             <!-- Axes: presets drive variables by default, this is the manual override -->
             <div class="toolbar-group">
-                <span class="group-label">
+                <span class="group-label" data-tip="Pick variables for the X, Y and colour of your plot. You can invert Y and change the colour palette.">
                     Axes
-                    <span class="info-dot" data-tip="Pick variables for the X, Y and colour of your plot. You can invert Y and change the colour palette."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div class="flex items-center gap-1">
                     <span class="text-[9px] text-gray-500 font-medium">X</span>
@@ -1466,9 +1491,9 @@
 
             <!-- QC -->
             <div class="toolbar-group">
-                <span class="group-label">
+                <span id="qcInfoDot" class="group-label" data-tip="QC flags (Argo convention). Click a chip to show only that flag; click again to restore all. PRES/TEMP/CNDC gaps up to 5 minutes are always interpolated (flag 8); exact 0.0 fill values are always flagged missing (flag 9); NaT/out-of-order timestamps are always dropped, and other out-of-range TIME values are flagged bad (flag 4).">
                     QC
-                    <span id="qcInfoDot" class="info-dot" data-tip="QC flags (Argo convention). Click a chip to show only that flag; click again to restore all. PRES/TEMP/CNDC gaps up to 5 minutes are always interpolated (flag 8); exact 0.0 fill values are always flagged missing (flag 9); NaT/out-of-order timestamps are always dropped, and other out-of-range TIME values are flagged bad (flag 4)."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div id="qcFlagsContainer" class="flex items-center gap-0.5">
                     <!-- QC flag chips 0-9 built by buildQcChips() -->
@@ -1480,9 +1505,9 @@
             <!-- Phases (JS-conditional: hidden when the file has no SCI_PHASE) -->
             <div id="phaseDivider" class="group-divider" style="display: none;"></div>
             <div id="phaseContainer" class="toolbar-group" style="display: none;">
-                <span class="group-label">
+                <span id="phaseInfoDot" class="group-label" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases.">
                     Phases
-                    <span id="phaseInfoDot" class="info-dot" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
                 <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
@@ -1492,9 +1517,9 @@
                  profile/cycle data). Direction rides alongside. -->
             <div id="navigateDivider" class="group-divider" style="display: none;"></div>
             <div id="navigateContainer" class="toolbar-group" style="display: none;">
-                <span class="group-label">
+                <span class="group-label" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle.">
                     Profiles
-                    <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
                     <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
@@ -1536,6 +1561,7 @@
                         <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
                     </button>
                 </div>
+            </div>
             </div>
         </div>
     </nav>
@@ -1648,7 +1674,7 @@
                     </div>
                 </div>
 
-                <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px]">
+                <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-0.5 shrink-0 gap-2 z-10 w-[66px]" style="margin-right: 8px;">
                     <span id="cTrimLabel" class="font-bold uppercase tracking-wide text-center w-full pb-1.5 whitespace-nowrap overflow-hidden" style="color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 9px;">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
@@ -4915,8 +4941,7 @@
             if (!info || !info.outdated || !info.latest) return;
 
             const steps = Array.isArray(info.steps) ? info.steps : [];
-            let text = `Heads up — a new version of glider-playground is available: `
-                + `${info.current || '?'} → ${info.latest}.`;
+            let text = `${info.current || '?'} → ${info.latest}`;
             if (steps.length) {
                 let how = info.method === 'git' ? 'To update your checkout'
                     : info.method === 'pip' ? 'To upgrade with pip'
@@ -4942,8 +4967,8 @@
 
             // Put the reminder in the panel and drop the commands into a copyable
             // code block (or a one-click download button) beneath the prose.
-            const div = notifyJelly(text, { open: firstSight });
-            if (steps.length) appendCommandBlock(div, steps);
+            const body = notifyJelly('update', 'system_update', 'Update available', text, { open: firstSight });
+            if (steps.length) appendCommandBlock(body, steps);
         }
 
         async function init() {
@@ -6189,11 +6214,14 @@
         function setLoading(isLoading) {
             isPlotting = isLoading;
             datasetTrigger.disabled = isLoading;
-            if (isLoading) {
-                presetContainer.classList.add('opacity-50', 'pointer-events-none');
-            } else {
-                presetContainer.classList.remove('opacity-50', 'pointer-events-none');
-            }
+            // presetContainer is display:contents (its chips are flattened into
+            // .toolbar-row's own flex-wrap, see CSS), so it renders no box of its
+            // own — opacity/pointer-events set on it wouldn't paint. Toggle each
+            // chip directly instead.
+            presetContainer.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.classList.toggle('opacity-50', isLoading);
+                btn.classList.toggle('pointer-events-none', isLoading);
+            });
         }
 
         window.addEventListener('keydown', (e) => {
@@ -6325,6 +6353,7 @@
         const jellyBubble = document.getElementById('jellyBubble');
         const jellyToggle = document.getElementById('jellyToggle');
         const jellyPanel = document.getElementById('jellyPanel');
+        const jellyPanelTitle = document.getElementById('jellyPanelTitle');
         const jellyCloseBtn = document.getElementById('jellyCloseBtn');
         const jellyClearBtn = document.getElementById('jellyClearBtn');
         const jellyMessages = document.getElementById('jellyMessages');
@@ -6351,31 +6380,40 @@
             jellyBubble.classList.add('hidden');
         });
 
-        function addJellyMessage(role, text, extra) {
+        // Build one notification card: an icon plus body text. The panel header
+        // already carries the title (see notifyJelly), so the card itself is
+        // just icon + text — no nested heading repeating what the header says.
+        function addJellyCard(kind, icon, text) {
             const div = document.createElement('div');
-            div.className = 'jelly-bubble ' + role;
-            div.textContent = text;
-            if (extra) {
-                const meta = document.createElement('div');
-                meta.className = 'jelly-actions';
-                meta.textContent = extra;
-                div.appendChild(meta);
-            }
+            div.className = 'jelly-card jelly-card-' + kind;
+            const iconEl = document.createElement('div');
+            iconEl.className = 'jelly-card-icon';
+            iconEl.innerHTML = `<span class="material-symbols-outlined">${icon}</span>`;
+            const body = document.createElement('div');
+            body.className = 'jelly-card-body';
+            const textEl = document.createElement('div');
+            textEl.className = 'jelly-card-text';
+            textEl.textContent = text;
+            body.append(textEl);
+            div.append(iconEl, body);
             jellyMessages.appendChild(div);
             jellyMessages.scrollTop = jellyMessages.scrollHeight;
-            return div;
+            return body;
         }
 
-        // Reveal the bubble (with a notification dot) and add a note to the panel.
-        // Returns the message element so callers can append command/download blocks.
-        // open=true pops the panel straight away (used for first-seen update notices).
-        function notifyJelly(text, { open = false } = {}) {
+        // Reveal the bubble (with a notification dot) and add a card to the panel.
+        // Returns the card's body element so callers can append command/download
+        // blocks. open=true pops the panel straight away (used for first-seen
+        // update notices and Copernicus setup help).
+        function notifyJelly(kind, icon, title, text, { open = false } = {}) {
             jellyBubble.classList.remove('hidden');
-            const div = addJellyMessage('jelly', text);
-            if (div) div.style.whiteSpace = 'pre-wrap';
+            const body = addJellyCard(kind, icon, text);
+            jellyPanelTitle.textContent = title;
+            jellyToggle.title = title;
+            jellyToggle.setAttribute('aria-label', title);
             if (open) jellyOpen(true);
             else jellyToggle.classList.add('has-update');
-            return div;
+            return body;
         }
 
         // De-dupe Copernicus setup notes so repeated overlay failures don't stack.
@@ -6389,9 +6427,9 @@
             _copernicusNotified = true;
             const text = (msg || 'Copernicus overlays need a quick one-time setup.')
                 + (hint ? `\n\n${hint}` : '');
-            const div = notifyJelly(text, { open: true });
-            if (setup === 'login') appendCopernicusLoginForm(div);
-            else if (div && command) appendCommandBlock(div, command);
+            const body = notifyJelly('copernicus', 'satellite_alt', 'Copernicus Marine setup', text, { open: true });
+            if (setup === 'login') appendCopernicusLoginForm(body);
+            else if (body && command) appendCommandBlock(body, command);
         }
 
         // In-app Copernicus Marine sign-in, for users who'd rather not run
