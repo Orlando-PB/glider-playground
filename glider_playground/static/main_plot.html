@@ -41,11 +41,13 @@
         #profileDiv { position: absolute; top: 0; left: 0; height: 100%; display: none; }
 
         /* Compact, non-interactive colour bar shown only in multiview (>1 plot).
-           Sits in a thin strip on the far left; the plot is shifted right to make
-           room. Vertically pinned to the plot's drawing area via JS (top/bottom). */
+           Sits in a thin strip on the far right, flush against the panel edge and
+           running its full height so it reads as an integrated part of the panel
+           rather than a floating card; the plot is shifted left to make room. */
         #cbar {
-            position: absolute; right: 5px; z-index: 6; display: none;
+            position: absolute; top: 0; bottom: 0; right: 0; z-index: 6; display: none;
             flex-direction: row; align-items: stretch; gap: 3px;
+            padding: 10px 5px 10px 0; box-sizing: border-box;
             pointer-events: none;
         }
         #cbar.active { display: flex; }
@@ -55,8 +57,8 @@
             color: var(--text-secondary); white-space: nowrap; overflow: hidden;
         }
         #cbarBar {
-            width: 13px; align-self: stretch; border-radius: 4px;
-            border: 1px solid var(--border);
+            width: 13px; align-self: stretch;
+            border-left: 1px solid var(--border);
         }
         #cbarTicks {
             display: flex; flex-direction: column; justify-content: space-between;
@@ -307,23 +309,9 @@
             return Number(v.toFixed(decimals)).toString();
         }
 
-        // Pin the colour bar to the plot's drawing area (the y-axis span) using the
-        // real computed margins, so it lines up regardless of theme/title/resize.
-        // Before the first draw _fullLayout doesn't exist yet; callers can pass the
-        // layout margin they just built so the bar lands in its slot from frame one
-        // (avoids a brief unpinned flash before applyCbar re-pins post-draw).
-        function positionCbar(marginFallback) {
-            const cbar = document.getElementById('cbar');
-            const plotDiv = document.getElementById('plotDiv');
-            const m = (plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.margin) || marginFallback;
-            if (m) { cbar.style.top = m.t + 'px'; cbar.style.bottom = m.b + 'px'; }
-        }
-
         // Show/hide + rebuild the colour bar and shift the plot to make room. Cheap
         // and idempotent; safe to call after any render, relayout or state change.
-        // marginFallback (the layout's margin) lets a pre-draw call pin the bar
-        // before Plotly's computed margins exist.
-        function applyCbar(marginFallback) {
+        function applyCbar() {
             const cbar = document.getElementById('cbar');
             const plotDiv = document.getElementById('plotDiv');
             if (!cbar || !plotDiv) return;
@@ -350,8 +338,6 @@
             document.getElementById('cbarMax').textContent = fmtCbar(_cbarMax);
             document.getElementById('cbarMin').textContent = fmtCbar(_cbarMin);
             document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
-
-            positionCbar(marginFallback);
         }
 
         // Size the main plot to leave room for the left profile sidebar and/or the
@@ -1304,9 +1290,8 @@
             // BEFORE the first draw, so Plotly measures the final (narrower) box and
             // paints once into place. Without this the plot draws full-width with the
             // bar on top of it, then resizes — the visible "shift to make room" jump.
-            // No plot exists yet, so layoutPlotArea just sets the box size (no resize);
-            // the bar is pinned from the layout margin we just built.
-            applyCbar(layout.margin);
+            // No plot exists yet, so layoutPlotArea just sets the box size (no resize).
+            applyCbar();
 
             // Returned so callers (initPlot) can await the actual WebGL draw, not just
             // the synchronous trace-building. The secondary work in .then (profile
@@ -2235,10 +2220,6 @@
                 try { window.parent.postMessage({ type: 'plotPointClear' }, '*'); } catch (_) {}
             });
         })();
-
-        // Plotly's responsive resize keeps the plot sized to its (shifted)
-        // container; just re-pin the colour bar to the redrawn drawing area.
-        window.addEventListener('resize', () => { if (cbarActive()) requestAnimationFrame(positionCbar); });
 
         initPlot();
     </script>

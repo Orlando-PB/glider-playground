@@ -29,6 +29,14 @@
             } catch (_) {
                 document.documentElement.setAttribute('data-theme', 'light');
             }
+            // Same idea for the Settings-row open/closed state: apply it
+            // before <body> parses so the toolbar never has a moment in the
+            // wrong state for a returning user.
+            try {
+                if (localStorage.getItem('gp_settings_open') === 'true') {
+                    document.documentElement.setAttribute('data-settings-open', '');
+                }
+            } catch (_) {}
         })();
     </script>
     <style>
@@ -103,7 +111,15 @@
             height: 100vh;
             overflow: hidden;
         }
-        .material-symbols-outlined { font-size: 16px; vertical-align: middle; }
+        .material-symbols-outlined {
+            font-size: 16px;
+            vertical-align: middle;
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            overflow: hidden;
+            white-space: nowrap;
+        }
 
         select, input[type="text"], input[type="password"], input[type="datetime-local"], input[type="number"], button {
             outline: none;
@@ -219,6 +235,7 @@
             font-size: 11px;
             font-weight: 500;
             cursor: pointer;
+            white-space: nowrap;
         }
         :root[data-theme="light"] .toggle-btn {
             background-color: #c8d0dc;
@@ -247,15 +264,20 @@
         /* Segmented "view layout" selector (Classic / Map / Overview / Dashboard):
            a rounded pill rail with a sliding accent for the active option. */
         .view-seg {
-            display: inline-flex; gap: 2px; padding: 3px;
+            display: inline-flex; gap: 2px; padding: 0;
             border-radius: 9999px;
             background-color: var(--bg-panel-3);
-            border: 1px solid var(--border);
+            /* Shrink and scroll rather than forcing the whole group to wrap
+               onto its own line when the toolbar is tight on width. */
+            flex-shrink: 1;
+            min-width: 0;
+            overflow-x: auto;
+            scrollbar-width: thin;
         }
-        :root[data-theme="light"] .view-seg { background-color: #dde3ec; border-color: #c3ccd9; }
+        :root[data-theme="light"] .view-seg { background-color: #dde3ec; }
         .view-seg-btn {
             display: inline-flex; align-items: center; gap: 5px;
-            padding: 4px 12px; font-size: 11px; font-weight: 600; white-space: nowrap;
+            padding: 7px 12px; font-size: 11px; font-weight: 600; white-space: nowrap;
             color: var(--text-secondary); background: transparent; border: none; cursor: pointer;
             border-radius: 9999px; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
         }
@@ -615,8 +637,10 @@
         .preset-btn.text-green-800 { color: #6ee7b7 !important; }
         .preset-btn.bg-cyan-100   { background-color: rgba(34,211,238,0.16) !important; }
         .preset-btn.text-cyan-800 { color: #67e8f9 !important; }
-        .preset-btn.bg-amber-100  { background-color: rgba(251,191,36,0.16) !important; }
-        .preset-btn.text-amber-800 { color: #fcd34d !important; }
+        .preset-btn.bg-amber-100  { background-color: rgba(251,146,60,0.18) !important; }
+        .preset-btn.text-amber-800 { color: #fdba74 !important; }
+        .preset-btn.bg-yellow-100 { background-color: rgba(250,204,21,0.16) !important; }
+        .preset-btn.text-yellow-800 { color: #fde047 !important; }
 
         /* Light theme: stronger saturation so presets stand out on white */
         :root[data-theme="light"] .preset-btn.bg-red-100    { background-color: #fecaca !important; }
@@ -631,8 +655,10 @@
         :root[data-theme="light"] .preset-btn.text-green-800 { color: #14532d !important; }
         :root[data-theme="light"] .preset-btn.bg-cyan-100   { background-color: #a5f3fc !important; }
         :root[data-theme="light"] .preset-btn.text-cyan-800 { color: #164e63 !important; }
-        :root[data-theme="light"] .preset-btn.bg-amber-100  { background-color: #fde68a !important; }
-        :root[data-theme="light"] .preset-btn.text-amber-800 { color: #78350f !important; }
+        :root[data-theme="light"] .preset-btn.bg-amber-100  { background-color: #fed7aa !important; }
+        :root[data-theme="light"] .preset-btn.text-amber-800 { color: #7c2d12 !important; }
+        :root[data-theme="light"] .preset-btn.bg-yellow-100 { background-color: #fef08a !important; }
+        :root[data-theme="light"] .preset-btn.text-yellow-800 { color: #713f12 !important; }
 
         :root[data-theme="light"] .toggle-btn { background-color: #c8d0dc; color: #1f2937; }
         :root[data-theme="light"] .toggle-btn:hover:not(:disabled) { background-color: #b8c0cd; }
@@ -794,13 +820,10 @@
         .gp-divider.col { cursor: row-resize; height: 8px; transform: translateY(-50%); }
         .gp-divider.col::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
 
-        /* Colour-trim rail — styled as distinct UI chrome (a floating card),
-           not visually glued to the plot to its left. */
+        /* Colour-trim rail — blended into the plot area background, not a
+           separate floating card. */
         #cTrimContainer {
-            background: var(--bg-panel);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md, 8px);
-            box-shadow: 0 1px 5px rgba(0,0,0,0.15);
+            background: transparent;
         }
         /* While any plot panel exists the rail stays mounted: a dimmed,
            non-interactive placeholder (cTrim-inactive) when there's no active
@@ -993,44 +1016,105 @@
             padding: 10px 12px !important;
         }
 
-        /* ---------- Toolbar row dividers ---------- */
+        /* ---------- Toolbar ----------
+           Two independent flex rows, not a single row that JS reflows: the
+           first .toolbar-row (logo/files/view/presets + right-side actions)
+           is always visible and never changes shape based on settings state,
+           so it can never shift on load or on toggle. #settingsRow (axes/QC/
+           phases/profiles) is a second row, shown/hidden as a whole by CSS
+           off data-settings-open — nothing inside it needs its own
+           show/hide class. */
         .toolbar-row {
-            display: block;
-            position: relative;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 4px 10px;
             padding: 8px 14px;
             border-bottom: 1px solid var(--border);
             background: var(--bg-panel);
         }
-        .toolbar-row::after { content: ""; display: block; clear: both; }
-        /* Left content flows as inline items so wrapped rows can extend full-width
-           under the top-right buttons (which are floated). 2px block margins give a
-           4px gap between wrapped rows; reduced row padding keeps the outer edge at 10px. */
-        .toolbar-main { display: block; }
-        .toolbar-row .toolbar-main > * { display: inline-flex; vertical-align: middle; margin: 2px 8px 2px 0; }
-        .toolbar-row .toolbar-main > *:last-child { margin-right: 0; }
-        .toolbar-actions { margin-top: 2px; }
-        /* Keep JS-shown groups (which set inline display:flex/block) inline so they don't break the row. */
-        .toolbar-row .toolbar-main > [style*="display: flex"]  { display: inline-flex  !important; }
-        .toolbar-row .toolbar-main > [style*="display: block"] { display: inline-block !important; }
-        .toolbar-actions { float: right; margin-left: 8px; }
-        /* When presets sit alone on their own (single) row, centre them. Toggled by JS. */
-        .toolbar-row .toolbar-main > #presetsGroup.presets-solo {
-            display: flex; width: 100%; justify-content: center; margin-right: 0;
+        /* Files/View/logo + right-side actions: kept as their own nowrap row so
+           .toolbar-actions (Settings/theme/sync/download/share) never wraps onto
+           a separate line — only #presetsGroup (a .toolbar-row sibling, below)
+           is allowed to drop to its own line. */
+        .toolbar-topline {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 4px 10px;
+            width: 100%;
+            min-width: 0;
         }
+        .toolbar-main {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 8px;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .toolbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 0 0 auto;
+        }
+        /* Settings button shows "Settings <chevron>"; swapped for a lone
+           tune (sliders) icon below 1450px alongside the rest of .group-label. */
+        .settings-toggle-icon { display: none; }
+        .settings-toggle-text { display: inline-flex; align-items: center; gap: 4px; }
+        #settingsRow {
+            display: none;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 8px;
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+        }
+        html[data-settings-open] #settingsRow { display: flex; }
+        /* Flatten the Axes/QC/Phases/Profiles .toolbar-groups into #settingsRow's
+           own flex layout (rather than each group wrapping as one rigid block)
+           so individual controls — the X/Y/Colour selects, Invert Y, Order,
+           Size, Quality, the QC chips, etc. — each wrap on their own and pack
+           the available width efficiently. Group labels/dividers ride along as
+           ordinary flex items, still marking where one group ends and the next
+           begins. */
+        #settingsRow .toolbar-group { display: contents; }
         .toolbar-group {
             display: flex;
             align-items: center;
             gap: 6px;
             padding: 0 6px;
         }
-
-        /* ---------- Jelly ---------- */
-        #jellyToggle {
-            background: var(--bg-panel-2) !important;
-            border: 1px solid var(--border-strong) !important;
-            box-shadow: var(--shadow-md);
+        /* Presets always claims a full row of its own rather than competing
+           for leftover space next to Files/View — with heterogeneous-width
+           groups, plain flex-wrap leaves gaps (a wide group that doesn't fit
+           drops whole to the next line) and squeezes whatever wraps in after
+           it. flex-basis:100% guarantees Presets never shares a line, so it
+           always gets the full toolbar-row width to lay its chips out in — it's
+           a direct .toolbar-row child (not nested in .toolbar-main) precisely so
+           it isn't pinched by .toolbar-actions' width once wrapped onto its own
+           line below both. */
+        #presetsGroup { flex: 1 1 100%; }
+        /* Below 1450px: drop the per-group labels ("Files", "Axes", ...) and
+           their (i) tooltips — pure clutter at that width, controls still
+           work the same — and collapse the Settings button to a lone tune
+           (sliders) icon instead of the word. Sizing is unchanged either way. */
+        @media (max-width: 1450px) {
+            .group-label { display: none; }
+            .settings-toggle-icon { display: inline-flex; }
+            .settings-toggle-text { display: none; }
         }
+
+        /* ---------- Jelly: a small notification icon that lives in the toolbar
+           next to Settings, hidden until there's something to show (a new
+           release, or Copernicus setup help). ---------- */
+        #jellyBubble { position: relative; }
+        #jelly-icon { display: block; }
         #jellyPanel {
+            position: absolute; top: 100%; right: 0; margin-top: 6px;
             background: var(--bg-panel) !important;
             border: 1px solid var(--border) !important;
             border-radius: var(--radius-lg) !important;
@@ -1039,21 +1123,16 @@
         }
         #jellyPanel > div:first-child { background: var(--bg-panel-2) !important; border-color: var(--border) !important; }
 
-        @keyframes jellyFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-5px) rotate(-3deg); } }
-        @keyframes jellyWiggle { 0%,100% { transform: rotate(-6deg) scale(1.05); } 50% { transform: rotate(6deg) scale(1.05); } }
-        .jelly-img { display: block; object-fit: contain; animation: jellyFloat 3s ease-in-out infinite; }
-        #jellyToggle:hover .jelly-img { animation: jellyWiggle 0.6s ease-in-out infinite; }
-
-        /* Notification dot on the Jelly bubble when an update is available. */
+        /* Notification dot on the Jelly icon when an update is available. */
         #jellyToggle { position: relative; }
         #jellyToggle.has-update::after {
             content: '';
             position: absolute;
-            top: 1px; right: 1px;
-            width: 11px; height: 11px;
+            top: 2px; right: 2px;
+            width: 8px; height: 8px;
             border-radius: 50%;
             background: var(--danger);
-            border: 2px solid var(--bg-panel-2);
+            border: 1.5px solid var(--bg-panel-3);
             box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
         }
 
@@ -1127,9 +1206,7 @@
 
         /* Material-symbol colour fix inside buttons */
         button:not(.toggle-btn):hover .material-symbols-outlined { color: var(--accent); }
-
-        /* Advanced-only controls: hidden unless nav has .adv-open */
-        #mainNav:not(.adv-open) .adv-only { display: none !important; }
+        .view-seg-btn.active:hover .material-symbols-outlined { color: #ffffff; }
 
         /* Transient "link copied" banner shown by the Share button. */
         #shareToast {
@@ -1166,24 +1243,7 @@
 
     <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
         <div class="toolbar-row">
-            <!-- Right-side buttons (floated; declared first so left content wraps under them) -->
-            <div class="toolbar-group toolbar-actions shrink-0">
-                <button id="advancedToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show advanced controls">
-                    Advanced <span class="material-symbols-outlined text-[13px]" id="advancedToggleIcon">expand_more</span>
-                </button>
-                <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
-                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
-                </button>
-                <button id="syncTimeBtn" class="toggle-btn px-2.5 py-1.5 rounded items-center gap-1 hidden" title="Sync the time axis across all open timeseries plots — zooming one zooms them all">
-                    <span class="material-symbols-outlined text-[14px]">sync_alt</span> Sync
-                </button>
-                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1 hidden" title="Download plot as PNG">
-                    <span class="material-symbols-outlined text-[14px]">download</span>
-                </button>
-                <button id="shareBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Copy a link to this exact view to your clipboard" aria-label="Share this view">
-                    <span class="material-symbols-outlined text-[14px]">share</span>
-                </button>
-            </div>
+            <div class="toolbar-topline">
             <div class="toolbar-main">
                 <!-- Logo -->
                 <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
@@ -1272,162 +1332,227 @@
                     </div>
                 </div>
 
-                <div class="group-divider"></div>
+            </div>
 
-                <!-- Presets -->
-                <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
-                    <span class="group-label shrink-0">
-                        Presets
-                        <span class="info-dot" data-tip="Select your view, or make custom plots in the advanced menu."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
-                </div>
-
-                <!-- Profiles navigation (JS-conditional) — kept high in the bar so it
-                     flows onto the first toolbar row after Presets when there's room,
-                     rather than dropping to a row of its own. Direction rides alongside. -->
-                <div id="navigateDivider" class="group-divider" style="display: none;"></div>
-                <div id="navigateContainer" class="toolbar-group" style="display: none;">
-                    <span class="group-label">
-                        Profiles
-                        <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
-                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
-                        <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
-                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                        </button>
-                        <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
-                        <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
-                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                        </button>
-                        <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
-                        <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
-                            <span class="material-symbols-outlined text-[13px]">close</span>
-                        </button>
-                    </div>
-                    <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
-                    <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
-                        <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
-                        <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
-                            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                        </button>
-                        <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
-                        <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
-                            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                        </button>
-                        <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
-                            <span class="material-symbols-outlined text-[13px]">close</span>
-                        </button>
-                    </div>
-                    <!-- Direction buttons: icon-only (JS-conditional) -->
-                    <div id="dirContainer" class="flex gap-0.5 items-center ml-1" style="display: none;">
-                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
-                            <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
-                        </button>
-                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
-                            <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
-                        </button>
-                        <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
-                            <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
-                        </button>
+            <!-- Right-side actions: always shown, never hidden — a button that
+                 doesn't currently apply is disabled (greyed via .toggle-btn:disabled)
+                 rather than removed, so the bar's shape never changes. -->
+            <div class="toolbar-group toolbar-actions">
+                <!-- Jelly: a quiet notification icon, hidden until there's something to
+                     show (a new release, or Copernicus setup help). Clicking it opens
+                     the notifications panel anchored beneath it. -->
+                <div id="jellyBubble" class="hidden">
+                    <button id="jellyToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Notifications" aria-label="Notifications">
+                        <svg id="jelly-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 11a6 6 0 0 1 12 0c0 1.4-1 1.8-2.6 1.9a1.6 1.6 0 0 0-1.4 1.6c0 .9-.7 1.5-2 1.5s-2-.6-2-1.5a1.6 1.6 0 0 0-1.4-1.6C7 12.8 6 12.4 6 11Z" fill="currentColor" stroke="none"/>
+                            <path d="M8 15.5c0 1.8.9 1.8.9 3.5M11.2 16.2c0 2 .9 2 .9 4M14.4 16.2c0 2-.9 2-.9 4M17 15.5c0 1.8-.9 1.8-.9 3.5" />
+                        </svg>
+                    </button>
+                    <div id="jellyPanel" class="w-72 max-w-[95vw] flex-col hidden">
+                        <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--border);">
+                            <span class="font-semibold text-xs">Notifications</span>
+                            <div class="flex items-center gap-0.5">
+                                <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Dismiss notifications">
+                                    <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
+                                </button>
+                                <button id="jellyCloseBtn" class="hover:bg-gray-200 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-gray-500 cursor-pointer text-xs" title="Close">&#10005;</button>
+                            </div>
+                        </div>
+                        <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs" style="max-height: 380px;"></div>
                     </div>
                 </div>
+                <button id="settingsToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show axes, QC, phases and profile controls" aria-label="Settings">
+                    <span class="material-symbols-outlined text-[15px] settings-toggle-icon">tune</span>
+                    <span class="settings-toggle-text">Settings <span class="material-symbols-outlined text-[13px]" id="settingsToggleIcon">expand_more</span></span>
+                </button>
+                <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
+                    <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
+                </button>
+                <button id="syncTimeBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Sync the time axis across all open timeseries plots — zooming one zooms them all" aria-label="Sync time axes" disabled>
+                    <span class="material-symbols-outlined text-[14px]">sync_alt</span>
+                </button>
+                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Download plot as PNG" disabled>
+                    <span class="material-symbols-outlined text-[14px]">download</span>
+                </button>
+                <button id="shareBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Copy a link to this exact view to your clipboard" aria-label="Share this view">
+                    <span class="material-symbols-outlined text-[14px]">share</span>
+                </button>
+            </div>
+            </div>
 
-                <div class="group-divider adv-only"></div>
+            <!-- Presets: kept OUT of .toolbar-topline so its wrapped-onto-its-own-row
+                 width isn't pinched by .toolbar-actions' width — .toolbar-actions
+                 only sits beside line 1, but a nested flex box reserves that width
+                 on every internal line, including this one. .toolbar-topline (Files/
+                 View/logo + actions) is itself a nowrap row so Settings/Download etc.
+                 never wrap away from each other; as a direct .toolbar-row child
+                 (basis 100%) Presets only wraps beneath .toolbar-topline once it's
+                 claimed line 1, then gets the row's full width to itself. -->
+            <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
+                <span class="group-label shrink-0">
+                    Presets
+                    <span class="info-dot" data-tip="Select your view, or make custom plots in Settings."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
+            </div>
+        </div>
 
-                <!-- Axes group (advanced only — presets drive variables by default) -->
-                <div class="toolbar-group adv-only">
-                    <span class="group-label">
-                        Axes
-                        <span class="info-dot" data-tip="Pick variables for the X, Y and colour of your plot. You can invert Y and change the colour palette."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div class="flex items-center gap-1">
-                        <span class="text-[9px] text-gray-500 font-medium">X</span>
-                        <select id="xVar" class="p-1.5 w-28 transition-all"></select>
-                    </div>
-                    <div class="flex items-center gap-1">
-                        <span class="text-[9px] text-gray-500 font-medium">Y</span>
-                        <select id="yVar" class="p-1.5 w-28 transition-all"></select>
-                    </div>
-                    <div class="flex items-center gap-1">
-                        <span class="text-[9px] text-gray-500 font-medium">Colour</span>
-                        <select id="cVar" class="p-1.5 w-28 transition-all">
-                            <option value="">None</option>
-                        </select>
-                    </div>
-                    <!-- Advanced only: Invert Y -->
-                    <button id="invertYBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded">Invert Y</button>
-                    <!-- Advanced only: depth-profile sidebar (an SVG value-vs-depth marginal on the plot's left) -->
-                    <button id="profileSidebarBtn" class="toggle-btn adv-only px-2.5 py-1.5 rounded" title="Add a depth-profile plot (value vs depth) to the left of this plot">Profile</button>
-                    <!-- Advanced only: point draw order (which colour extreme renders on top) -->
-                    <div class="flex items-center gap-1 adv-only">
-                        <span class="text-[9px] text-gray-500 font-medium">Order</span>
-                        <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top.">
-                            <option value="normal">Standard</option>
-                            <option value="smallest">Lowest on top</option>
-                            <option value="largest">Highest on top</option>
-                            <option value="outliers">Outliers on top</option>
-                        </select>
-                    </div>
-                    <!-- Advanced only: marker point size -->
-                    <div class="flex items-center gap-1 adv-only">
-                        <span class="text-[9px] text-gray-500 font-medium">Size</span>
-                        <select id="drawOrderSize" class="p-1.5 transition-all" title="Marker point size.">
-                            <option value="small">Small</option>
-                            <option value="med">Med</option>
-                            <option value="large">Large</option>
-                        </select>
-                    </div>
-                    <!-- Advanced only: render quality (max points sent to the WebGL plot) -->
-                    <div class="flex items-center gap-1 adv-only">
-                        <span class="text-[9px] text-gray-500 font-medium">Quality</span>
-                        <select id="quality" class="p-1.5 transition-all" title="Maximum number of points drawn. Higher = more detail but slower to load/draw; lower = faster. Auto picks 100k locally / 60k on the server. 'Full' sends every point. With multiple plots open the budget is split across them.">
-                            <option value="">Auto</option>
-                            <option value="5000">5k</option>
-                            <option value="20000">20k</option>
-                            <option value="60000">60k</option>
-                            <option value="100000">100k</option>
-                            <option value="200000">200k</option>
-                            <option value="full">Full</option>
-                        </select>
-                    </div>
-                    <!-- Colour palette picker -->
-                    <div class="relative" id="cmapContainer">
-                        <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
-                        <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
-                    </div>
-                    <input type="hidden" id="cmap" value="thermal">
+        <!-- Settings row: Axes / QC / Phases / Profiles. Whole row is shown or
+             hidden as one unit (see #settingsRow CSS, keyed off data-settings-open
+             on <html>) — nothing inside needs its own show/hide class. Phases and
+             Profiles additionally hide themselves (inline style, via CycleProfile.init
+             in cycle_profile.js) when the loaded file has no SCI_PHASE / cycle data. -->
+        <div id="settingsRow">
+            <!-- Axes: presets drive variables by default, this is the manual override -->
+            <div class="toolbar-group">
+                <span class="group-label">
+                    Axes
+                    <span class="info-dot" data-tip="Pick variables for the X, Y and colour of your plot. You can invert Y and change the colour palette."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">X</span>
+                    <select id="xVar" class="p-1.5 w-28 transition-all"></select>
                 </div>
-
-                <!-- Advanced only: QC -->
-                <div class="group-divider adv-only"></div>
-                <div class="toolbar-group adv-only">
-                    <span class="group-label">
-                        QC
-                        <span id="qcInfoDot" class="info-dot" data-tip="QC flags (Argo convention). Click a chip to show only that flag; click again to restore all. PRES/TEMP/CNDC gaps up to 5 minutes are always interpolated (flag 8); exact 0.0 fill values are always flagged missing (flag 9); NaT/out-of-order timestamps are always dropped, and other out-of-range TIME values are flagged bad (flag 4)."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="qcFlagsContainer" class="flex items-center gap-0.5">
-                        <!-- QC flag chips 0-9 built by buildQcChips() -->
-                        <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
-                    </div>
-                    <button id="qcDefaultBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Reset to the default flags (0,1,2,5,8)">Default</button>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">Y</span>
+                    <select id="yVar" class="p-1.5 w-28 transition-all"></select>
                 </div>
-
-                <!-- Advanced only: Phases (also JS-conditional) -->
-                <div id="phaseDivider" class="group-divider adv-only" style="display: none;"></div>
-                <div id="phaseContainer" class="toolbar-group adv-only" style="display: none;">
-                    <span class="group-label">
-                        Phases
-                        <span id="phaseInfoDot" class="info-dot" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
-                    <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">Colour</span>
+                    <select id="cVar" class="p-1.5 w-28 transition-all">
+                        <option value="">None</option>
+                    </select>
                 </div>
+                <button id="invertYBtn" class="toggle-btn px-2.5 py-1.5 rounded">Invert Y</button>
+                <button id="profileSidebarBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Add a depth-profile plot (value vs depth) to the left of this plot">Profile</button>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">Order</span>
+                    <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top.">
+                        <option value="normal">Standard</option>
+                        <option value="smallest">Lowest on top</option>
+                        <option value="largest">Highest on top</option>
+                        <option value="outliers">Outliers on top</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">Size</span>
+                    <select id="drawOrderSize" class="p-1.5 transition-all" title="Marker point size.">
+                        <option value="small">Small</option>
+                        <option value="med">Med</option>
+                        <option value="large">Large</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-gray-500 font-medium">Quality</span>
+                    <select id="quality" class="p-1.5 transition-all" title="Maximum number of points drawn. Higher = more detail but slower to load/draw; lower = faster. Auto picks 100k locally / 60k on the server. 'Full' sends every point. With multiple plots open the budget is split across them.">
+                        <option value="">Auto</option>
+                        <option value="5000">5k</option>
+                        <option value="20000">20k</option>
+                        <option value="60000">60k</option>
+                        <option value="100000">100k</option>
+                        <option value="200000">200k</option>
+                        <option value="full">Full</option>
+                    </select>
+                </div>
+                <!-- Colour palette picker -->
+                <div class="relative" id="cmapContainer">
+                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
+                </div>
+                <input type="hidden" id="cmap" value="thermal">
+            </div>
 
+            <div class="group-divider"></div>
+
+            <!-- QC -->
+            <div class="toolbar-group">
+                <span class="group-label">
+                    QC
+                    <span id="qcInfoDot" class="info-dot" data-tip="QC flags (Argo convention). Click a chip to show only that flag; click again to restore all. PRES/TEMP/CNDC gaps up to 5 minutes are always interpolated (flag 8); exact 0.0 fill values are always flagged missing (flag 9); NaT/out-of-order timestamps are always dropped, and other out-of-range TIME values are flagged bad (flag 4)."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="qcFlagsContainer" class="flex items-center gap-0.5">
+                    <!-- QC flag chips 0-9 built by buildQcChips() -->
+                    <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
+                </div>
+                <button id="qcDefaultBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Reset to the default flags (0,1,2,5,8)">Default</button>
+            </div>
+
+            <!-- Phases (JS-conditional: hidden when the file has no SCI_PHASE) -->
+            <div id="phaseDivider" class="group-divider" style="display: none;"></div>
+            <div id="phaseContainer" class="toolbar-group" style="display: none;">
+                <span class="group-label">
+                    Phases
+                    <span id="phaseInfoDot" class="info-dot" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
+                <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
+            </div>
+
+            <!-- Profiles navigation (JS-conditional: hidden when the file has no
+                 profile/cycle data). Direction rides alongside. -->
+            <div id="navigateDivider" class="group-divider" style="display: none;"></div>
+            <div id="navigateContainer" class="toolbar-group" style="display: none;">
+                <span class="group-label">
+                    Profiles
+                    <span class="info-dot" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle."><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
+                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
+                    <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
+                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                    </button>
+                    <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
+                    <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
+                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                    </button>
+                    <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
+                    <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                        <span class="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                </div>
+                <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
+                <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
+                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
+                    <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
+                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                    </button>
+                    <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
+                    <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
+                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                    </button>
+                    <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
+                        <span class="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                </div>
+                <!-- Direction buttons: icon-only (JS-conditional) -->
+                <div id="dirContainer" class="flex gap-0.5 items-center ml-1" style="display: none;">
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
+                        <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
+                        <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+                    </button>
+                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
+                        <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
+                    </button>
+                </div>
             </div>
         </div>
     </nav>
+    <script>
+        // The head script already set data-settings-open on <html> (before
+        // <body> parsed) so #settingsRow is correctly shown/hidden from first
+        // paint. This just syncs the toggle button's own icon/active look to
+        // match, now that it exists in the DOM.
+        (function() {
+            if (document.documentElement.hasAttribute('data-settings-open')) {
+                const icon = document.getElementById('settingsToggleIcon');
+                const btn = document.getElementById('settingsToggle');
+                if (icon) icon.textContent = 'expand_less';
+                if (btn) btn.classList.add('active');
+            }
+        })();
+    </script>
 
     <div class="flex flex-grow w-full overflow-hidden bg-white">
 
@@ -1523,7 +1648,7 @@
                     </div>
                 </div>
 
-                <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px] mt-2 mb-16 mr-2">
+                <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-2 shrink-0 gap-2 z-10 w-[66px]">
                     <span id="cTrimLabel" class="font-bold uppercase tracking-wide text-center w-full pb-1.5 whitespace-nowrap overflow-hidden" style="color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 9px;">Colour</span>
                     <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
@@ -1544,31 +1669,6 @@
         </div>
     </div>
 
-    <!-- Jelly is a passive notification bubble: hidden until there's something to
-         show (a new release, or Copernicus setup help). Clicking it opens the
-         notifications panel below. -->
-    <div id="jellyBubble" class="fixed bottom-1 right-2 z-[100] hidden">
-        <button id="jellyToggle" class="rounded-full w-12 h-12 flex items-center justify-center border border-gray-200 cursor-pointer bg-white transition-transform hover:scale-105 overflow-hidden" style="box-shadow: 0 2px 8px rgba(0,0,0,0.12);" title="Notifications">
-            <img src="/static/jelly.webp" alt="Jelly" class="jelly-img w-full h-full" />
-        </button>
-    </div>
-
-    <div id="jellyPanel" class="fixed bottom-[68px] right-4 z-[100] w-72 max-w-[95vw] bg-white border border-gray-200 rounded-lg flex-col hidden" style="max-height: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
-        <div class="flex items-center justify-between px-3 py-2 rounded-t-lg border-b border-gray-200 bg-[#f8f9fa]">
-            <div class="flex items-center gap-2">
-                <img src="/static/jelly.webp" alt="" class="jelly-img jelly-img-small w-12 h-12" />
-                <span class="font-semibold text-xs text-gray-700">Jelly</span>
-            </div>
-            <div class="flex items-center gap-0.5">
-                <button id="jellyClearBtn" class="hover:bg-gray-200 p-1 rounded border-none bg-transparent text-gray-500 cursor-pointer" title="Dismiss notifications">
-                    <span class="material-symbols-outlined text-[14px]">ink_eraser</span>
-                </button>
-                <button id="jellyCloseBtn" class="hover:bg-gray-200 rounded w-6 h-6 flex items-center justify-center border-none bg-transparent text-gray-500 cursor-pointer text-xs" title="Close">&#10005;</button>
-            </div>
-        </div>
-
-        <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs"></div>
-    </div>
 
     <script>
 
@@ -1732,7 +1832,7 @@
         const customTooltip = document.getElementById('customTooltip');
         
         const presetContainer = document.getElementById('presetContainer');
-        
+
         const inspectorContainer = document.getElementById('inspectorContainer');
         const mapEmptyText = document.getElementById('mapEmptyText'), resetInspectorBtn = document.getElementById('resetInspectorBtn');
         
@@ -2112,19 +2212,26 @@
             refreshAlignButtons();
         }
 
-        // Show the toolbar Sync button only when there are at least two timeseries
-        // plots to align; its active state mirrors the global alignment toggle.
+        // Enable the toolbar Sync button only when there are at least two
+        // timeseries plots to align (otherwise it stays visible but greyed
+        // out); its active state mirrors the global alignment toggle.
+        // During layout restore, each panel's iframe reports back (plotLoaded)
+        // as a separate async message, so this can be called several times in
+        // quick succession with the panel set still settling. Coalescing the
+        // actual DOM write onto the next frame means only the final state for
+        // that burst ever paints, instead of the button visibly flickering
+        // through each intermediate call.
+        let _alignBtnRaf = null;
         function refreshAlignButtons() {
-            const btn = document.getElementById('syncTimeBtn');
-            if (!btn) return;
-            if (timeseriesPanels().length >= 2) {
-                btn.classList.remove('hidden');
-                btn.classList.add('flex');
-                btn.classList.toggle('active', alignTimeAxes);
-            } else {
-                btn.classList.add('hidden');
-                btn.classList.remove('flex');
-            }
+            if (_alignBtnRaf !== null) return;
+            _alignBtnRaf = requestAnimationFrame(() => {
+                _alignBtnRaf = null;
+                const btn = document.getElementById('syncTimeBtn');
+                if (!btn) return;
+                const canAlign = timeseriesPanels().length >= 2;
+                btn.disabled = !canAlign;
+                btn.classList.toggle('active', canAlign && alignTimeAxes);
+            });
         }
         const hasPanelType = (type) => Object.values(panels).some(p => p.type === type);
 
@@ -3190,6 +3297,13 @@
             preset_par: { text: 'PAR', icon: 'sunny', bg: 'bg-yellow-100', textCol: 'text-yellow-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DOWNWELLING_PAR'], cmap: 'sunset', invert: true, drawOrder: 'outliers' }
         };
 
+        // Preset buttons don't depend on any fetched data, so build them right
+        // away rather than waiting on init()'s /api/config round trip — otherwise
+        // the toolbar visibly grows/wraps a moment after first paint on every
+        // load and reload. (renderPresetsDropdown is a hoisted function
+        // declaration, so it's safe to call here even though it's defined below.)
+        renderPresetsDropdown();
+
         const COOKIE_FILE = 'gp_file_id';
         const COOKIE_THEME = 'gp_theme';
         const COOKIE_DAYS = 365;
@@ -3259,14 +3373,15 @@
             const shareBtn = document.getElementById('shareBtn');
             if (shareBtn) shareBtn.addEventListener('click', () => shareCurrentView());
 
-            const advancedToggle = document.getElementById('advancedToggle');
-            const mainNav = document.getElementById('mainNav');
-            const advancedToggleIcon = document.getElementById('advancedToggleIcon');
-            if (advancedToggle) {
-                advancedToggle.addEventListener('click', () => {
-                    const isOpen = mainNav.classList.toggle('adv-open');
-                    advancedToggleIcon.textContent = isOpen ? 'expand_less' : 'expand_more';
-                    advancedToggle.classList.toggle('active', isOpen);
+            const settingsToggle = document.getElementById('settingsToggle');
+            const settingsToggleIcon = document.getElementById('settingsToggleIcon');
+            if (settingsToggle) {
+                settingsToggle.addEventListener('click', () => {
+                    const isOpen = !document.documentElement.hasAttribute('data-settings-open');
+                    document.documentElement.toggleAttribute('data-settings-open', isOpen);
+                    settingsToggleIcon.textContent = isOpen ? 'expand_less' : 'expand_more';
+                    settingsToggle.classList.toggle('active', isOpen);
+                    try { localStorage.setItem('gp_settings_open', isOpen ? 'true' : 'false'); } catch (_) {}
                 });
             }
             const syncTimeBtn = document.getElementById('syncTimeBtn');
@@ -3510,7 +3625,7 @@
                     <p class="text-sm font-medium text-gray-800">${msg.message}</p>
                     <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
                 `;
-                downloadBtn.classList.add('hidden');
+                downloadBtn.disabled = true;
                 setColourRail(false);
                 plotStatsContainer.classList.add('hidden');
             }
@@ -4192,7 +4307,7 @@
             plotIframe?.classList.add('hidden');
             emptyState.classList.remove('hidden');
             emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables to Plot</p>`;
-            downloadBtn.classList.add('hidden');
+            downloadBtn.disabled = true;
 
             if (fullReset) {
                 setColourRail(false);
@@ -4848,7 +4963,6 @@
                 addFromPromptBtn.style.display = 'none';
             }
 
-            renderPresetsDropdown();
             await refreshFiles({ activate: true });
 
             // Start scanning for live deployments right away so the list is
@@ -5213,7 +5327,24 @@
         };
 
         invertYBtn.addEventListener('click', () => handleToggle(invertYBtn, false));
-        profileSidebarBtn.addEventListener('click', () => handleToggle(profileSidebarBtn, false));
+        profileSidebarBtn.addEventListener('click', () => {
+            const plots = Object.values(panels).filter(p => p.type === 'plot');
+            // Time-sync off, or nothing else to sync with: normal single-panel toggle.
+            if (!alignTimeAxes || plots.length <= 1) { handleToggle(profileSidebarBtn, false); return; }
+            // Time-sync on: the Profile button applies to every synced plot at once,
+            // all flipping to the new (opposite of current) state together.
+            const turningOn = !profileSidebarBtn.classList.contains('active');
+            updateToggleBtn(profileSidebarBtn, turningOn);
+            checkAndUpdatePreset();
+            resetPlotState(false);
+            const ap = activePlotPanel();
+            if (ap) ap.state = captureToolbarState();
+            plots.forEach(p => {
+                if (p.state) p.state.profileSidebar = turningOn;
+                renderPlotPanel(p);
+            });
+            scheduleSaveLayout();
+        });
         drawOrderSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
         drawOrderSizeSelect.addEventListener('change', () => { resetPlotState(false); updatePlot(); });
         qualitySelect.addEventListener('change', () => {
@@ -5508,7 +5639,7 @@
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
             plotIframe?.classList.add('hidden');
-            downloadBtn.classList.add('hidden');
+            downloadBtn.disabled = true;
             processingTitle.textContent = rec.status === 'error'
                 ? 'Failed to process file'
                 : `Processing ${rec.name}…`;
@@ -5797,8 +5928,14 @@
             plotQueued = false;
 
             resetPlotState(true);
-            CycleProfile.fullReset();
             const fileId = datasetSelect.value;
+            // Pass fileId so a reload of the same file restores its cached
+            // Navigate/Phases/Direction visibility immediately instead of
+            // blind-hiding here and re-showing a moment later once
+            // CycleProfile.loadFile()'s own fullReset(fileId) runs below —
+            // that hide-then-show flash is what shifts the floated toolbar
+            // action buttons (download/share/advanced) on reload.
+            CycleProfile.fullReset(fileId);
             if (!fileId) return;
 
             await loadDatasetInfo(fileId);
@@ -6040,7 +6177,7 @@
 
                 p.iframe.classList.remove('hidden');
                 emptyState.classList.add('hidden');
-                downloadBtn.classList.remove('hidden');
+                downloadBtn.disabled = false;
                 refreshPanelPlaceholders();
 
             } catch (err) {
@@ -6181,10 +6318,10 @@
             btn.addEventListener('click', () => { if (!btn.disabled) selectView(btn.dataset.view); });
         });
 
-        // ===== Jelly 🪼 — passive notification bubble =====
-        // Jelly no longer chats. It's a quiet notification surface: hidden until
-        // there's something worth showing (a new release, or Copernicus overlay
-        // setup help), then it reveals its bubble with a dot and lists the notes.
+        // ===== Jelly 🪼 — passive notification icon =====
+        // Jelly no longer chats. It's a quiet notification icon next to Settings:
+        // hidden until there's something worth showing (a new release, or
+        // Copernicus overlay setup help), then it reveals a dot and lists the notes.
         const jellyBubble = document.getElementById('jellyBubble');
         const jellyToggle = document.getElementById('jellyToggle');
         const jellyPanel = document.getElementById('jellyPanel');
@@ -6361,53 +6498,6 @@
             if (!t) return;
             customTooltip.style.opacity = '0';
         });
-
-        /* Centre the Presets group when (basic mode) it has wrapped onto its own
-           single row, with no other groups beside it and its chips on one line.
-           Otherwise leave it left-aligned. Safe from observer loops because the
-           class only applies when presets is already alone on one row, so toggling
-           it does not change the toolbar's height. */
-        (function () {
-            const main = document.querySelector('.toolbar-main');
-            const nav = document.getElementById('mainNav');
-            const presets = document.getElementById('presetsGroup');
-            if (!main || !nav || !presets) return;
-            const pc = document.getElementById('presetContainer');
-
-            function update() {
-                presets.classList.remove('presets-solo'); // measure natural layout
-                if (nav.classList.contains('adv-open')) return; // basic mode only
-                if (presets.offsetParent === null) return;      // hidden
-
-                const kids = Array.from(main.children).filter(el => el.offsetParent !== null);
-                const top = presets.offsetTop;
-                const sharesRow = kids.some(el => el !== presets && Math.abs(el.offsetTop - top) < 4);
-                const hasAbove = kids.some(el => el.offsetTop < top - 4);
-
-                let singleLine = true;
-                if (pc) {
-                    const chips = Array.from(pc.children).filter(c => c.offsetParent !== null);
-                    singleLine = chips.length === 0 ||
-                        chips.every(c => Math.abs(c.offsetTop - chips[0].offsetTop) < 4);
-                }
-                if (!sharesRow && hasAbove && singleLine) presets.classList.add('presets-solo');
-            }
-
-            // Debounce: the browser reflows the toolbar itself (cheap, CSS-only);
-            // we only need to re-evaluate centring once movement settles, so we
-            // avoid forcing a layout read/write on every resize frame.
-            let timer = null;
-            function schedule() {
-                clearTimeout(timer);
-                timer = setTimeout(update, 120);
-            }
-
-            if (window.ResizeObserver) new ResizeObserver(schedule).observe(main);
-            window.addEventListener('resize', schedule);
-            // Presets are built/repopulated dynamically; re-check when they change.
-            if (pc) new MutationObserver(schedule).observe(pc, { childList: true });
-            schedule();
-        })();
 
     </script>
 </body>

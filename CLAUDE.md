@@ -40,7 +40,7 @@ There is no test suite, linter, or build step configured. Frontend is plain HTML
 - `cycle_profile.js`, `console_log.js` — shared helpers pulled into the above pages.
 - `plotly-gl2d-*.min.js` / `plotly-gl3d-*.min.js` — vendored Plotly builds (large, don't edit).
 
-**Jelly** is a passive notification bubble (chat/AI-driving functionality was removed) — hidden until there's something worth showing (a new release, or Copernicus overlay setup help), then it reveals a bubble with a dot and lists the notes. Not related to Claude Code.
+**Jelly** is a passive notification icon in the toolbar next to Settings (chat/AI-driving functionality was removed) — hidden until there's something worth showing (a new release, or Copernicus overlay setup help), then it reveals a dot and lists the notes in a panel anchored beneath it. Not related to Claude Code.
 
 ## Notes
 

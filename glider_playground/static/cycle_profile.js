@@ -55,6 +55,34 @@ const CycleProfile = (() => {
     let _els          = {};
     let _onChange     = null;
 
+    // ── Load-time visibility cache ──────────────────────────────────────────
+    // The Navigate/Phases/Direction toolbar groups only know whether they
+    // apply to a file once /api/profiles and /api/cycles come back, so on
+    // every loadFile() (including reloading the exact same file) they'd
+    // otherwise flash hidden-then-shown while those fetch. Remembering the
+    // last file's capabilities lets a reload of the same file render the
+    // right shape immediately; a genuinely different/unknown file just falls
+    // back to the old hide-then-reveal behaviour.
+    const _CAPS_KEY = 'gp_cp_caps';
+    function _readCachedCaps(fileId) {
+        try {
+            const raw = localStorage.getItem(_CAPS_KEY);
+            if (!raw) return null;
+            const c = JSON.parse(raw);
+            return (c && c.fileId === fileId) ? c : null;
+        } catch (_) { return null; }
+    }
+    function _writeCachedCaps(fileId, caps) {
+        try { localStorage.setItem(_CAPS_KEY, JSON.stringify({ fileId, ...caps })); } catch (_) {}
+    }
+    // _loadProfiles and _loadCycles resolve independently (Promise.all), so
+    // merge onto whatever the other one already wrote for this file rather
+    // than clobbering it.
+    function _mergeCachedCaps(fileId, partial) {
+        const existing = _readCachedCaps(fileId) || {};
+        _writeCachedCaps(fileId, { ...existing, ...partial });
+    }
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     function init(elements, onChangeFn) {
@@ -67,7 +95,7 @@ const CycleProfile = (() => {
     }
 
     async function loadFile(fileId) {
-        fullReset();
+        fullReset(fileId);
         await Promise.all([_loadProfiles(fileId), _loadCycles(fileId)]);
     }
 
@@ -121,21 +149,35 @@ const CycleProfile = (() => {
         _syncDirUI();
     }
 
-    function fullReset() {
+    function fullReset(fileId) {
         _profileList  = [];
         _cycleList    = [];
         _cycleVar     = null;
         _hasSciPhase  = false;
         _hasDirection = false;
         resetState();
-        _hideElement(_els.profileContainer);
-        _hideElement(_els.cycleContainer);
-        _hideElement(_els.cycleNavSep);
-        _hideElement(_els.navigateContainer);
-        _hideElement(_els.navigateDivider);
-        _hideElement(_els.phaseContainer);
-        _hideElement(_els.phaseDivider);
-        _hideElement(_els.dirContainer);
+
+        // Reload of the same file: apply last-known visibility right away
+        // instead of hiding everything and waiting for the fetches to redo
+        // the same reveal a moment later.
+        const cached = fileId ? _readCachedCaps(fileId) : null;
+        if (cached) {
+            cached.hasProfiles ? _showElement(_els.profileContainer) : _hideElement(_els.profileContainer);
+            cached.hasCycles   ? _showElement(_els.cycleContainer)   : _hideElement(_els.cycleContainer);
+            cached.hasSciPhase ? _showElement(_els.phaseContainer, 'contents')   : _hideElement(_els.phaseContainer);
+            cached.hasSciPhase ? _showElement(_els.phaseDivider, 'block') : _hideElement(_els.phaseDivider);
+            cached.hasDirection ? _showElement(_els.dirContainer) : _hideElement(_els.dirContainer);
+            _syncNavigateContainer();
+        } else {
+            _hideElement(_els.profileContainer);
+            _hideElement(_els.cycleContainer);
+            _hideElement(_els.cycleNavSep);
+            _hideElement(_els.navigateContainer);
+            _hideElement(_els.navigateDivider);
+            _hideElement(_els.phaseContainer);
+            _hideElement(_els.phaseDivider);
+            _hideElement(_els.dirContainer);
+        }
     }
 
     /** Show/hide the outer navigate group based on inner containers. */
@@ -144,7 +186,7 @@ const CycleProfile = (() => {
         const cycleVis = _els.cycleContainer   && _els.cycleContainer.style.display   !== 'none';
         const anyVis   = profVis || cycleVis;
         if (anyVis) {
-            _showElement(_els.navigateContainer);
+            _showElement(_els.navigateContainer, 'contents');
             _showElement(_els.navigateDivider, 'block');
         } else {
             _hideElement(_els.navigateContainer);
@@ -240,13 +282,15 @@ const CycleProfile = (() => {
         try {
             const res  = await fetch(`/api/profiles?id=${encodeURIComponent(fileId)}`);
             const data = await res.json();
-            if (data.has_profiles && data.profiles.length > 0) {
+            const hasProfiles = !!(data.has_profiles && data.profiles.length > 0);
+            if (hasProfiles) {
                 _profileList = data.profiles;
                 _showElement(_els.profileContainer);
             } else {
                 _hideElement(_els.profileContainer);
             }
             _syncNavigateContainer();
+            _mergeCachedCaps(fileId, { hasProfiles });
         } catch (e) {
             console.error('[CycleProfile] loadProfiles failed:', e);
             _hideElement(_els.profileContainer);
@@ -355,7 +399,7 @@ const CycleProfile = (() => {
             _syncNavigateContainer();
 
             if (_hasSciPhase) {
-                _showElement(_els.phaseContainer);
+                _showElement(_els.phaseContainer, 'contents');
                 _showElement(_els.phaseDivider, 'block');
                 _buildPhaseChips();
             } else {
@@ -366,6 +410,11 @@ const CycleProfile = (() => {
             if (_hasDirection) _showElement(_els.dirContainer);
             else               _hideElement(_els.dirContainer);
 
+            _mergeCachedCaps(fileId, {
+                hasCycles: !!(data.has_cycles && data.cycles.length > 0),
+                hasSciPhase: _hasSciPhase,
+                hasDirection: _hasDirection,
+            });
         } catch (e) {
             console.error('[CycleProfile] loadCycles failed:', e);
             _hideElement(_els.cycleContainer);
