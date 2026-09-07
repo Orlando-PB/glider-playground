@@ -48,6 +48,18 @@ _TRANSITION = 7
 
 _PROF_DERIVED_COLUMNS = ["SCI_PHASE", "PROFILE_NUMBER", "PROFILE_DIRECTION", "CYCLE", "GRADIENT"]
 
+# Order-of-magnitude sanity bounds for the GSW inputs — NOT quality control.
+# Real files occasionally carry a single corrupt sample (e.g. CNDC of 5.3e6
+# mS/cm, PSAL of 1.0e16) that overflows inside gsw.CT_from_t and poisons every
+# derived CTD variable for that row with inf/NaN. Anything outside these is
+# physically impossible by many orders of magnitude, so it is dropped from the
+# derivation only; the raw values are left untouched everywhere else.
+_CTD_SANE_RANGE = {
+    "CNDC": (-1e3, 1e3),      # mS/cm; seawater is ~1-70
+    "TEMP": (-1e2, 1e2),      # degC; seawater is ~-2-40
+    "PRES": (-1e4, 1e5),      # dbar; deepest ocean is ~11000
+}
+
 # CF-ish metadata for each derived variable.
 DERIVED_METADATA = {
     "PRAC_SALINITY": {"units": "1", "description": _CALC + "Practical salinity, derived from conductivity via TEOS-10/GSW"},
@@ -236,6 +248,18 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     if not (len(cndc) == len(temp) == n == len(lat) == len(lon)):
         log("CTD derive: input length mismatch - skipping")
         return [], {}, {}
+
+    bad = np.zeros(n, dtype=bool)
+    for arr, (lo, hi) in ((cndc, _CTD_SANE_RANGE["CNDC"]),
+                          (temp, _CTD_SANE_RANGE["TEMP"]),
+                          (pres, _CTD_SANE_RANGE["PRES"])):
+        with np.errstate(invalid="ignore"):
+            bad |= np.isfinite(arr) & ((arr < lo) | (arr > hi))
+    n_bad = int(bad.sum())
+    if n_bad:
+        log(f"CTD derive: ignoring {n_bad} sample(s) with physically impossible CNDC/TEMP/PRES")
+        cndc, temp, pres = cndc.copy(), temp.copy(), pres.copy()
+        cndc[bad] = temp[bad] = pres[bad] = np.nan
 
     log(f"CTD derive: computing {', '.join(wanted)} via GSW")
     try:

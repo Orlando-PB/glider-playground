@@ -112,7 +112,11 @@ DATA_DIR = _resolve_data_dir()
 #      UTC now() instead of naive LOCAL now() - TIME is naive UTC, so on a
 #      server whose local timezone is behind UTC, live data from the last
 #      few hours could be wrongly flagged QC=4 (bad) and hard-excluded
-CACHE_VERSION = "23"
+# v24: CTD derivation now drops samples whose CNDC/TEMP/PRES are physically
+#      impossible by orders of magnitude (corrupt single samples, e.g. CNDC
+#      5.3e6 mS/cm) - they overflowed inside GSW and poisoned the derived
+#      salinity/density outputs; raw values are untouched
+CACHE_VERSION = "24"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -306,9 +310,16 @@ def _load_once():
             return
         # If the processing code has changed, drop all cached results so every
         # file gets reprocessed with the new logic. Just bump CACHE_VERSION.
-        if data.get("_cache_version") != CACHE_VERSION:
+        # The records themselves are kept: a bump invalidates cached results,
+        # not the user's list of files. Only files under DATA_DIR/UPLOADS_DIR
+        # are recoverable by _scan_data_dir, so dropping the records used to
+        # silently forget every file registered by path (the folder picker).
+        # Nothing stale survives — the payload sidecars carry their own
+        # cache_version and are rejected below, so each record reprocesses
+        # from scratch.
+        stale_version = data.get("_cache_version") != CACHE_VERSION
+        if stale_version:
             _wipe_plotcache()   # stale binary payloads keyed by the old version
-            return
         for rid, rec in data.items():
             if rid == "_cache_version":
                 continue
@@ -351,7 +362,16 @@ def _load_once():
                     rec["status"] = STATUS_PENDING
                     rec["progress"] = 0
                     rec["stage"] = "queued"
+            if stale_version:
+                # Also retry files that errored under the old logic — the bump
+                # may be the very fix they were waiting for.
+                rec["status"] = STATUS_PENDING
+                rec["progress"] = 0
+                rec["stage"] = "queued"
+                rec["error"] = ""
             _registry[rid] = rec
+        if stale_version:
+            _persist_locked()
 
 
 def _is_nrt(last_time_iso: Optional[str]) -> bool:

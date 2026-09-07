@@ -800,8 +800,12 @@
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();  // folded into PLOT log
                 const fetchUrl = `/api/plot_data?${apiParams.toString()}`;
                 if (_mainFetchController) _mainFetchController.abort();   // supersede a prior warm replot's fetch
-                _mainFetchController = new AbortController();
-                const response = await fetch(fetchUrl, { signal: _mainFetchController.signal });
+                const mainController = new AbortController();
+                _mainFetchController = mainController;
+                const response = await fetch(fetchUrl, { signal: mainController.signal });
+                // Superseded after the response resolved (abort is a no-op by then) —
+                // bail rather than racing the newer load's render on the same div.
+                if (mainController.signal.aborted) return;
                 const tFetchResolved = now();
                 // Server compute time (seconds) + per-step breakdown from the backend.
                 const serverHdr = response.headers && response.headers.get('X-Process-Time');
@@ -1689,14 +1693,26 @@
             params.set('view_y_min', yMinVal);
             params.set('view_y_max', yMaxVal);
 
-            _bgFetchController = new AbortController();
+            const controller = new AbortController();
+            _bgFetchController = controller;
 
             try {
                 const res = await fetch(`/api/plot_data_bounds?${params.toString()}`, {
-                    signal: _bgFetchController.signal
+                    signal: controller.signal
                 });
                 const newData = await res.json();
                 if (newData.error) return;
+
+                // abort() only stops the request in flight — once the response has
+                // resolved, the abort is a no-op and this continuation still runs.
+                // Every caller that abandons a zoom (double-click reset, a new zoom,
+                // a synced updateLimits, replot) aborts and then immediately does its
+                // own Plotly.react; without this check the stale continuation reacted
+                // a second time on the same div a tick later. Two reacts racing on one
+                // div corrupt Plotly's axis autorange — it falls back to its empty-plot
+                // [-1, 6] default with the real data far outside it, i.e. a silently
+                // blank plot that only a full re-render fixes (see resetZoomToFull).
+                if (controller.signal.aborted) return;
 
                 // Carry over var/unit metadata from the full-dataset load
                 if (_originalPlotData) {
