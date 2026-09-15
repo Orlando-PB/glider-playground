@@ -10,8 +10,8 @@ point grid as coloured cells on the globe.
 
 import json
 import logging
-import re
 import struct
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -104,6 +104,19 @@ _CACHE: dict = {}
 _MAX_CACHE = 24
 
 
+_IMPORT_LOCK = threading.Lock()
+
+
+def _import_cm():
+    """Import copernicusmarine under a lock. Its package init is slow (~2s) and
+    a second thread importing concurrently can see the module before its
+    submodules/attributes exist ("has no attribute 'open_dataset'")."""
+    with _IMPORT_LOCK:
+        import copernicusmarine
+        server_config.tame_copernicus_logging()
+        return copernicusmarine
+
+
 def warm_up() -> None:
     """Pre-import copernicusmarine so the first overlay request doesn't pay its
     ~2s cold-import cost inline (it otherwise lands as unattributed "other" time
@@ -111,10 +124,9 @@ def warm_up() -> None:
     startup; a missing/broken package is ignored here — the real fetch re-imports
     and surfaces any error to the user."""
     try:
-        import copernicusmarine  # noqa: F401
+        _import_cm()
     except Exception:
         return
-    server_config.tame_copernicus_logging()
 
 # Keep the cell grid under this per side so the globe stays responsive. The
 # satellite CHL-a grid is 1/24° (≈4 km), so 800 keeps a box of up to ~33° per
@@ -194,14 +206,13 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     a wrong-dataset miss shows up under "download" rather than as "other".
     """
     try:
-        import copernicusmarine
+        copernicusmarine = _import_cm()
     except ImportError:
         return {
             "error": "copernicusmarine package is not installed",
             "hint": "Run: pip install copernicusmarine",
             "setup": "install",
         }
-    server_config.tame_copernicus_logging()
 
     # Fetch a ~12° (TARGET) box of latitude centred on the deployment, and a
     # longitude span widened by 1/cos(lat) so the box covers a *physically* square
@@ -252,7 +263,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     result = runner(copernicusmarine, min_lat, max_lat, min_lon, max_lon, date_str, timing)
     elapsed = time.time() - t0
     if "error" in result:
-        logger.warning("[%s] Fetch failed in %.1fs: %s", var, elapsed, result["error"])
+        logger.debug("[%s] Fetch failed in %.1fs: %s", var, elapsed, result["error"])
     else:
         logger.debug("[%s] Fetch OK in %.1fs — %s, date=%s", var, elapsed, size_of(result), result["date"])
         # Attach the accumulated download/extract phases plus prep for the client.
@@ -324,42 +335,24 @@ def _fetch_currents(cm, min_lat, max_lat, min_lon, max_lon, date_str, timing):
 
 def _try_datasets(dataset_ids, open_fn, date_str):
     """Run `open_fn(dataset_id, date)` over candidates, translating Copernicus
-    auth failures and date-out-of-range errors (retrying at the capped date)."""
+    auth failures. A date beyond a dataset's last day is capped inside _subset;
+    one before its first day moves on to the next candidate (e.g. NRT → MY)."""
     last_err = None
     for dataset_id in dataset_ids:
         try:
             return open_fn(dataset_id, date_str)
+        except _DateOutOfRange as exc:
+            logger.debug("%s", exc)
+            last_err = str(exc)
         except Exception as exc:
             msg = str(exc)
-            bounds = _is_bounds_error(msg)
-            # A date beyond the dataset's range is routine (NRT products only
-            # hold the last few weeks; old deployments always hit it) and is
-            # handled just below — log it there as one INFO line, not a WARNING.
-            if not bounds:
-                logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
-
+            logger.debug("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
             if _is_auth_error(msg):
                 return {
                     "error": "Copernicus Marine authentication failed",
                     "hint": "Enter your Copernicus Marine account details to sign in.",
                     "setup": "login",
                 }
-
-            # If our date is beyond the dataset's range, retry at its actual max.
-            if bounds:
-                capped = _parse_max_date(msg)
-                if capped and capped != date_str:
-                    logger.info("%s: %s outside dataset range (%s), using %s",
-                                dataset_id, date_str, _parse_date_range(msg) or "?", capped)
-                    try:
-                        return open_fn(dataset_id, capped)
-                    except Exception as exc2:
-                        logger.warning("Overlay retry error (dataset=%s, date=%s): %s",
-                                       dataset_id, capped, exc2)
-                        last_err = str(exc2)
-                        continue
-                logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
-
             last_err = msg
 
     return {
@@ -369,35 +362,155 @@ def _try_datasets(dataset_ids, open_fn, date_str):
     }
 
 
+# ---------- reusable dataset opens ----------
+#
+# copernicusmarine.open_dataset is expensive *before* it touches any data: it
+# validates the credentials online against the CAS server, fetches the datastore
+# config and several STAC catalogue documents, then opens the zarr store over S3
+# (all ~3s on a good connection, every call). The actual chunk read is sub-second.
+# The data read only tags requests with the username, so an already-opened lazy
+# xarray dataset can be sliced again with none of that overhead. We therefore
+# open each dataset once (full extent, surface level only), keep the lazy handle,
+# and do the bbox/date selection ourselves. Entries expire after _DS_TTL so NRT
+# products pick up newly appended days, and any error against a cached handle
+# drops it and retries once with a fresh open.
+_DS_TTL = 3600.0
+_DS_OPEN: dict[tuple, tuple[object, float]] = {}
+_DS_LOCK = threading.Lock()
+
+
+class _DateOutOfRange(Exception):
+    """Requested date lies before the dataset's first available day."""
+
+    def __init__(self, dataset_id, date_str, tmin, tmax):
+        super().__init__(f"{dataset_id}: {date_str} is before dataset range [{tmin}, {tmax}]")
+        self.tmin, self.tmax = tmin, tmax
+
+
+def _open_full(cm, dataset_id: str, variables: list, surface: bool):
+    """Lazily-opened full-extent dataset (surface level only), cached per
+    (dataset, variables, surface) for _DS_TTL seconds."""
+    key = (dataset_id, tuple(variables), bool(surface))
+    now = time.time()
+    with _DS_LOCK:
+        hit = _DS_OPEN.get(key)
+        if hit is not None and (now - hit[1]) < _DS_TTL:
+            return hit[0]
+        kwargs = dict(dataset_id=dataset_id, variables=list(variables))
+        if surface:
+            kwargs["minimum_depth"] = 0.0
+            kwargs["maximum_depth"] = 1.0
+        t0 = time.time()
+        ds = cm.open_dataset(**kwargs)
+        logger.debug("Opened %s (%s) in %.1fs — reused for the next %d min",
+                    dataset_id, ",".join(variables), time.time() - t0, int(_DS_TTL // 60))
+        _DS_OPEN[key] = (ds, now)
+        return ds
+
+
+def _drop_open(dataset_id: str, variables: list, surface: bool):
+    with _DS_LOCK:
+        _DS_OPEN.pop((dataset_id, tuple(variables), bool(surface)), None)
+
+
+def _coord_key(ds, names):
+    return next((k for k in ds.coords if k.lower() in names), None)
+
+
+def _time_bounds(ds):
+    tk = _coord_key(ds, ("time",))
+    if tk is None:
+        return None, None, None
+    tv = ds[tk].values
+    if len(tv) == 0:
+        return tk, None, None
+    return tk, str(tv.min())[:10], str(tv.max())[:10]
+
+
+def _subset(ds, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str):
+    """Slice the cached full dataset to the bbox and one day.
+
+    A date beyond the dataset's last day is capped to that day (NRT products only
+    hold the last few weeks; old deployments always hit this); a date before its
+    first day raises _DateOutOfRange so the caller can fall back to the next
+    candidate dataset. Returns (subset, date actually used)."""
+    tk, tmin, tmax = _time_bounds(ds)
+    if tk is None or tmin is None:
+        raise RuntimeError(f"{dataset_id}: no time coordinate")
+    if date_str < tmin:
+        raise _DateOutOfRange(dataset_id, date_str, tmin, tmax)
+    if date_str > tmax:
+        logger.debug("%s: %s outside dataset range (%s to %s), using %s",
+                    dataset_id, date_str, tmin, tmax, tmax)
+        date_str = tmax
+    sub = ds.sel({tk: np.datetime64(date_str)}, method="nearest")
+    used = str(sub[tk].values)[:10]
+
+    lat_key = _coord_key(ds, ("latitude", "lat"))
+    lon_key = _coord_key(ds, ("longitude", "lon"))
+    if lat_key is None or lon_key is None:
+        raise RuntimeError(f"{dataset_id}: no lat/lon coordinates")
+    sel = {}
+    for k, lo, hi in ((lat_key, min_lat, max_lat), (lon_key, min_lon, max_lon)):
+        v = ds[k].values
+        descending = len(v) >= 2 and v[1] < v[0]
+        sel[k] = slice(hi, lo) if descending else slice(lo, hi)
+    sub = sub.sel(sel)
+    # Keep the time dim so _extract's isel(time=0) path is unchanged.
+    sub = sub.expand_dims(tk) if tk not in sub.dims else sub
+    return sub, used
+
+
+def _open_subset(cm, dataset_id, variables, surface, min_lat, max_lat, min_lon, max_lon, date_str):
+    """Cached open + subset, retrying once with a fresh open on any failure that
+    isn't simply a date-range miss (a stale handle, an expired store, ...)."""
+    try:
+        ds = _open_full(cm, dataset_id, variables, surface)
+        return _subset(ds, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str)
+    except _DateOutOfRange:
+        raise
+    except Exception as exc:
+        logger.debug("%s: retrying with a fresh open after: %s", dataset_id, exc)
+        _drop_open(dataset_id, variables, surface)
+        ds = _open_full(cm, dataset_id, variables, surface)
+        return _subset(ds, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str)
+
+
+def latest_available_date(var: str) -> str | None:
+    """Last day the overlay's primary dataset currently holds, or None if it
+    can't be determined. Used by the live-file refresh to decide whether a
+    stored field is stale without re-downloading anything."""
+    try:
+        cm = _import_cm()
+    except ImportError:
+        return None
+    try:
+        if var == "currents":
+            ds = _open_full(cm, CURRENTS["dataset"], CURRENTS["variables"], True)
+        else:
+            spec = OVERLAYS[var]
+            ds = _open_full(cm, spec["datasets"][0], [spec["variable"]], spec.get("surface", False))
+        return _time_bounds(ds)[2]
+    except Exception as exc:
+        logger.debug("latest_available_date(%s) failed: %s", var, exc)
+        return None
+
+
 def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     logger.debug("Fetching %s from %s for %s", spec["variable"], dataset_id, date_str)
     t0 = time.time()
-    kwargs = dict(
-        dataset_id=dataset_id,
-        variables=[spec["variable"]],
-        minimum_latitude=min_lat,
-        maximum_latitude=max_lat,
-        minimum_longitude=min_lon,
-        maximum_longitude=max_lon,
-        start_datetime=f"{date_str}T00:00:00",
-        end_datetime=f"{date_str}T23:59:59",
-    )
-    if spec.get("surface"):
-        # Only pull the shallowest level of the 3D model grid.
-        kwargs["minimum_depth"] = 0.0
-        kwargs["maximum_depth"] = 1.0
-    # Time the open even when it raises (wrong-dataset / out-of-range miss), so a
-    # failed attempt's network cost is still attributed to "download".
+    # Time the open/subset even when it raises (wrong-dataset / out-of-range
+    # miss), so a failed attempt's network cost is still attributed to "download".
     try:
-        ds = cm.open_dataset(**kwargs)
+        ds, used = _open_subset(cm, dataset_id, [spec["variable"]], spec.get("surface", False),
+                                min_lat, max_lat, min_lon, max_lon, date_str)
     finally:
         if timing is not None:
             timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
             timing["attempts"] = timing.get("attempts", 0) + 1
-    t_open = time.time() - t0
-    logger.debug("[%s] open_dataset done in %.1fs", spec["variable"], t_open)
+    logger.debug("[%s] open/subset done in %.1fs", spec["variable"], time.time() - t0)
     t1 = time.time()
-    result = _extract(ds, spec["variable"], date_str, demean=spec.get("demean", False))
+    result = _extract(ds, spec["variable"], used, demean=spec.get("demean", False))
     if timing is not None:
         timing["extract"] = timing.get("extract", 0.0) + (time.time() - t1)
     return result
@@ -408,26 +521,15 @@ def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, da
     logger.debug("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
     t0 = time.time()
     try:
-        ds = cm.open_dataset(
-            dataset_id=dataset_id,
-            variables=variables,
-            minimum_latitude=min_lat,
-            maximum_latitude=max_lat,
-            minimum_longitude=min_lon,
-            maximum_longitude=max_lon,
-            start_datetime=f"{date_str}T00:00:00",
-            end_datetime=f"{date_str}T23:59:59",
-            minimum_depth=0.0,
-            maximum_depth=1.0,
-        )
+        ds, used = _open_subset(cm, dataset_id, variables, True,
+                                min_lat, max_lat, min_lon, max_lon, date_str)
     finally:
         if timing is not None:
             timing["download"] = timing.get("download", 0.0) + (time.time() - t0)
             timing["attempts"] = timing.get("attempts", 0) + 1
-    t_open = time.time() - t0
-    logger.debug("[currents] open_dataset done in %.1fs", t_open)
+    logger.debug("[currents] open/subset done in %.1fs", time.time() - t0)
     t1 = time.time()
-    result = _extract_vec(ds, variables, date_str)
+    result = _extract_vec(ds, variables, used)
     if timing is not None:
         timing["extract"] = timing.get("extract", 0.0) + (time.time() - t1)
     return result
@@ -437,23 +539,6 @@ def _is_auth_error(msg: str) -> bool:
     low = msg.lower()
     return any(k in low for k in ("401", "403", "unauthorized", "forbidden",
                                   "credentials", "login required", "authentication"))
-
-
-def _is_bounds_error(msg: str) -> bool:
-    low = msg.lower()
-    return "exceed" in low and "dataset coordinates" in low
-
-
-def _parse_date_range(msg: str) -> str | None:
-    """'YYYY-MM-DD to YYYY-MM-DD' from a bounds-exceeded message, for logging."""
-    m = re.search(r"dataset coordinates\s*\[(\d{4}-\d{2}-\d{2})[^,]*,\s*(\d{4}-\d{2}-\d{2})", msg)
-    return f"{m.group(1)} to {m.group(2)}" if m else None
-
-
-def _parse_max_date(msg: str) -> str | None:
-    """Pull the dataset's max available date out of a bounds-exceeded message."""
-    m = re.search(r"dataset coordinates\s*\[.*?,\s*(\d{4}-\d{2}-\d{2})", msg)
-    return m.group(1) if m else None
 
 
 def _extract(ds, variable: str, date_str: str, demean: bool = False) -> dict:
@@ -524,7 +609,7 @@ def _extract(ds, variable: str, date_str: str, demean: bool = False) -> dict:
     points[:, 0] = np.round(lat_grid[mask], 4)
     points[:, 1] = np.round(lon_grid[mask], 4)
     points[:, 2] = np.round(flat, 5)
-    logger.info("Overlay %s: %d points for %s (p10=%.3f p90=%.3f, stride=%d)",
+    logger.debug("Overlay %s: %d points for %s (p10=%.3f p90=%.3f, stride=%d)",
                 variable, len(points), date_str, p10, p90, stride)
 
     return {"points": points, "date": date_str, "p10": p10, "p90": p90,
@@ -604,7 +689,7 @@ def _extract_vec(ds, variables, date_str: str) -> dict:
     dlat = float(lats[1] - lats[0]) if len(lats) >= 2 else 0.083
     dlon = float(lons[1] - lons[0]) if len(lons) >= 2 else 0.083
 
-    logger.info("Currents: %dx%d grid for %s (speed p90=%.3f max=%.3f, stride=%d)",
+    logger.debug("Currents: %dx%d grid for %s (speed p90=%.3f max=%.3f, stride=%d)",
                 len(lats), len(lons), date_str, speed_p90, speed_max, stride)
 
     return {

@@ -67,3 +67,8 @@ def tame_copernicus_logging() -> None:
     cm_logger = logging.getLogger("copernicusmarine")
     cm_logger.propagate = False
     cm_logger.setLevel(logging.INFO if DIAGNOSTICS else logging.ERROR)
+    # The zarr reads fan out over more parallel S3 connections than urllib3's
+    # default pool holds; it then WARNs "Connection pool is full, discarding
+    # connection" for every surplus one. Harmless (the request still succeeds).
+    for name in ("urllib3.connectionpool", "botocore", "boto3", "s3transfer"):
+        logging.getLogger(name).setLevel(logging.ERROR)

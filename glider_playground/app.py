@@ -6,7 +6,6 @@ import platform
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -19,6 +18,7 @@ from . import cache_logic
 from . import cycle_profile_logic
 from . import live_logic
 from . import overlay_logic
+from . import overlay_prefetch
 from . import plot_logic
 from . import spatial_logic
 from . import update_logic
@@ -59,6 +59,9 @@ async def _json_500(request: Request, exc: Exception):
 # "other" time on the very first overlay). Daemon thread; failures are harmless.
 import threading as _threading
 _threading.Thread(target=overlay_logic.warm_up, name="cm-warmup", daemon=True).start()
+# Background overlay prefetch: every READY file gets its Copernicus layers
+# fetched once and stored on disk (see overlay_prefetch).
+overlay_prefetch.start()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -686,100 +689,53 @@ async def api_copernicus_login(request: Request):
     if server_config.IS_SERVER:
         raise HTTPException(status_code=403, detail="Copernicus login not available in server mode")
     body = await request.json()
-    return overlay_logic.login(body.get("username"), body.get("password"))
+    out = overlay_logic.login(body.get("username"), body.get("password"))
+    if out.get("status") == "success":
+        overlay_prefetch.retry_errors()   # layers that failed for lack of creds
+    return out
 
 
-# A glider whose last fix is within this many days is treated as "live": its
-# overlay uses the most recent available Copernicus field rather than the exact
-# last-fix date, so an active deployment always sees the freshest ocean state.
-_LIVE_WINDOW_DAYS = 7
-
-
-def _overlay_target_date(rec) -> str | None:
-    """Pick the overlay date for a file: the glider's last data point for a past
-    deployment, or None (→ most recent available) when the glider is still live.
-
-    overlay_logic caps a future/last date to the dataset's latest day anyway, so
-    this mainly matters for a glider whose last fix is a few days old but still
-    within the live window — we want the latest field, not that slightly-stale day.
-    """
-    if not rec or not rec.get("last_time"):
-        return None
-    last_str = str(rec["last_time"])[:10]
-    try:
-        last = datetime.strptime(last_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return last_str  # unparseable — fall back to the contemporaneous date
-    age_days = (datetime.now(timezone.utc) - last).days
-    return None if age_days <= _LIVE_WINDOW_DAYS else last_str
+@app.get("/api/overlay_status")
+def api_overlay_status(id: str):
+    """Per-layer prefetch state for a file (pending/ready/error + field date),
+    used by the map view to grey out layers until they're on disk. Asking also
+    moves the file to the front of the prefetch queue."""
+    return overlay_prefetch.get_status(id)
 
 
 @app.get("/api/overlay")
 def api_overlay(id: str, var: str):
     """Surface overlay (chla/temp/salinity/o2/ph/biomass/sla) for a file's bbox.
 
-    For a past deployment the date is tied to the glider's last GPS fix so the
-    field is contemporaneous with the track; for a still-live glider (last fix
-    within the live window) it uses the most recent available field instead. See
-    _overlay_target_date.
+    Normally a read of the prefetched, on-disk field (see overlay_prefetch). If
+    it isn't stored yet (file still processing, or the user clicked before the
+    prefetch reached it) the layer is fetched now and stored for next time. For
+    a past deployment the date is tied to the glider's last GPS fix so the field
+    is contemporaneous with the track; for a still-live glider it uses the most
+    recent available field — see overlay_prefetch.target_date.
     """
     if var not in overlay_logic.OVERLAYS:
         raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
-
-    t_loc = time.time()
-    loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
-    if not loc or "error" in loc:
-        raise HTTPException(status_code=404, detail="No spatial data for this file")
-
-    rec = cache_logic.get_record(id)
-    target_date = _overlay_target_date(rec)
-    locate = time.time() - t_loc
-
-    result = overlay_logic.fetch_overlay(
-        var,
-        lat_min=loc["lat_min"],
-        lat_max=loc["lat_max"],
-        lon_min=loc["lon_min"],
-        lon_max=loc["lon_max"],
-        target_date=target_date,
-    )
-    # An error comes back as a plain dict → JSON (the rare fallback path).
-    if "error" in result:
-        return result
-    # Resolving the glider's bbox/date is part of this request's wall time, so
-    # report it alongside the fetch's own phases for the unified client log.
-    if isinstance(result.get("_timing"), dict):
-        result["_timing"]["locate"] = locate
-    # Ship the cell grid as a packed binary payload (uint32 header len + JSON
-    # header + raw LE float32 lat/lon/val) so the browser skips JSON.parse of a
-    # ~100k-element list and the server skips the JSON text encode.
-    return Response(
-        content=overlay_logic.pack_overlay_response(result),
-        media_type="application/octet-stream",
-    )
+    data = overlay_prefetch.get_layer_bytes(id, var)
+    if data is None:
+        data, err = overlay_prefetch.fetch_layer(id, var)
+        if err is not None:
+            return err   # plain JSON error (the rare fallback path)
+    # Packed binary (uint32 header len + JSON header + raw LE float32
+    # lat/lon/val) so the browser skips JSON.parse of a ~100k-element list.
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @app.get("/api/currents")
 def api_currents(id: str):
-    """Surface current (uo/vo) grid for a file's bbox, for the animated flow layer.
-
-    Like /api/overlay, the date follows the glider's last fix for a past
-    deployment and the most recent available field for a still-live glider.
-    """
-    loc = _cached_or_live(id, "location", spatial_logic.get_location_summary)
-    if not loc or "error" in loc:
-        raise HTTPException(status_code=404, detail="No spatial data for this file")
-
-    rec = cache_logic.get_record(id)
-    target_date = _overlay_target_date(rec)
-
-    return overlay_logic.fetch_currents(
-        lat_min=loc["lat_min"],
-        lat_max=loc["lat_max"],
-        lon_min=loc["lon_min"],
-        lon_max=loc["lon_max"],
-        target_date=target_date,
-    )
+    """Surface current (uo/vo) grid for a file's bbox, for the animated flow
+    layer. Same prefetched-store-first behaviour and date rule as /api/overlay."""
+    data = overlay_prefetch.get_layer_bytes(id, "currents")
+    if data is None:
+        data, err = overlay_prefetch.fetch_layer(id, "currents")
+        if err is not None:
+            return err
+    return Response(content=data, media_type="application/json")
 
 
 # ---------- server-only plugins ----------

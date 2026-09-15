@@ -78,6 +78,10 @@
         #dacToggle:hover, #smoothToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
         #dacToggle.on, #smoothToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
         .ovBtn.loading { cursor: progress; }
+        /* Layer not yet prefetched for this glider: greyed until it lands. */
+        .ovBtn.pending { opacity: 0.4; cursor: default; }
+        .ovBtn.pending:hover { background: transparent; }
+        #layer-header .lyrIcon.spin { animation: chlaspin 0.9s linear infinite; opacity: 0.7; }
         .ovBtn .spin { animation: chlaspin 0.9s linear infinite; }
         @keyframes chlaspin { to { transform: rotate(360deg); } }
         .ovSwatch { flex: 0 0 auto; }
@@ -273,7 +277,7 @@
          into #layer-body, above Currents. Whole panel hidden until map loads. -->
     <div id="layer-panel" class="collapsed">
         <button id="layer-header" title="Show layers">
-            <span class="material-symbols-outlined">layers</span>
+            <span class="material-symbols-outlined lyrIcon">layers</span>
             <span id="layer-title">Layers</span>
             <span class="material-symbols-outlined chev">expand_more</span>
         </button>
@@ -535,6 +539,70 @@
         // other. Currents (DAC arrows) are separate and coexist.
         const OVERLAY_HALF_DEG_DEFAULT = 0.054; // ~12 km cell fallback if server omits it
         const overlayCache = {};   // key -> fetched {points, p10, p90, date, half_deg, units}
+
+        // Server-side prefetch state per layer for the active glider (see
+        // overlay_prefetch.py): key -> {state: 'pending'|'ready'|'error', date}.
+        // Layers stay greyed out until the field is on the server's disk; the
+        // header icon spins while any is still pending.
+        let layerState = {};
+        let layerStatusTimer = 0;
+        let layerStatusSeq = 0;
+
+        function layerPending(key) {
+            const st = layerState[key];
+            return !!st && st.state === 'pending';
+        }
+
+        function updateLayerHeaderIcon() {
+            const icon = document.querySelector('#layer-header .lyrIcon');
+            if (!icon) return;
+            const anyPending = Object.values(layerState).some(l => l.state === 'pending');
+            icon.textContent = anyPending ? 'progress_activity' : 'layers';
+            icon.classList.toggle('spin', anyPending);
+        }
+
+        // Poll /api/overlay_status for the active glider: fast while layers are
+        // still being fetched, slow (1 min) for a live glider so a field the
+        // server refreshed to a newer day gets picked up, and stopped otherwise.
+        async function pollOverlayStatus() {
+            clearTimeout(layerStatusTimer);
+            const fileId = activeId;
+            if (!fileId) return;
+            const seq = ++layerStatusSeq;
+            let next = 1500;
+            try {
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
+                const res = await fetch(`/api/overlay_status?id=${encodeURIComponent(fileId)}`);
+                const st = await res.json();
+                if (seq !== layerStatusSeq || fileId !== activeId) return;
+                const prev = layerState;
+                layerState = st.layers || {};
+                // A live layer the server refreshed to a newer day: drop our
+                // copy so the next click (or the open overlay) reloads it.
+                for (const k in layerState) {
+                    const was = prev[k] && prev[k].date;
+                    const now = layerState[k].date;
+                    if (was && now && was !== now) {
+                        if (k === 'currents') {
+                            currentsData = null;
+                            if (currentsActive) loadCurrents();
+                        } else {
+                            delete overlayCache[k];
+                            if (activeOverlay === k) loadOverlay(k);
+                        }
+                    }
+                }
+                if (!st.done) next = 1500;
+                else if (st.live) next = 60000;
+                else next = 0;
+            } catch (_) {
+                next = 5000;
+            }
+            updateOverlayButtons();
+            updateCurrentsButton();
+            updateLayerHeaderIcon();
+            if (next) layerStatusTimer = setTimeout(pollOverlayStatus, next);
+        }
         let activeOverlay = null;  // key of the overlay currently drawn, or null
         let overlayMesh = null;    // single merged THREE mesh of the active overlay
         let overlayLoading = null; // key currently being fetched, or null
@@ -984,6 +1052,7 @@
                 dacArrows = activeTrack().dacArrows;
                 updateDacToggle();
                 revealOverlayButtons();
+                pollOverlayStatus();
 
                 document.getElementById('statusText').textContent = 'Rendering 3D globe...';
                 const tc = readThemeColors();
@@ -1178,6 +1247,8 @@
             if (currentsActive) deactivateCurrents();
             for (const k in overlayCache) delete overlayCache[k];
             currentsData = null;
+            layerState = {};
+            pollOverlayStatus();
 
             dacArrows = activeTrack().dacArrows;
             updateDacToggle();
@@ -2288,8 +2359,10 @@
                 if (!btn) continue;
                 const loading = overlayLoading === ov.key;
                 const active = activeOverlay === ov.key;
+                const pending = layerPending(ov.key) && !loading;
                 btn.classList.toggle('on', active && !loading);
                 btn.classList.toggle('loading', loading);
+                btn.classList.toggle('pending', pending);
                 const sw = btn.querySelector('.ovSwatch');
                 const lbl = btn.querySelector('.ovLabel');
                 if (loading) {
@@ -2301,7 +2374,8 @@
                     sw.innerHTML = '';
                     sw.style.background = rampGradient(ov);
                     lbl.textContent = ov.label;
-                    btn.title = (active ? 'Hide ' : 'Show ') + ov.label + ' overlay';
+                    btn.title = pending ? ov.label + ' — preparing…'
+                        : (active ? 'Hide ' : 'Show ') + ov.label + ' overlay';
                 }
             }
         }
@@ -2447,6 +2521,9 @@
             } finally {
                 if (seq === overlayReqSeq) {
                     overlayLoading = null;
+                    // The server may have fetched this on demand — re-sync the
+                    // button state now rather than on the next scheduled poll.
+                    if (layerPending(key)) pollOverlayStatus();
                     const drawMs = applyOverlay();
                     if (T.cells) {
                         T.drawn = performance.now();
@@ -2459,6 +2536,7 @@
         // Click handler: toggle off if already active, else switch to this field.
         function selectOverlay(key) {
             if (overlayLoading) return;        // ignore clicks mid-fetch
+            if (layerPending(key)) return;     // not on the server yet — greyed
             if (activeOverlay === key) {
                 activeOverlay = null;
                 applyOverlay();
@@ -2808,6 +2886,7 @@
             } finally {
                 if (seq === currentsReqSeq) {
                     currentsLoading = false;
+                    if (layerPending('currents')) pollOverlayStatus();
                     const drawMs = applyCurrents();
                     if (T.cells) {
                         T.drawn = performance.now();
@@ -2820,6 +2899,7 @@
         // Toggle the currents layer; mutually exclusive with scalar overlays.
         function selectCurrents() {
             if (currentsLoading) return;
+            if (layerPending('currents')) return;
             if (currentsActive) { deactivateCurrents(); return; }
             if (activeOverlay) { activeOverlay = null; applyOverlay(); }  // free the legend
             if (currentsData) { currentsActive = true; applyCurrents(); }
@@ -2831,8 +2911,10 @@
             if (!btn) return;
             const sw = btn.querySelector('.ovSwatch');
             const lbl = btn.querySelector('.ovLabel');
+            const pending = layerPending('currents') && !currentsLoading;
             btn.classList.toggle('on', currentsActive && !currentsLoading);
             btn.classList.toggle('loading', currentsLoading);
+            btn.classList.toggle('pending', pending);
             if (currentsLoading) {
                 sw.innerHTML = '<span class="material-symbols-outlined spin" style="font-size:13px;line-height:13px;">progress_activity</span>';
                 sw.style.background = 'transparent';
@@ -2842,7 +2924,8 @@
                 sw.innerHTML = '';
                 sw.style.background = rampGradient(CURRENTS_DEF);
                 lbl.textContent = CURRENTS_DEF.label;
-                btn.title = (currentsActive ? 'Hide ' : 'Show ') + 'Copernicus surface currents';
+                btn.title = pending ? 'Currents — preparing…'
+                    : (currentsActive ? 'Hide ' : 'Show ') + 'Copernicus surface currents';
             }
         }
 

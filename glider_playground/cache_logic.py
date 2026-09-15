@@ -777,6 +777,9 @@ def clear_plot_binary(file_id: str):
     with _PLOTCACHE_MEM_LOCK:
         _PLOTCACHE_MEM.clear()
         _PLOTCACHE_MEM_BYTES = 0
+    # The overlay prefetch store lives in this dir too — drop its bookkeeping.
+    from . import overlay_prefetch   # lazy: it imports this module
+    overlay_prefetch.forget(file_id)
 
 
 def _wipe_plotcache():
@@ -1116,6 +1119,15 @@ def _process(file_id: str):
                 traceback.print_exc()
             _mark_step_done(rec, STEP_PLOT_PREWARM)
             _release_memory()
+
+        # Hand off to the overlay prefetch worker (its own thread, so Copernicus
+        # network time never holds up the next file's processing).
+        if not _is_removed(rec):
+            try:
+                from . import overlay_prefetch
+                overlay_prefetch.ensure(file_id)
+            except Exception:
+                traceback.print_exc()
     except Exception as e:
         if not _is_removed(rec):
             traceback.print_exc()
