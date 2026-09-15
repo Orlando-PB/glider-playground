@@ -104,6 +104,20 @@
             max-width: calc(100vw - 140px); overflow: hidden; box-sizing: border-box;
         }
         #chla-bar.visible { display: flex; }
+        body.hasAttrib #chla-bar { bottom: 30px; }
+
+        /* Data-source attribution — bottom-left, one line per active source. */
+        #attrib {
+            display: none; position: absolute; bottom: 8px; left: 10px; z-index: 60;
+            flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 5px;
+            font-size: 9px; line-height: 1.3; white-space: nowrap;
+            max-width: calc(100vw - 140px); overflow: hidden; text-overflow: ellipsis;
+            color: var(--text-muted); opacity: 0.85; user-select: none; pointer-events: none;
+        }
+        body.hasAttrib #attrib { display: flex; }
+        #attrib a { color: inherit; text-decoration: underline; pointer-events: auto; }
+        #attrib a:hover { color: var(--text-primary); }
+        #attrib .sep { opacity: 0.6; }
         #chla-bar-title {
             font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
             text-transform: uppercase; margin-right: 2px;
@@ -308,6 +322,9 @@
         <span id="chla-bar-hi">–</span>
         <span id="chla-bar-date"></span>
     </div>
+
+    <!-- Data-source attribution lines (managed by setAttrib). -->
+    <div id="attrib"></div>
 
     <!-- Hover tooltip for waypoint/glider markers, follows the cursor. -->
     <div id="marker-tooltip"></div>
@@ -2443,6 +2460,26 @@
             }
         }
 
+        // ── Data-source attribution ──────────────────────────────────────
+        // One line per active third-party source (Copernicus overlays/currents,
+        // Argo floats). setAttrib(key, html|null) adds/removes a line; the strip
+        // hides itself when empty. Exposed on window so layer scripts can use it.
+        const _attribLines = {};
+        function setAttrib(key, html) {
+            if (html) _attribLines[key] = html; else delete _attribLines[key];
+            const el = document.getElementById('attrib');
+            // Always one line: sources joined with a separator so the strip never
+            // grows tall enough to collide with the colourbar above it.
+            el.innerHTML = Object.values(_attribLines).map(h => `<span>${h}</span>`).join('<span class="sep">·</span>');
+            document.body.classList.toggle('hasAttrib', el.innerHTML !== '');
+        }
+        window.setAttrib = setAttrib;
+        const COPERNICUS_ATTRIB = 'Overlay data: <a href="https://marine.copernicus.eu/" target="_blank" rel="noopener">Copernicus Marine</a>';
+        function updateCopernicusAttrib() {
+            const on = (!!activeOverlay && !!overlayCache[activeOverlay]) || (currentsActive && !!currentsData);
+            setAttrib('copernicus', on ? COPERNICUS_ATTRIB : null);
+        }
+
         // Draw whatever activeOverlay points at (rebuilding the mesh), or nothing.
         // Returns the mesh-build time in ms (0 if nothing was drawn) so callers
         // can fold the draw cost into the unified overlay timing log.
@@ -2471,6 +2508,7 @@
             document.getElementById('chla-bar').classList.toggle('visible', !!activeOverlay && !!overlayCache[activeOverlay]);
             fitColourBar();
             updateOverlayButtons();
+            updateCopernicusAttrib();
             return drawMs;
         }
 
@@ -2883,6 +2921,7 @@
             if (!(currentsActive && currentsData && myGlobe)) {
                 if (!activeOverlay) document.getElementById('chla-bar').classList.remove('visible');
                 updateCurrentsButton();
+                updateCopernicusAttrib();
                 return drawMs;
             }
             try {
@@ -2903,6 +2942,7 @@
                 showOverlayError('Could not draw currents', err.message);
             }
             updateCurrentsButton();
+            updateCopernicusAttrib();
             return drawMs;
         }
 

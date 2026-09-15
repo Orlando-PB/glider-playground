@@ -194,6 +194,9 @@
         ui.toggle.classList.toggle('on', on);
         ui.slider.classList.toggle('on', on);
         ui.toggle.title = (on ? 'Hide' : 'Show') + ' Argo float positions';
+        if (window.setAttrib) window.setAttrib('argo', on
+            ? 'Floats: <a href="https://argo.ucsd.edu/" target="_blank" rel="noopener">Argo GDAC</a> / <a href="https://fleetmonitoring.euro-argo.eu/" target="_blank" rel="noopener">Euro-Argo</a>'
+            : null);
         if (on) fetchFloats();
         else {
             allFloats = []; floats = [];
