@@ -751,6 +751,23 @@
         const _trackMeshes = {};   // track id -> ribbon mesh
         let _dacMesh = null;       // the active track's DAC arrows, only while showDac
 
+        // Glider overlays (track/DAC ribbons and the HTML position dots) stay
+        // hidden until the globe is ready AND its intro tween has finished.
+        // globe.gl fires onGlobeReady as it *starts* a 1200ms rotate/zoom-in,
+        // and the CSS2D dots sit at the screen centre until their first
+        // projection — so without this gate the dots pop up mid-screen on a
+        // fresh load and everything visibly slides into place as the globe
+        // rotates in. Any mesh/dot built before the reveal is created hidden.
+        let _sceneRevealed = false;
+        const GLOBE_INTRO_MS = 1300;   // globe.gl animateIn tween (1200ms) + slack
+
+        function revealGliderOverlays() {
+            _sceneRevealed = true;
+            for (const id in _trackMeshes) _trackMeshes[id].visible = true;
+            if (_dacMesh) _dacMesh.visible = true;
+            document.querySelectorAll('.gp-dot').forEach(el => { el.style.display = ''; });
+        }
+
         // (Re)build every track's ribbon from allTracks. One geometry per track,
         // a few ms in total, so it's simply redone after each fetch.
         function rebuildTrackMeshes() {
@@ -758,6 +775,7 @@
             for (const id in _trackMeshes) { disposeMesh(_trackMeshes[id]); delete _trackMeshes[id]; }
             for (const t of allTracks) {
                 const mesh = ribbonMesh([thinPath(t.formattedPath)], LAYER_ORDER.track);
+                mesh.visible = _sceneRevealed;
                 myGlobe.scene().add(mesh);
                 _trackMeshes[t.id] = mesh;
             }
@@ -816,6 +834,7 @@
             setRGBA(u.uColorB.value, 0, 0, 0, 1);
             u.uWidthA.value = DAC_CONFIG.strokeMin;
             u.uWidthB.value = DAC_CONFIG.strokeMax;
+            _dacMesh.visible = _sceneRevealed;
             myGlobe.scene().add(_dacMesh);
         }
 
@@ -1002,6 +1021,8 @@
                     document.getElementById('globe-container').style.visibility = 'visible';
                     document.getElementById('overlay').style.display = 'none';
                     window.logRender('3D Globe Frontend', performance.now() - startTime);
+                    // Show the glider overlays only once the intro rotation lands.
+                    setTimeout(revealGliderOverlays, GLOBE_INTRO_MS);
                 });
 
                 recentreOnActive(true);
@@ -1099,6 +1120,10 @@
         // live deployment, grey for a historical one.
         function dotEl(d) {
             const el = document.createElement('div');
+            // globe.gl toggles the dot's `visibility` per frame (far-side
+            // occlusion), so the pre-reveal hide uses `display` instead.
+            el.className = 'gp-dot';
+            if (!_sceneRevealed) el.style.display = 'none';
             // Blue pinned point: same look as the live dot, blue and a touch smaller.
             if (d.pin) {
                 el.style.cssText = 'width:11px;height:11px;border-radius:50%;background:#3b82f6;border:2px solid #fff;box-shadow:0 0 12px rgba(59,130,246,0.85);pointer-events:none;transform:translate(-50%,-50%);';
