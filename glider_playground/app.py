@@ -14,6 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import argo_logic
 from . import cache_logic
 from . import cycle_profile_logic
 from . import live_logic
@@ -24,6 +25,7 @@ from . import spatial_logic
 from . import update_logic
 from . import waypoint_logic
 from . import server_config
+from . import ships_logic
 
 server_config.configure_logging()
 logger = logging.getLogger(__name__)
@@ -427,6 +429,27 @@ def api_live_delete(filename: str):
     return {"status": "ok"}
 
 
+# ---------- Argo float explorer (experimental; see argo_logic.py) ----------
+
+@app.get("/api/argo/floats")
+def api_argo_floats(days: float = 30):
+    """Last known position of every Argo float active within `days` (0 = all)."""
+    return argo_logic.list_floats(days=days or None)
+
+
+@app.get("/api/argo/float/{wmo}")
+def api_argo_float(wmo: str):
+    return argo_logic.float_detail(wmo)
+
+
+# ---------- Research ships (experimental; see ships_logic.py) ----------
+
+@app.get("/api/ships")
+def api_ships():
+    """Latest reported position of RRS Discovery / James Cook / Sir David Attenborough."""
+    return ships_logic.list_ships()
+
+
 # ---------- per-file data endpoints ----------
 
 @app.get("/api/map")
@@ -514,6 +537,7 @@ def api_map_all():
             "last_lon": rec.get("last_lon"),
             "is_nrt": rec.get("is_nrt"),
             "last_time": rec.get("last_time"),
+            "platform_kind": rec.get("platform_kind") or "",
         })
     return {"tracks": tracks}
 

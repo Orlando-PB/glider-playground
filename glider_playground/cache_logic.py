@@ -236,6 +236,7 @@ def _save_payload_sidecar(rec: dict):
         "last_time": rec.get("last_time"),
         "last_lat": rec.get("last_lat"),
         "last_lon": rec.get("last_lon"),
+        "platform_kind": rec.get("platform_kind"),
         "payloads": {k: rec[k] for k in _PAYLOAD_KEYS if k in rec},
     }
     tmp = _payload_path(rid).with_suffix(".json.tmp")
@@ -273,6 +274,7 @@ def _load_payload_sidecar(rec: dict) -> set:
     if body.get("last_time"): rec["last_time"] = body["last_time"]
     if body.get("last_lat") is not None: rec["last_lat"] = body["last_lat"]
     if body.get("last_lon") is not None: rec["last_lon"] = body["last_lon"]
+    if body.get("platform_kind") is not None: rec["platform_kind"] = body["platform_kind"]
     return set(body.get("done_steps") or [])
 
 
@@ -389,6 +391,56 @@ def _is_nrt(last_time_iso: Optional[str]) -> bool:
         return False
 
 
+
+# ---------- platform kind (icon) ----------
+
+# NERC B76 platform-vocabulary codes seen in BODC OG1 files → icon kind.
+_B76_KIND = {
+    "B7600001": "slocum",     # Teledyne Webb Research Slocum G2 glider
+    "B7600029": "slocum",     # Teledyne Webb Research Slocum G3S glider
+    "B7600002": "seaglider",  # Kongsberg Seaglider
+    "B7600021": "alr",        # NOC Autosub Long Range 1500
+}
+PLATFORM_KINDS = ("slocum", "seaglider", "alr")
+
+
+def _detect_platform_kind(path: str) -> str:
+    """'slocum' | 'seaglider' | 'alr' | '' from the file's global attributes.
+
+    Cheap (attrs only, no data read). Drives the platform icon shown on file
+    cards and map markers; '' means "unknown, use the generic marker".
+    """
+    try:
+        with xr.open_dataset(path, decode_times=False, decode_cf=False) as ds:
+            attrs = {str(k).lower(): str(v) for k, v in ds.attrs.items()}
+    except Exception:
+        return ""
+    vocab = attrs.get("platform_vocabulary", "")
+    for code, kind in _B76_KIND.items():
+        if code in vocab:
+            return kind
+    text = " ".join(attrs.get(k, "") for k in
+                    ("platform_type", "platform_model", "platform", "instrument", "id", "title", "source")).lower()
+    text += " " + Path(path).name.lower()
+    if "slocum" in text:
+        return "slocum"
+    if "seaglider" in text or "sea glider" in text:
+        return "seaglider"
+    if "autosub" in text or "alr" in text.replace("_", " ").split() or Path(path).name.lower().startswith("alr"):
+        return "alr"
+    return ""
+
+
+def _ensure_platform_kind(rec: dict):
+    """Fill ``platform_kind`` once for ready records that predate the field."""
+    if rec.get("status") != STATUS_READY or "platform_kind" in rec:
+        return
+    kind = _detect_platform_kind(rec.get("path", ""))
+    with _lock:
+        rec["platform_kind"] = kind
+        _persist_locked()
+
+
 def _public_view(rec: dict) -> dict:
     last_time = rec.get("last_time")
     try:
@@ -413,6 +465,7 @@ def _public_view(rec: dict) -> dict:
         "last_lon": rec.get("last_lon"),
         "is_nrt": _is_nrt(last_time),
         "is_managed": is_managed,
+        "platform_kind": rec.get("platform_kind") or "",
     }
 
 
@@ -532,6 +585,7 @@ def list_files() -> list[dict]:
             recs = list(_registry.values())
         for rec in recs:
             _refresh(rec)
+            _ensure_platform_kind(rec)
     with _lock:
         return [_public_view(r) for r in _registry.values()]
 
@@ -1054,6 +1108,7 @@ def _process(file_id: str):
                 last_iso = spatial_logic.get_last_time_iso(p)
                 if last_iso:
                     rec["last_time"] = last_iso
+                rec["platform_kind"] = _detect_platform_kind(str(p))
             finally:
                 spatial_logic._spatial_stage_cb = None
             _release_memory()

@@ -19,6 +19,10 @@
          surface layer drawn here (tracks, arrows, overlays, currents, ruler).
          Loaded AFTER globe.gl so globe.gl initialises untouched. -->
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <!-- Argo float layer (experimental, self-contained; see argo_layer.js) -->
+    <script src="/static/argo_layer.js"></script>
+    <!-- Research-ship layer (experimental, self-contained; see ships_layer.js) -->
+    <script src="/static/ships_layer.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-globe: #121420;
@@ -910,6 +914,23 @@
         //  • live (NRT) gliders → a red dot at the last fix, always shown;
         //  • everyone else → a grey dot at its end position, shown only while NOT
         //    selected (the active track is already obvious in the accent colour).
+        // Was the glider heading west over its last stretch? true / false, or
+        // null when there's no usable movement (icon keeps its default, east-
+        // facing orientation). Compares the marker position with a point a few
+        // fixes back so a single noisy surfacing doesn't flip it.
+        function headingWest(t, lat, lng) {
+            const path = t.formattedPath;
+            if (!path || path.length < 2) return null;
+            const back = path[Math.max(0, path.length - 1 - 5)];
+            let dLng = lng - back.lng;
+            if (dLng > 180) dLng -= 360; else if (dLng < -180) dLng += 360;
+            const cLat = Math.cos(lat * Math.PI / 180) || 1e-6;
+            const dx = dLng * cLat, dy = lat - back.lat;
+            if (Math.hypot(dx, dy) < 0.002) return null;   // < ~200 m: no real movement
+            if (Math.abs(dx) < 1e-6) return null;
+            return dx < 0;
+        }
+
         function buildPositionDots() {
             const pts = [];
             for (const t of allTracks) {
@@ -917,11 +938,16 @@
                 if (t.isNrt) {
                     const lat = t.lastLat != null ? Number(t.lastLat) : end.lat;
                     const lng = t.lastLon != null ? Number(t.lastLon) : end.lng;
-                    pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId, lastTime: t.lastTime });
-                } else if (t.id !== activeId) {
-                    pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, name: t.name, live: false, active: false });
+                    pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId, lastTime: t.lastTime, kind: t.platformKind, west: headingWest(t, lat, lng) });
+                } else {
+                    // Recovered tracks: end-of-data marker. The selected one is
+                    // drawn too so its platform icon sits at the end.
+                    pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, name: t.name, live: false, active: t.id === activeId, kind: t.platformKind, west: headingWest(t, end.lat, end.lng) });
                 }
             }
+            // Research ships (when that layer is on) share this marker layer so
+            // they render exactly like the glider end markers.
+            if (window.ShipsLayer) pts.push(...ShipsLayer.dots());
             // The blue pinned point rides in the same html layer so it re-applies
             // automatically whenever the dots are refreshed (track switch, etc.).
             if (_pinDot) pts.push(_pinDot);
@@ -1001,6 +1027,7 @@
                 lastLat: raw.last_lat,
                 lastLon: raw.last_lon,
                 lastTime: raw.last_time,
+                platformKind: raw.platform_kind || '',
                 view: {
                     centreLat: (minLat + maxLat) / 2,
                     centreLng: (minLng + maxLng) / 2,
@@ -1085,6 +1112,8 @@
                 } catch (_) {}
 
                 attachCoordPicker();
+                if (window.ArgoLayer) ArgoLayer.attach(() => myGlobe, document.getElementById('layer-body'), ribbonMesh);
+                if (window.ShipsLayer) ShipsLayer.attach(() => myGlobe, document.getElementById('layer-body'), applyDots);
 
                 myGlobe.onGlobeReady(() => {
                     document.getElementById('globe-container').style.visibility = 'visible';
@@ -1167,7 +1196,9 @@
             _hoverRAF = requestAnimationFrame(() => {
                 _hoverRAF = 0;
                 if (!_hoverXY) return;
-                const marker = nearestMarkerAtScreen(_hoverXY[0], _hoverXY[1], 12);
+                const marker = (window.ShipsLayer && ShipsLayer.hoverInfo(_hoverXY[0], _hoverXY[1], 10))
+                    || (window.ArgoLayer && ArgoLayer.hoverInfo(_hoverXY[0], _hoverXY[1], 10))
+                    || nearestMarkerAtScreen(_hoverXY[0], _hoverXY[1], 12);
                 if (marker) {
                     setHover(null);
                     showMarkerTooltip(marker, _hoverXY[0], _hoverXY[1]);
@@ -1209,9 +1240,38 @@
                 el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 8px rgba(34,197,94,0.85);pointer-events:none;transform:translate(-50%,-50%);';
                 return el;
             }
-            const c = d.live ? '#ef4444' : '#9ca3af';
-            const glow = d.live ? '0 0 12px rgba(239,68,68,0.8)' : '0 0 8px rgba(156,163,175,0.7)';
-            const sz = d.live ? 14 : 10;
+            // Ships: orange (gold when selected), same icon treatment as gliders.
+            const c = d.ship ? (d.active ? '#FFD700' : '#fb923c') : d.live ? '#ef4444' : (d.active ? '#FFD700' : '#9ca3af');
+            const glowRgb = d.ship ? (d.active ? '255,215,0' : '251,146,60') : d.live ? '239,68,68' : (d.active ? '255,215,0' : '156,163,175');
+            // Known platform: MARS's map icon (static/icons/), glowing red when
+            // live, grey otherwise. Falls back to the plain dot if the image
+            // fails to load or the kind is unknown.
+            if (d.kind) {
+                const strong = d.live || d.active || d.ship;
+                const w = strong ? 36 : 28;
+                // Live / ships / the selected track: the icon as-is (its own white
+                // outline already stands out). Everything else: faded and greyed.
+                const look = strong
+                    ? 'filter:drop-shadow(0 0 1.5px #fff);opacity:1;'
+                    : 'filter:drop-shadow(0 0 1px #fff) grayscale(1);opacity:0.4;';
+                el.style.cssText = `width:${w}px;height:${Math.round(w * 24 / 56)}px;pointer-events:none;transform:translate(-50%,-50%);`;
+                const img = document.createElement('img');
+                img.src = `/static/icons/${d.kind}-mapicon.png`;
+                img.alt = '';
+                // Icons face east by default; mirror when the last leg heads west.
+                const flip = d.west === true ? 'transform:scaleX(-1);' : '';
+                img.style.cssText = `width:100%;height:100%;object-fit:contain;display:block;${look}${flip}`;
+                img.onerror = () => {
+                    const glow2 = strong ? `0 0 12px rgba(${glowRgb},0.8)` : `0 0 8px rgba(${glowRgb},0.7)`;
+                    const sz2 = strong ? 14 : 10;
+                    el.style.cssText = `width:${sz2}px;height:${sz2}px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:${glow2};pointer-events:none;transform:translate(-50%,-50%);`;
+                    img.remove();
+                };
+                el.appendChild(img);
+                return el;
+            }
+            const glow = (d.live || d.active || d.ship) ? `0 0 12px rgba(${glowRgb},0.8)` : `0 0 8px rgba(${glowRgb},0.7)`;
+            const sz = (d.live || d.active || d.ship) ? 14 : 10;
             el.style.cssText = `width:${sz}px;height:${sz}px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:${glow};pointer-events:none;transform:translate(-50%,-50%);`;
             return el;
         }
@@ -1835,6 +1895,9 @@
                 _coordDown = null;
                 if (!start) return;
                 if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > _COORD_MOVE_TOL) return; // a drag/rotate
+                // Argo float dots (when that layer is on) take priority: fixed targets.
+                if (window.ShipsLayer && ShipsLayer.handleClick(e.clientX, e.clientY)) return;
+                if (window.ArgoLayer && ArgoLayer.handleClick(e.clientX, e.clientY)) return;
                 // A click on (or very near) a waypoint snaps straight to its exact
                 // coordinates, taking priority over track selection/path snapping —
                 // it's a fixed target point, not something to approximate.
@@ -2054,7 +2117,7 @@
             const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
             let best = null, bestD = tolPx * tolPx;
             for (const d of buildPositionDots()) {
-                if (d.pin || d.ruler) continue;   // the user's own click/ruler markers, not a hover target
+                if (d.pin || d.ruler || d.ship) continue;   // own click/ruler markers; ships via ShipsLayer.hoverInfo
                 const p = myGlobe.getCoords(d.lat, d.lng, 0);
                 if (p.x * (ex - p.x) + p.y * (ey - p.y) + p.z * (ez - p.z) <= 0) continue;
                 _tmpV.set(p.x, p.y, p.z).project(cam);
@@ -2067,7 +2130,7 @@
                 bestD = dist2;
                 best = d.waypoint
                     ? { title: d.tag, subtitle: d.glider, detail: d.notes || null }
-                    : { title: d.name || 'Unnamed glider', subtitle: d.live ? (relTimeAgo(d.lastTime) || 'Live') : null, detail: null };
+                    : { title: d.name || 'Unnamed glider', subtitle: d.live ? (relTimeAgo(d.lastTime) || 'Live') : null, detail: ({ slocum: 'Slocum glider', seaglider: 'Seaglider', alr: 'Autosub Long Range' })[d.kind] || null };
             }
             return best;
         }

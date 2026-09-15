@@ -491,6 +491,12 @@
         .file-card-icon.error { background: rgba(248,113,113,0.18); color: var(--danger); }
         .file-card-icon .material-symbols-outlined { font-size: 14px; }
         .file-card-icon.processing .material-symbols-outlined { animation: spin 1s linear infinite; }
+        /* Platform icon (MARS map icons, static/icons/) replaces the tick once a file is ready. */
+        .file-card-icon.platform { background: transparent; width: 30px; }
+        .file-card-icon.platform img { width: 28px; height: 12px; object-fit: contain;
+            filter: drop-shadow(0 0 1px rgba(255,255,255,0.9)); }
+        .dataset-trigger-platform { width: 26px; height: 11px; object-fit: contain; flex-shrink: 0;
+            filter: drop-shadow(0 0 1px rgba(255,255,255,0.9)); }
 
         .file-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
         .file-card-name { font-size: 11px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1287,6 +1293,7 @@
                     </span>
                     <button id="datasetTrigger" class="dataset-trigger" type="button" aria-haspopup="dialog">
                         <span class="material-symbols-outlined text-[16px]" id="datasetTriggerIcon">database</span>
+                        <img id="datasetTriggerPlatform" class="dataset-trigger-platform" alt="" hidden>
                         <span id="datasetTriggerLabel" class="dataset-trigger-label">No files</span>
                         <span id="datasetTriggerCount" class="dataset-trigger-count" style="display:none;"></span>
                         <span class="material-symbols-outlined text-[16px] dataset-trigger-caret">expand_more</span>
@@ -4676,9 +4683,14 @@
                 const isPending = e.downloading || _liveOptimistic.has(e.filename);
                 const isProcessing = e.downloaded && e.status && e.status !== 'ready';
 
-                let iconClass = '', iconName = 'satellite_alt';
+                let iconClass = '', iconName = 'satellite_alt', iconHtml = '';
                 if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'progress_activity'; }
-                else if (e.downloaded && e.status === 'ready') { iconClass = 'ready'; iconName = 'check'; }
+                else if (e.downloaded && e.status === 'ready') {
+                    iconClass = 'ready'; iconName = 'check';
+                    const rec = e.file_id ? fileById(e.file_id) : null;
+                    const kind = platformKindFor(rec && rec.platform_kind, e.filename);
+                    if (kind) { iconClass = 'ready platform'; iconHtml = platformIconHtml(kind, kind); }
+                }
                 else if (isProcessing) { iconClass = 'processing'; iconName = 'progress_activity'; }
 
                 let metaLine, progressBar = '';
@@ -4709,7 +4721,7 @@
                 // Optimistic delete: show it leaving right away, overriding the
                 // (possibly still "downloaded") server snapshot until confirmed.
                 if (isDeleting) {
-                    iconClass = 'processing'; iconName = 'progress_activity';
+                    iconClass = 'processing'; iconName = 'progress_activity'; iconHtml = '';
                     metaLine = `<span class="file-card-stage">Deleting…</span>`;
                     progressBar = '';
                     actionHtml = `<span class="live-spinner" title="Deleting…"></span>`;
@@ -4719,7 +4731,7 @@
                 const disabled = isDeleting || isPending || isProcessing;
                 return `
                     <div class="file-card${isActive ? ' active' : ''}${disabled ? ' disabled' : ''}" data-id="${esc(e.file_id || '')}" data-bodc="${esc(e.filename)}">
-                        <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
+                        <div class="file-card-icon ${iconClass}">${iconHtml || `<span class="material-symbols-outlined">${iconName}</span>`}</div>
                         <div class="file-card-body">
                             <div class="file-card-name" title="${esc(e.filename)}">${esc(e.dataset)} <span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span></div>
                             <div class="file-card-meta">${metaLine}</div>
@@ -5540,6 +5552,20 @@
         const datasetTrigger = document.getElementById('datasetTrigger');
         const datasetTriggerLabel = document.getElementById('datasetTriggerLabel');
         const datasetTriggerIcon = document.getElementById('datasetTriggerIcon');
+        const datasetTriggerPlatform = document.getElementById('datasetTriggerPlatform');
+        function setTriggerPlatform(kind) {
+            if (!datasetTriggerPlatform) return;
+            if (kind) {
+                datasetTriggerPlatform.src = `/static/icons/${kind}-mapicon.png`;
+                datasetTriggerPlatform.title = kind;
+                datasetTriggerPlatform.hidden = false;
+                datasetTriggerIcon.hidden = true;
+                datasetTriggerPlatform.onerror = () => { datasetTriggerPlatform.hidden = true; datasetTriggerIcon.hidden = false; };
+            } else {
+                datasetTriggerPlatform.hidden = true;
+                datasetTriggerIcon.hidden = false;
+            }
+        }
         const datasetTriggerCount = document.getElementById('datasetTriggerCount');
         const filesPanel = document.getElementById('filesPanel');
         const filesPanelCloseBtn = document.getElementById('filesPanelCloseBtn');
@@ -5581,6 +5607,22 @@
             return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
         }
 
+        // Platform icon markup for a ready file (server-detected kind, or a
+        // filename guess for live entries not yet downloaded). '' = no icon,
+        // caller falls back to the material tick.
+        const PLATFORM_KINDS = ['slocum', 'seaglider', 'alr'];
+        function platformKindFor(kind, name) {
+            if (kind && PLATFORM_KINDS.includes(kind)) return kind;
+            const n = String(name || '').toLowerCase();
+            if (/^alr[_\-\d]/.test(n)) return 'alr';
+            if (/^(sg\d|seaglider)/.test(n)) return 'seaglider';
+            if (/slocum/.test(n)) return 'slocum';
+            return '';
+        }
+        function platformIconHtml(kind, title) {
+            return `<img src="/static/icons/${kind}-mapicon.png" alt="${kind}" title="${escapeHtmlSafe(title || kind)}" onerror="var p=this.parentNode;p.classList.remove('platform');p.innerHTML='<span class=&quot;material-symbols-outlined&quot;>check</span>'">`;
+        }
+
         function renderFilesList() {
             filesList.innerHTML = '';
             // Files we auto-downloaded show in the dedicated Live list above
@@ -5607,7 +5649,12 @@
 
                 let iconClass = '';
                 let iconName = 'database';
-                if (f.status === 'ready') { iconClass = 'ready'; iconName = 'check'; }
+                let iconHtml = '';
+                if (f.status === 'ready') {
+                    iconClass = 'ready'; iconName = 'check';
+                    const kind = platformKindFor(f.platform_kind, f.name);
+                    if (kind) { iconClass = 'ready platform'; iconHtml = platformIconHtml(kind, kind); }
+                }
                 else if (f.status === 'processing' || f.status === 'pending') { iconClass = 'processing'; iconName = 'progress_activity'; }
                 else if (f.status === 'error') { iconClass = 'error'; iconName = 'error'; }
 
@@ -5623,7 +5670,7 @@
                 }
 
                 card.innerHTML = `
-                    <div class="file-card-icon ${iconClass}"><span class="material-symbols-outlined">${iconName}</span></div>
+                    <div class="file-card-icon ${iconClass}">${iconHtml || `<span class="material-symbols-outlined">${iconName}</span>`}</div>
                     <div class="file-card-body">
                         <div class="file-card-name" title="${escapeHtmlSafe(f.path)}">${escapeHtmlSafe(f.name)}${f.is_nrt ? '<span class="nrt-badge" title="Live deployment: last sample within the past week">LIVE</span>' : ''}</div>
                         <div class="file-card-meta">${metaLine}</div>
@@ -5655,15 +5702,19 @@
                     datasetTriggerIcon.textContent = 'database';
                     datasetTriggerIcon.style.color = '';
                     datasetTriggerIcon.style.animation = '';
+                    setTriggerPlatform(platformKindFor(active.platform_kind, active.name));
                 } else if (active.status === 'processing' || active.status === 'pending') {
+                    setTriggerPlatform('');
                     datasetTriggerIcon.textContent = 'progress_activity';
                     datasetTriggerIcon.style.color = 'var(--accent)';
                     datasetTriggerIcon.style.animation = 'spin 1s linear infinite';
                 } else if (active.status === 'error') {
+                    setTriggerPlatform('');
                     datasetTriggerIcon.textContent = 'error';
                     datasetTriggerIcon.style.color = 'var(--danger)';
                 }
             } else {
+                setTriggerPlatform('');
                 datasetTriggerLabel.textContent = fileRecords.length ? 'Select a file' : 'No files';
                 datasetTriggerLabel.title = '';
                 datasetTriggerIcon.textContent = 'database';
