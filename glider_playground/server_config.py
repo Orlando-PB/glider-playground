@@ -59,6 +59,11 @@ def tame_copernicus_logging() -> None:
     module-level dictConfig runs at that point and resets propagate=True,
     which is what causes the duplicate lines this undoes.
     """
+    # Normal runs: ERROR only. copernicusmarine WARNs on every request whose
+    # subset merely clips the dataset's edges (our 0–1 m surface slice vs. a
+    # 0.49 m top level; the 23:59:59 end of the newest day) — harmless and
+    # unactionable noise. Real out-of-range dates come back as exceptions and
+    # are logged by overlay_logic.
     cm_logger = logging.getLogger("copernicusmarine")
     cm_logger.propagate = False
-    cm_logger.setLevel(logging.INFO if DIAGNOSTICS else logging.WARNING)
+    cm_logger.setLevel(logging.INFO if DIAGNOSTICS else logging.ERROR)

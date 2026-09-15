@@ -2583,7 +2583,14 @@
             const panel = panels[id];
             if (!panel) return;
             activePanelId = id;
-            Object.values(panels).forEach(p => p.el.classList.toggle('active', p.id === id));
+            Object.values(panels).forEach(p => {
+                p.el.classList.toggle('active', p.id === id);
+                // Let each plot iframe know whether it's the active panel (drives
+                // the in-plot zoom-reset pill, shown on the active plot only).
+                if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
+                    p.iframe.contentWindow.postMessage({ type: 'panelActive', active: p.id === id }, '*');
+                }
+            });
             if (panel.type === 'plot') {
                 activePlotPanelId = id;
                 plotIframe = panel.iframe;
@@ -3480,7 +3487,12 @@
 
             // First successful draw → this iframe is warm and can be re-driven in place
             // via a 'replot' message (Plotly.react) rather than a full src reload.
-            if (srcPanel && msg.type === 'plotLoaded') srcPanel._frameReady = true;
+            if (srcPanel && msg.type === 'plotLoaded') {
+                srcPanel._frameReady = true;
+                // A frame that (re)loaded after the last setActive() missed the
+                // active-state broadcast — tell it now so the zoom pill is right.
+                event.source.postMessage({ type: 'panelActive', active: srcPanel.id === activePanelId }, '*');
+            }
 
             // Ack that the active plot finished applying a colour-trim update —
             // releases the flow-control lock so the next slider value can be sent.

@@ -238,7 +238,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
 
     key = _cache_key(var, min_lat, max_lat, min_lon, max_lon, date_str)
     if key in _CACHE:
-        logger.info("Overlay %s cache hit for %s", var, date_str)
+        logger.debug("Overlay %s cache hit for %s", var, date_str)
         # Don't mutate the cached object — hand back a shallow copy whose
         # `_timing` reflects *this* (cache-hit) request, not the original fetch.
         out = dict(_CACHE[key])
@@ -331,7 +331,12 @@ def _try_datasets(dataset_ids, open_fn, date_str):
             return open_fn(dataset_id, date_str)
         except Exception as exc:
             msg = str(exc)
-            logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
+            bounds = _is_bounds_error(msg)
+            # A date beyond the dataset's range is routine (NRT products only
+            # hold the last few weeks; old deployments always hit it) and is
+            # handled just below — log it there as one INFO line, not a WARNING.
+            if not bounds:
+                logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
 
             if _is_auth_error(msg):
                 return {
@@ -341,10 +346,11 @@ def _try_datasets(dataset_ids, open_fn, date_str):
                 }
 
             # If our date is beyond the dataset's range, retry at its actual max.
-            if _is_bounds_error(msg):
+            if bounds:
                 capped = _parse_max_date(msg)
                 if capped and capped != date_str:
-                    logger.info("Date %s exceeds range — retrying with %s", date_str, capped)
+                    logger.info("%s: %s outside dataset range (%s), using %s",
+                                dataset_id, date_str, _parse_date_range(msg) or "?", capped)
                     try:
                         return open_fn(dataset_id, capped)
                     except Exception as exc2:
@@ -352,6 +358,7 @@ def _try_datasets(dataset_ids, open_fn, date_str):
                                        dataset_id, capped, exc2)
                         last_err = str(exc2)
                         continue
+                logger.warning("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
 
             last_err = msg
 
@@ -363,7 +370,7 @@ def _try_datasets(dataset_ids, open_fn, date_str):
 
 
 def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
-    logger.info("Fetching %s from %s for %s", spec["variable"], dataset_id, date_str)
+    logger.debug("Fetching %s from %s for %s", spec["variable"], dataset_id, date_str)
     t0 = time.time()
     kwargs = dict(
         dataset_id=dataset_id,
@@ -398,7 +405,7 @@ def _open_and_extract(cm, dataset_id, spec, min_lat, max_lat, min_lon, max_lon, 
 
 def _open_and_extract_vec(cm, dataset_id, min_lat, max_lat, min_lon, max_lon, date_str, timing=None):
     variables = CURRENTS["variables"]
-    logger.info("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
+    logger.debug("Fetching currents %s from %s for %s", variables, dataset_id, date_str)
     t0 = time.time()
     try:
         ds = cm.open_dataset(
@@ -435,6 +442,12 @@ def _is_auth_error(msg: str) -> bool:
 def _is_bounds_error(msg: str) -> bool:
     low = msg.lower()
     return "exceed" in low and "dataset coordinates" in low
+
+
+def _parse_date_range(msg: str) -> str | None:
+    """'YYYY-MM-DD to YYYY-MM-DD' from a bounds-exceeded message, for logging."""
+    m = re.search(r"dataset coordinates\s*\[(\d{4}-\d{2}-\d{2})[^,]*,\s*(\d{4}-\d{2}-\d{2})", msg)
+    return f"{m.group(1)} to {m.group(2)}" if m else None
 
 
 def _parse_max_date(msg: str) -> str | None:

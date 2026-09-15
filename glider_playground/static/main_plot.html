@@ -89,6 +89,27 @@
         }
         #bgSpinner.active { opacity: 1; }
 
+        /* Zoom hint / reset pill — replaces Plotly's stock "Double-click to zoom
+           back out" notifier (disabled via showTips:false). Shown while a zoom is
+           active; clicking it resets, or the user can still double-click. */
+        #zoomHint {
+            position: absolute; top: 4px; right: 56px;
+            display: flex; align-items: center; gap: 6px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 11px; line-height: 1; letter-spacing: 0.01em;
+            color: var(--text-secondary); background: var(--anno-bg);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            cursor: pointer; user-select: none;
+            opacity: 0; transform: translateY(-4px); pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease, color 0.15s ease;
+            z-index: 40;
+        }
+        #zoomHint.active { opacity: 1; transform: none; pointer-events: auto; }
+        #zoomHint:hover { color: var(--text-primary); border-color: var(--accent); }
+        #zoomHint svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        #zoomHint .kbd { color: var(--text-muted); }
+
         .js-plotly-plot .plotly text { fill: var(--text-secondary) !important; }
 
         /* Clicked-point readout — top-centre, mirrors the globe's coord bubble.
@@ -154,6 +175,10 @@
         <span id="statusText">Fetching data...</span>
     </div>
     <div id="bgSpinner"></div>
+    <div id="zoomHint" title="Reset zoom (or double-click the plot)">
+        <svg viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"/></svg>
+        <span>Reset zoom</span><span class="kbd">· double-click</span>
+    </div>
 
     <div id="plotDiv"></div>
     <div id="point-pin"></div>
@@ -237,6 +262,13 @@
         }
 
         const bgSpinner = document.getElementById('bgSpinner');
+        const zoomHint = document.getElementById('zoomHint');
+        zoomHint.addEventListener('click', () => resetZoomToFull());
+        // Pill is only shown on the toolbar's active plot panel (parent tells us
+        // via 'panelActive'); a lone/unsynced plot with no parent defaults to active.
+        let _zoomHintOn = false;
+        let _isActivePanel = true;
+        function setZoomHint(on) { _zoomHintOn = !!on; zoomHint.classList.toggle('active', _zoomHintOn && _isActivePanel); }
 
         // Notify the dashboard parent when this panel is interacted with (click,
         // zoom-drag, touch) so it becomes the active panel. Capture phase so it
@@ -357,7 +389,21 @@
             let changed = false;
             if (plotDiv.style.left !== wantLeft) { plotDiv.style.left = wantLeft; changed = true; }
             if (plotDiv.style.width !== wantWidth) { plotDiv.style.width = wantWidth; changed = true; }
-            if (changed && plotDiv._fullLayout) { try { Plotly.Plots.resize(plotDiv); } catch (_) {} }
+            if (changed && plotDiv._fullLayout) _resizeWhenIdle(plotDiv);
+        }
+
+        // Plotly.Plots.resize mid-drag (e.g. the profile sidebar refresh scheduled
+        // 400ms after a zoom, landing while the user is already dragging a second
+        // zoom box) tears down the drag layer and blanks the WebGL scene until the
+        // drag ends. Hold the resize until Plotly's drag flag / zoom box clears.
+        let _resizeIdleTimer = null;
+        function _resizeWhenIdle(plotDiv) {
+            clearTimeout(_resizeIdleTimer);
+            if (plotDiv._dragging || plotDiv.querySelector('.zoombox')) {
+                _resizeIdleTimer = setTimeout(() => _resizeWhenIdle(plotDiv), 50);
+                return;
+            }
+            try { Plotly.Plots.resize(plotDiv); } catch (_) {}
         }
 
         // ---- Depth-profile marginal (SVG) -------------------------------------
@@ -929,6 +975,7 @@
                         if (zx0 > zx1) { const t = zx0; zx0 = zx1; zx1 = t; }
                         if (zy0 > zy1) { const t = zy0; zy0 = zy1; zy1 = t; }
                         _currentZoom = { xMin: zx0, xMax: zx1, yMin: zy0, yMax: zy1 };
+                        setZoomHint(true);
                         triggerBgFetch(zx0, zx1, zy0, zy1);
                     }
                 }
@@ -1303,7 +1350,7 @@
             // Warm reuse (a 'replot' message re-drove this iframe in place) → Plotly.react
             // keeps the existing WebGL context and shaders, which is the whole point of
             // the reuse. A genuine first draw → newPlot. Same traces/layout/config either way.
-            const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false };
+            const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false, showTips: false };
             const _alreadyDrawn = !!document.getElementById('plotDiv')._fullLayout;
             const drawDone = (_alreadyDrawn
                 ? Plotly.react('plotDiv', traces, layout, PLOT_CFG)
@@ -1355,12 +1402,32 @@
                 }
             });
 
-            // Explicit double-click reset — Plotly's autorange relayout event isn't always
-            // reliably emitted after multiple Plotly.react calls (e.g. after Jelly overlays
-            // re-render the plot), so we handle the dbl-click directly to guarantee zoom-out.
-            plotDiv.on('plotly_doubleclick', function() { resetZoomToFull(); return false; });
+            // Double-click reset. Plotly emits 'plotly_doubleclick' and then, on the
+            // SAME call stack, runs its own _guiRelayout on the div (restoring the
+            // initial range / autorange). Calling Plotly.react from inside the
+            // doubleclick handler therefore raced Plotly's own relayout on one div,
+            // which corrupts the axis autorange (empty-plot [-1, 6] default) — the
+            // "double-click leaves a blank plot until I re-pick the preset" bug.
+            // So: only flag the reset here, and run it from the plotly_relayout that
+            // Plotly fires once its own redraw has finished. A short fallback timer
+            // covers the (rare) case where Plotly emits no relayout at all.
+            plotDiv.on('plotly_doubleclick', function() {
+                _dblClickPending = true;
+                clearTimeout(_dblClickFallback);
+                _dblClickFallback = setTimeout(() => {
+                    if (_dblClickPending) { _dblClickPending = false; resetZoomToFull(); }
+                }, 250);
+            });
 
             plotDiv.on('plotly_relayout', function(eventData) {
+                if (_dblClickPending) {
+                    // Plotly's post-double-click relayout has landed — now it's safe
+                    // to do the full-data re-render without two draws racing.
+                    _dblClickPending = false;
+                    clearTimeout(_dblClickFallback);
+                    resetZoomToFull();
+                    return;
+                }
                 if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
                 const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
@@ -1429,6 +1496,7 @@
                 }
 
                 _currentZoom = { xMin, xMax, yMin, yMax };
+                setZoomHint(true);
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
@@ -1512,21 +1580,27 @@
         // range despite valid data). This guard makes a reset idempotent so only the
         // first of the two events actually redraws.
         let _resettingZoom = false;
+        let _dblClickPending = false;   // set by plotly_doubleclick, consumed by the relayout it triggers
+        let _dblClickFallback = null;
         function resetZoomToFull() {
             if (_resettingZoom) return;
             _resettingZoom = true;
             if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
             clearTimeout(_pendingBounds);
             _currentZoom = null;
+            setZoomHint(false);
             if (_originalPlotData) {
                 plotData = _originalPlotData;
                 // Suppress the relayout this react emits: Plotly resolves the autoranged
                 // axes to concrete full-extent ranges and fires plotly_relayout with them,
                 // which the handler would otherwise read as a fresh zoom and kick off a
                 // full-dataset hi-res refetch — overriding the user's quality cap.
+                // `finally` so a rejected react can't leave both flags stuck true
+                // (which would silently swallow every later double-click).
                 _suppressRelayout = true;
                 Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
-                    .then(() => { _suppressRelayout = false; _resettingZoom = false; });
+                    .catch(err => console.error('Zoom reset render failed:', err))
+                    .finally(() => { _suppressRelayout = false; _resettingZoom = false; });
                 if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
             } else {
@@ -1714,6 +1788,20 @@
                 // blank plot that only a full re-render fixes (see resetZoomToFull).
                 if (controller.signal.aborted) return;
 
+                // If the user is mid-drag (a second zoom box before this chunk
+                // landed), a Plotly.react now tears down the drag layer and the
+                // scattergl scene under the pointer — every point vanishes until
+                // the drag ends and its own relayout fetches afresh. Hold the
+                // render until the drag finishes. Plotly sets gd._dragging for
+                // the duration of a drag; a zoom box also leaves a .zoombox node.
+                const gd = document.getElementById('plotDiv');
+                while (gd && (gd._dragging || gd.querySelector('.zoombox'))) {
+                    await new Promise(r => setTimeout(r, 50));
+                    // The drag that ended is a new zoom: its relayout aborted us and
+                    // will fetch its own chunk — this (now stale) one must not draw.
+                    if (controller.signal.aborted) return;
+                }
+
                 // Carry over var/unit metadata from the full-dataset load
                 if (_originalPlotData) {
                     if (!newData.x_var) newData.x_var = _originalPlotData.x_var;
@@ -1769,6 +1857,7 @@
                 _multiview = urlParams.get('multiview') === '1';
                 _profileSidebar = urlParams.get('profile_sidebar') === 'true';
                 _currentZoom = null; _originalPlotData = null; _suppressRelayout = false;
+                setZoomHint(false);
                 _cbarMin = null; _cbarMax = null;
                 _profileFetchSeq++;   // supersede any in-flight profile render
                 _reused = true;
@@ -1781,6 +1870,12 @@
                 document.getElementById('statusText').style.color = '';
                 document.getElementById('loadingIcon').style.display = '';
                 initPlot();
+                return;
+            }
+
+            if (msg.type === 'panelActive') {
+                _isActivePanel = !!msg.active;
+                setZoomHint(_zoomHintOn);
                 return;
             }
 
@@ -1917,6 +2012,7 @@
                 // y axis autoranged on re-render. `driven` marks this as an alignment-driven echo
                 // (not a fresh user zoom) so the parent doesn't re-propagate it into a feedback loop.
                 _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
+                setZoomHint(true);
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 if (showBase) {
@@ -1945,6 +2041,7 @@
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
                 _currentZoom = null;
+                setZoomHint(false);
                 if (_originalPlotData) {
                     plotData = _originalPlotData;
                     Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
