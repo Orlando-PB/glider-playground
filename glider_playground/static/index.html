@@ -5318,6 +5318,12 @@
 
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
 
+            // Remember the outgoing selection: rebuilding the <select>s below
+            // silently snaps each to its FIRST option (alphabetically, e.g.
+            // ABS_SALINITY) — which is what leaked out as "X and Y both reset to
+            // the first variable" whenever nothing re-applied a preset afterwards.
+            const prev = { x: xSelect.value, y: ySelect.value, c: cVarSelect.value };
+
             [xSelect, ySelect, cVarSelect].forEach(sel => {
                 sel.innerHTML = sel.id === 'cVar' ? '<option value="">None</option>' : '';
                 variableCache.forEach(v => {
@@ -5327,6 +5333,8 @@
             
             let firstValid = null;
             let currentValid = false;
+            const validPresets = new Set();
+            const isValidKey = (k) => validPresets.has(k);
 
             Object.entries(OceanPresets).forEach(([key, p]) => {
                 const hasX = p.x.some(v => isValid(v));
@@ -5339,18 +5347,48 @@
                 if (btn) btn.disabled = !isValidPreset;
 
                 if (isValidPreset) {
+                    validPresets.add(key);
                     if (!firstValid) firstValid = key;
                     if (currentPreset === key) currentValid = true;
                 }
             });
             
-            // Synthetic views (Map / Dashboard) aren't in OceanPresets — keep them
-            // selected across a dataset change instead of snapping to a real preset.
-            if (!currentValid && !String(currentPreset).startsWith('__')) {
-                currentPreset = firstValid || 'preset_temp';
+            // Pick the exact name the new file carries for an outgoing selection
+            // (preferring its _ADJUSTED form, as applyPreset does), or '' if gone.
+            const carry = (val) => {
+                if (!val) return '';
+                if (variableCache.some(v => v.name === val + '_ADJUSTED')) return val + '_ADJUSTED';
+                if (variableCache.some(v => v.name === val)) return val;
+                return '';
+            };
+            const prevX = carry(prev.x), prevY = carry(prev.y), prevC = carry(prev.c);
+            const prevCarries = !!(prevX && prevY && (prevC || !prev.c));
+
+            const synthetic = String(currentPreset).startsWith('__');
+            if (!synthetic && currentValid) {
+                // Same preset still fits the new file — re-resolve its variables.
+                applyPreset(currentPreset);
+            } else if (prevCarries) {
+                // A custom (non-preset) selection, or a synthetic view's toolbar:
+                // the new file has the same variables, so keep what the user had
+                // rather than snapping them to some preset.
+                xSelect.value = prevX; ySelect.value = prevY; cVarSelect.value = prevC;
+                if (!synthetic) checkAndUpdatePreset();
+            } else {
+                // Selection can't carry over. Fall back to Thermal (the app default)
+                // when the file supports it; only otherwise the first usable preset.
+                // (Phases is first in OceanPresets, so 'first valid' alone made every
+                // fallback a Phases plot.)
+                const fallback = (firstValid && !isValidKey('preset_temp')) ? firstValid : 'preset_temp';
+                // Synthetic views keep their own selection but still need sane
+                // toolbar variables underneath (a later plot reads them) —
+                // applyPreset re-detects currentPreset, so restore it after.
+                const keep = currentPreset;
+                currentPreset = fallback;
+                applyPreset(fallback);
+                if (synthetic) currentPreset = keep;
             }
-            applyPreset(currentPreset);
-            
+
             updatePresetUI();
             const xInfo = variableCache.find(v => v.name === xSelect.value);
             if (xInfo) isXDateTime = xInfo.type === 'datetime';
