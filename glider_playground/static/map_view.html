@@ -15,8 +15,9 @@
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0">
     </noscript>
     <script src="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
-    <!-- Standalone THREE (matches globe.gl 2.46.1's bundled three ≥0.154) for the
-         CHL-a overlay mesh. Loaded AFTER globe.gl so globe.gl initialises untouched. -->
+    <!-- Standalone THREE (matches globe.gl 2.46.1's bundled three ≥0.154) for every
+         surface layer drawn here (tracks, arrows, overlays, currents, ruler).
+         Loaded AFTER globe.gl so globe.gl initialises untouched. -->
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
@@ -216,7 +217,9 @@
             box-shadow: 0 1px 6px rgba(0,0,0,0.3); backdrop-filter: blur(4px);
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             white-space: nowrap; max-width: 100%; box-sizing: border-box;
+            cursor: pointer;
         }
+        .coord-pinned-row:hover { background: color-mix(in srgb, var(--bg-panel) 96%, var(--text-primary)); }
         .coord-pinned-row .row-icon { font-size: 13px; flex: 0 0 auto; }
         .coord-pinned-row .row-icon.point { color: #3b82f6; }
         .coord-pinned-row .row-icon.ruler { color: #f97316; }
@@ -344,20 +347,19 @@
         }
 
         const CONFIG = {
+            // Line widths are screen pixels (constant at any zoom). The active
+            // track thickens and brightens from its oldest point to its newest;
+            // grey context tracks stay near-constant so they're easy to hit.
             pathThicknessMin: 1.1,
             pathThicknessMax: 3.6,
             pathBrightnessMin: 0.22,
             pathBrightnessMax: 1.0,
-            maxSegments: 1000,        // grey (context) tracks
-            activeMaxSegments: 5000,  // the active track gets the finest line
+            contextThicknessMin: 2.0,
+            contextThicknessMax: 2.6,
+            maxPoints: 20000,         // per-track vertex cap for the drawn line
             zoomScaleFactor: 30,
             minAltitude: 0.01,
             maxAltitude: 2.5,
-            // Tiny altitude offsets fix the draw order so it's always, bottom
-            // to top: ocean tiles (surface) -> track line -> arrows -> point
-            // (the point is a DOM overlay, already on top). Kept small enough
-            // that the lift causes no visible parallax when rotating.
-            lineAltitude: 0.000015
         };
 
         // Depth-averaged current (DAC) arrows. Each glider dive yields one
@@ -369,23 +371,20 @@
             // level (0-255) of the oldest arrow; the newest is pure black.
             greyOld: 150,
             alphaOld: 0.45,
-            strokeMin: 0.6,       // oldest arrow
-            strokeMax: 1.4,       // newest arrow
+            strokeMin: 1.2,       // oldest arrow (px)
+            strokeMax: 2.2,       // newest arrow (px)
             scaleKmPerMs: 18,     // arrow length: 1 m/s -> 18 km
             minLenKm: 0.5,
             maxLenKm: 18,
             maxLenSpanFrac: 0.08, // also cap length to a fraction of the track span
             headFrac: 0.3,        // arrowhead length as a fraction of the shaft
             headAngleDeg: 25,
-            altitude: 0.00004,    // just above the track line so arrows always
-                                  // draw on top of it; small enough to avoid
-                                  // visible parallax (see CONFIG.lineAltitude)
         };
 
-        // Build arrow polylines from DAC vectors. Each arrow is a single path
-        // (shaft + two barbs) so it renders as one stroked line on the globe.
-        // spanKm is the track's extent, used to keep arrows proportionate to
-        // the view so they don't dominate a small deployment.
+        // Build arrow polylines from DAC vectors. Each arrow is two polylines
+        // (the shaft, and the two barbs meeting at the tip) drawn together in the
+        // DAC ribbon mesh. spanKm is the track's extent, used to keep arrows
+        // proportionate to the view so they don't dominate a small deployment.
         function buildDacArrows(vectors, spanKm, trackId) {
             const out = [];
             if (!Array.isArray(vectors)) return out;
@@ -421,18 +420,13 @@
                 const barb1 = { lat: tipLat + kmToLat(b1n * headKm), lng: tipLon + kmToLon(b1e * headKm) };
                 const barb2 = { lat: tipLat + kmToLat(b2n * headKm), lng: tipLon + kmToLon(b2e * headKm) };
 
-                const alt = DAC_CONFIG.altitude;
                 out.push({
-                    kind: 'dac',
                     trackId,
                     speed,
                     t: 1, // filled in below once the count is known
-                    coordinates: [
-                        { lat, lng: lon, alt },
-                        { lat: tipLat, lng: tipLon, alt },
-                        { ...barb1, alt },
-                        { lat: tipLat, lng: tipLon, alt },
-                        { ...barb2, alt },
+                    lines: [
+                        [{ lat, lng: lon }, { lat: tipLat, lng: tipLon }],
+                        [barb1, { lat: tipLat, lng: tipLon }, barb2],
                     ],
                 });
             }
@@ -453,28 +447,17 @@
             return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
         }
 
-        function buildSegments(points, trackId, maxSeg = CONFIG.maxSegments) {
-            if (points.length < 2) return [];
-            // Downsample if needed so we keep render cost bounded. Each segment is a
-            // separate globe.gl path object (needed for the old→new fade), so this
-            // cap is really a cap on path-object count, not vertices.
-            const stride = Math.max(1, Math.ceil((points.length - 1) / maxSeg));
+        // Thin a track to at most CONFIG.maxPoints vertices (always keeping the
+        // last fix) and stamp each with its age t: 0 = oldest, 1 = newest.
+        function thinPath(points) {
+            const stride = Math.max(1, Math.ceil((points.length - 1) / CONFIG.maxPoints));
             const sampled = [];
             for (let i = 0; i < points.length; i += stride) sampled.push(points[i]);
             if (sampled[sampled.length - 1] !== points[points.length - 1]) {
                 sampled.push(points[points.length - 1]);
             }
-            const segs = [];
-            const n = sampled.length - 1;
-            for (let i = 0; i < n; i++) {
-                // t=0 oldest (back of trail), t=1 newest (head).
-                const t = n === 0 ? 1 : i / (n - 1 || 1);
-                segs.push({
-                    coordinates: [sampled[i], sampled[i + 1]],
-                    t, trackId
-                });
-            }
-            return segs;
+            const n = sampled.length;
+            return sampled.map((p, i) => ({ lat: p.lat, lng: p.lng, t: n > 1 ? i / (n - 1) : 1 }));
         }
 
         document.addEventListener('keydown', (e) => {
@@ -487,7 +470,7 @@
         // colour, the rest as grey context lines. allTracks holds the prebuilt
         // geometry for each so switching the active one is a pure recolour +
         // recentre (no refetch, no iframe reload) — see setActiveTrack.
-        let allTracks = [];      // [{id, name, segments, formattedPath, view, isNrt, lastLat, lastLon, dacArrows}]
+        let allTracks = [];      // [{id, name, formattedPath, view, isNrt, lastLat, lastLon, dacArrows}]
         let activeId = null;     // id of the active (accent-coloured) track
         let hoverId = null;      // id of the grey track under the cursor, or null
         let dacArrows = [];      // the ACTIVE track's DAC arrows (others never show DAC)
@@ -501,11 +484,11 @@
         // readout. Kept in sync across every open globe by the parent.
         let _pinDot = null;   // null or {lat, lng, pin:true}
 
-        // Ruler measurement — press and hold, then drag, to lay a great-circle
+        // Ruler measurement — press and hold (or shift-drag) to lay a great-circle
         // line between two points (see attachCoordPicker). `_rulerStart`/`_rulerEnd`
         // are the endpoints (drawn as orange dots via dotEl's `ruler` case);
-        // `_rulerLine` is the three.js line object itself, built fresh on every
-        // drag frame by _greatCircleGeometry so it follows the globe's curvature
+        // `_rulerLine` is the three.js ribbon mesh itself, rebuilt on every drag
+        // frame from _greatCirclePoints so it follows the globe's curvature
         // rather than cutting a straight chord through the sphere.
         let _rulerStart = null;
         let _rulerEnd = null;
@@ -516,7 +499,7 @@
         // list so it survives the next click/ruler instead of being overwritten.
         // Each entry: {id, type:'point', lat, lng} or {id, type:'ruler', a, b, km}.
         // Point dots ride the same html marker layer as the live pin (buildPositionDots);
-        // ruler lines get their own persistent three.js Line, keyed by id, since
+        // ruler lines get their own persistent three.js mesh, keyed by id, since
         // there can be several on screen at once (unlike the single live _rulerLine).
         let _pinnedItems = [];
         let _pinIdSeq = 1;
@@ -614,31 +597,230 @@
             return `linear-gradient(to right, ${parts.join(', ')})`;
         }
 
-        // What goes into pathsData: every track's segments (grey ones first so
-        // the active track paints on top), plus the active track's DAC arrows
-        // when shown. Order only changes when the active track changes, so hover
-        // restyling never has to re-tessellate the path layer.
-        function visiblePaths() {
-            const out = [];
-            for (const t of allTracks) if (t.id !== activeId) out.push(...t.segments);
-            const at = activeTrack();
-            if (at) out.push(...activeSegments(at));
-            if (showDac && at) out.push(...at.dacArrows);
-            return out;
+        // ── Surface layers ─────────────────────────────────────────────
+        // Everything drawn on the globe's surface here — tracks, DAC arrows,
+        // scalar overlays, the currents backdrop and streaks, ruler lines — is
+        // rendered with depth testing OFF and sits exactly on the sphere. Nothing
+        // is lifted above the surface, so nothing can z-fight with the ocean
+        // tiles or with each other at any zoom, and there's no parallax between
+        // layers when rotating. Stacking is decided purely by renderOrder, and
+        // the far hemisphere is hidden in the fragment shader instead of by the
+        // depth buffer (a surface point is visible iff its outward normal faces
+        // the camera).
+        const LAYER_ORDER = { overlay: 10, flow: 11, track: 12, hoverTrack: 12.5, activeTrack: 13, dac: 14, ruler: 20 };
+
+        // GLSL shared by every surface shader: `vWorld` is the fragment's world
+        // position, SURFACE_CULL the horizon test.
+        const SURFACE_VARYING = 'varying vec3 vWorld;';
+        const SURFACE_CULL = 'if (dot(vWorld, cameraPosition - vWorld) < 0.0) discard;';
+
+        // Viewport size in CSS px, shared by every ribbon material (line widths
+        // are screen pixels); refreshed on resize.
+        const _uRes = { value: null };
+        function updateSurfaceResolution() {
+            if (!_uRes.value) _uRes.value = new THREE.Vector2(1, 1);
+            _uRes.value.set(window.innerWidth || 1, window.innerHeight || 1);
         }
 
-        // The active track draws its line at the finer activeMaxSegments. Built once
-        // per track and cached — switching back to a previously-active glider reuses
-        // it. Grey context tracks keep their light 400-segment version (t.segments).
-        function activeSegments(t) {
-            if (!t.segmentsHi) {
-                t.segmentsHi = buildSegments(t.formattedPath, t.id, CONFIG.activeMaxSegments);
+        // Screen-space ribbon material. Each path vertex is duplicated to both
+        // sides (`side` ±1) and pushed out by half the pixel width along the
+        // screen perpendicular of its tangent, so a line keeps the same on-screen
+        // thickness at any zoom. Colour and width interpolate from A (age 0, the
+        // oldest point) to B (age 1, the newest) — every style this view uses is
+        // linear in age, so restyling is a uniform write, never a rebuild. The
+        // outermost pixel is feathered so edges don't alias.
+        function ribbonMaterial() {
+            return new THREE.ShaderMaterial({
+                transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+                uniforms: {
+                    uRes: _uRes,
+                    uColorA: { value: new THREE.Vector4(1, 1, 1, 1) },
+                    uColorB: { value: new THREE.Vector4(1, 1, 1, 1) },
+                    uWidthA: { value: 2 },
+                    uWidthB: { value: 2 },
+                },
+                vertexShader: `
+                    attribute vec3 tdir; attribute float side; attribute float age;
+                    uniform vec2 uRes; uniform float uWidthA, uWidthB;
+                    varying float vAge; varying float vEdge; varying float vHalfW; ${SURFACE_VARYING}
+                    void main() {
+                        vAge = age; vEdge = side;
+                        vec4 wp = modelMatrix * vec4(position, 1.0);
+                        vWorld = wp.xyz;
+                        vec4 clip = projectionMatrix * viewMatrix * wp;
+                        vec4 clip2 = projectionMatrix * viewMatrix * (wp + vec4(tdir, 0.0));
+                        vec2 dir = (clip2.xy / clip2.w - clip.xy / clip.w) * uRes;
+                        float len = length(dir);
+                        vec2 n = len > 1e-6 ? vec2(-dir.y, dir.x) / len : vec2(0.0);
+                        vHalfW = mix(uWidthA, uWidthB, age) * 0.5 + 0.5;
+                        clip.xy += n * side * vHalfW * 2.0 / uRes * clip.w;
+                        gl_Position = clip;
+                    }`,
+                fragmentShader: `
+                    uniform vec4 uColorA, uColorB;
+                    varying float vAge; varying float vEdge; varying float vHalfW; ${SURFACE_VARYING}
+                    void main() {
+                        ${SURFACE_CULL}
+                        vec4 c = mix(uColorA, uColorB, vAge);
+                        c.a *= clamp((1.0 - abs(vEdge)) * vHalfW, 0.0, 1.0);
+                        if (c.a <= 0.002) discard;
+                        gl_FragColor = c;
+                    }`,
+            });
+        }
+
+        function setRGBA(v, r, g, b, a) { v.set(r / 255, g / 255, b / 255, a); }
+
+        // One BufferGeometry for a set of surface polylines. Each polyline is
+        // [{lat, lng, t}, ...] (or {x, y, z, t} for points already in globe
+        // space); consecutive points become a quad strip whose vertices are
+        // shared between neighbouring quads (mitred with the average tangent),
+        // so there are no gaps or double-blended overlaps at joints. Per-vertex
+        // `age` drives colour and width in ribbonMaterial.
+        function buildRibbonGeometry(polylines) {
+            let nPts = 0, nQuads = 0;
+            for (const pl of polylines) if (pl.length >= 2) { nPts += pl.length; nQuads += pl.length - 1; }
+            const positions = new Float32Array(nPts * 6);
+            const tdirs = new Float32Array(nPts * 6);
+            const sides = new Float32Array(nPts * 2);
+            const ages = new Float32Array(nPts * 2);
+            const index = new Uint32Array(nQuads * 6);
+            let v = 0, ii = 0;
+            const xyz = [];
+            for (const pl of polylines) {
+                if (pl.length < 2) continue;
+                xyz.length = 0;
+                for (const p of pl) {
+                    if (p.x != null) { xyz.push(p.x, p.y, p.z); continue; }
+                    const w = myGlobe.getCoords(p.lat, p.lng, 0);
+                    xyz.push(w.x, w.y, w.z);
+                }
+                const n = pl.length;
+                let px = 0, py = 0, pz = 1;   // last usable tangent, for degenerate steps
+                for (let i = 0; i < n; i++) {
+                    // Tangent = chord from the previous point to the next one,
+                    // i.e. the mitre direction at this joint.
+                    const i0 = Math.max(0, i - 1) * 3, i1 = Math.min(n - 1, i + 1) * 3;
+                    let tx = xyz[i1] - xyz[i0], ty = xyz[i1 + 1] - xyz[i0 + 1], tz = xyz[i1 + 2] - xyz[i0 + 2];
+                    const len = Math.hypot(tx, ty, tz);
+                    if (len > 1e-9) { tx /= len; ty /= len; tz /= len; px = tx; py = ty; pz = tz; }
+                    else { tx = px; ty = py; tz = pz; }
+                    const x = xyz[i * 3], y = xyz[i * 3 + 1], z = xyz[i * 3 + 2];
+                    const age = pl[i].t == null ? 1 : pl[i].t;
+                    for (let side = -1; side <= 1; side += 2) {
+                        positions[v * 3] = x; positions[v * 3 + 1] = y; positions[v * 3 + 2] = z;
+                        tdirs[v * 3] = tx; tdirs[v * 3 + 1] = ty; tdirs[v * 3 + 2] = tz;
+                        sides[v] = side; ages[v] = age;
+                        v++;
+                    }
+                    if (i > 0) {
+                        const a = v - 4, b = v - 3, c = v - 2, d = v - 1;   // prev(-,+), this(-,+)
+                        index[ii++] = a; index[ii++] = b; index[ii++] = c;
+                        index[ii++] = b; index[ii++] = d; index[ii++] = c;
+                    }
+                }
             }
-            return t.segmentsHi;
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geom.setAttribute('tdir', new THREE.BufferAttribute(tdirs, 3));
+            geom.setAttribute('side', new THREE.BufferAttribute(sides, 1));
+            geom.setAttribute('age', new THREE.BufferAttribute(ages, 1));
+            geom.setIndex(new THREE.BufferAttribute(index, 1));
+            return geom;
+        }
+
+        function ribbonMesh(polylines, renderOrder) {
+            const mesh = new THREE.Mesh(buildRibbonGeometry(polylines), ribbonMaterial());
+            mesh.renderOrder = renderOrder;
+            mesh.frustumCulled = false;   // vertices are displaced in the shader
+            return mesh;
+        }
+
+        function disposeMesh(m) {
+            if (!m) return;
+            if (myGlobe) myGlobe.scene().remove(m);
+            m.geometry.dispose();
+            m.material.dispose();
+        }
+
+        // ── Tracks ─────────────────────────────────────────────────────
+        // One ribbon mesh per glider, whatever its role: the active one draws in
+        // the accent colour, the rest as grey context lines, the hovered grey one
+        // brighter. Switching roles (hover, selection, theme) only rewrites the
+        // mesh's uniforms — see restyleTracks — so it's instant.
+        const _trackMeshes = {};   // track id -> ribbon mesh
+        let _dacMesh = null;       // the active track's DAC arrows, only while showDac
+
+        // (Re)build every track's ribbon from allTracks. One geometry per track,
+        // a few ms in total, so it's simply redone after each fetch.
+        function rebuildTrackMeshes() {
+            if (!myGlobe) return;
+            for (const id in _trackMeshes) { disposeMesh(_trackMeshes[id]); delete _trackMeshes[id]; }
+            for (const t of allTracks) {
+                const mesh = ribbonMesh([thinPath(t.formattedPath)], LAYER_ORDER.track);
+                myGlobe.scene().add(mesh);
+                _trackMeshes[t.id] = mesh;
+            }
+            restyleTracks();
+            syncDacMesh();
+        }
+
+        // Push each track's current role into its material. The active track
+        // keeps the accent age-fade (darker and fainter toward its oldest point);
+        // the rest are grey — a light theme needs a darker grey to read against
+        // the white globe, a dark theme a lighter one — and hover lifts both
+        // brightness and opacity and draws that track above the other grey ones.
+        function restyleTracks() {
+            if (!myGlobe) return;
+            const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+            const accent = hexToRgb(readThemeColors().path);
+            for (const t of allTracks) {
+                const mesh = _trackMeshes[t.id];
+                if (!mesh) continue;
+                const u = mesh.material.uniforms;
+                if (t.id === activeId) {
+                    setRGBA(u.uColorA.value, accent.r * 0.4, accent.g * 0.4, accent.b * 0.4, CONFIG.pathBrightnessMin);
+                    setRGBA(u.uColorB.value, accent.r, accent.g, accent.b, CONFIG.pathBrightnessMax);
+                    u.uWidthA.value = CONFIG.pathThicknessMin;
+                    u.uWidthB.value = CONFIG.pathThicknessMax;
+                    mesh.renderOrder = LAYER_ORDER.activeTrack;
+                } else {
+                    const hovered = t.id === hoverId;
+                    const g = dark ? (hovered ? 235 : 145) : (hovered ? 35 : 110);
+                    const aBase = hovered ? 0.95 : 0.42;
+                    setRGBA(u.uColorA.value, g, g, g, aBase * 0.55);
+                    setRGBA(u.uColorB.value, g, g, g, aBase);
+                    u.uWidthA.value = hovered ? CONFIG.pathThicknessMax : CONFIG.contextThicknessMin;
+                    u.uWidthB.value = hovered ? CONFIG.pathThicknessMax : CONFIG.contextThicknessMax;
+                    mesh.renderOrder = hovered ? LAYER_ORDER.hoverTrack : LAYER_ORDER.track;
+                }
+            }
+        }
+
+        // The active track's DAC arrows as one ribbon mesh (the other tracks
+        // never show DAC). Arrows fade with age like the track: oldest faint,
+        // thin grey; newest solid black and a touch thicker.
+        function syncDacMesh() {
+            disposeMesh(_dacMesh);
+            _dacMesh = null;
+            const at = activeTrack();
+            if (!(myGlobe && showDac && at && at.dacArrows.length)) return;
+            const lines = [];
+            for (const a of at.dacArrows) {
+                for (const l of a.lines) lines.push(l.map(p => ({ lat: p.lat, lng: p.lng, t: a.t })));
+            }
+            _dacMesh = ribbonMesh(lines, LAYER_ORDER.dac);
+            const u = _dacMesh.material.uniforms;
+            const g = DAC_CONFIG.greyOld;
+            setRGBA(u.uColorA.value, g, g, g, DAC_CONFIG.alphaOld);
+            setRGBA(u.uColorB.value, 0, 0, 0, 1);
+            u.uWidthA.value = DAC_CONFIG.strokeMin;
+            u.uWidthB.value = DAC_CONFIG.strokeMax;
+            myGlobe.scene().add(_dacMesh);
         }
 
         // Position dots, one per glider so it's obvious where each one is:
-        //  • live (NRT) gliders → a red dot + pulse at the last fix, always shown;
+        //  • live (NRT) gliders → a red dot at the last fix, always shown;
         //  • everyone else → a grey dot at its end position, shown only while NOT
         //    selected (the active track is already obvious in the accent colour).
         function buildPositionDots() {
@@ -672,18 +854,10 @@
             return pts;
         }
 
-        // Push the dots to the globe: every dot as an HTML marker, but only the
-        // live ones also get a pulsing ring.
+        // Push the dots to the globe, every dot as an HTML marker.
         function applyDots() {
             if (!myGlobe) return;
-            const dots = buildPositionDots();
-            myGlobe.htmlElementsData(dots).ringsData(dots.filter(d => d.live));
-        }
-
-        // Re-apply the path colour/stroke accessors so the layer recolours
-        // without rebuilding geometry (used on hover and active-track changes).
-        function refreshPathStyle() {
-            if (myGlobe) myGlobe.pathColor(myGlobe.pathColor()).pathStroke(myGlobe.pathStroke());
+            myGlobe.htmlElementsData(buildPositionDots());
         }
 
         // Tell the parent app whether DAC arrows exist for this file and whether
@@ -712,55 +886,13 @@
                 ` depth-averaged currents (${dacArrows.length} dives)`;
         }
 
-        // Theme-aware colour for a track segment. The active track keeps the
-        // accent (yellow) age-fade; the rest are grey, brighter + bolder while
-        // hovered. DAC arrows (active-only) keep their own grey->black fade.
-        function segColor(seg) {
-            if (seg.kind === 'dac') {
-                const t = seg.t == null ? 1 : seg.t;
-                const g = Math.round(DAC_CONFIG.greyOld * (1 - t)); // grey -> black
-                const a = DAC_CONFIG.alphaOld + (1 - DAC_CONFIG.alphaOld) * t;
-                return rgbaString({ r: g, g, b: g }, a);
-            }
-            if (seg.trackId === activeId) {
-                const rgb = hexToRgb(readThemeColors().path);
-                const a = CONFIG.pathBrightnessMin + (CONFIG.pathBrightnessMax - CONFIG.pathBrightnessMin) * seg.t;
-                // Darken the rgb itself for older segments so they fade even on
-                // light backgrounds where alpha alone isn't enough.
-                const k = 0.4 + 0.6 * seg.t;
-                return rgbaString({ r: rgb.r * k, g: rgb.g * k, b: rgb.b * k }, a);
-            }
-            // Grey context track. A light theme needs a darker grey to read
-            // against the white globe; a dark theme a lighter one. Hover lifts
-            // both brightness and opacity.
-            const dark = document.documentElement.getAttribute('data-theme') !== 'light';
-            const hovered = seg.trackId === hoverId;
-            const g = dark ? (hovered ? 235 : 145) : (hovered ? 35 : 110);
-            const aBase = hovered ? 0.95 : 0.42;
-            const a = aBase * (0.55 + 0.45 * seg.t);   // faint age fade
-            return rgbaString({ r: g, g, b: g }, a);
-        }
-
-        function segStroke(seg) {
-            if (seg.kind === 'dac') {
-                return DAC_CONFIG.strokeMin + (DAC_CONFIG.strokeMax - DAC_CONFIG.strokeMin) * (seg.t == null ? 1 : seg.t);
-            }
-            if (seg.trackId === activeId) {
-                return CONFIG.pathThicknessMin + (CONFIG.pathThicknessMax - CONFIG.pathThicknessMin) * seg.t;
-            }
-            // Grey context tracks stay clearly visible (and easier to hit) rather
-            // than tapering to a hairline; hovering bumps them to full thickness.
-            if (seg.trackId === hoverId) return CONFIG.pathThicknessMax;
-            return 2.0 + 0.6 * seg.t;
-        }
-
         // Turn one raw track ({id,name,path,dac,last_lat,last_lon,is_nrt}) from
-        // /api/map_all into prebuilt geometry the globe can draw directly. The
-        // heavy work (segment + DAC arrow building, bounds) happens here, once.
+        // /api/map_all into the shape the rest of this file works from (clean
+        // path, DAC arrow polylines, bounds). Done once per fetch.
         function buildTrack(raw) {
             const formattedPath = (raw.path || [])
                 .filter(c => Array.isArray(c) && c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
-                .map(c => ({ lat: Number(c[0]), lng: Number(c[1]), alt: CONFIG.lineAltitude }));
+                .map(c => ({ lat: Number(c[0]), lng: Number(c[1]) }));
             if (formattedPath.length === 0) return null;
 
             let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
@@ -777,7 +909,6 @@
                 id: raw.id,
                 name: raw.name || '',
                 formattedPath,
-                segments: buildSegments(formattedPath, raw.id),
                 dacArrows: buildDacArrows(raw.dac, spanKm, raw.id),
                 isNrt: !!raw.is_nrt,
                 lastLat: raw.last_lat,
@@ -835,9 +966,6 @@
                 updateDacToggle();
                 revealOverlayButtons();
 
-                const dots = buildPositionDots();
-                const liveDots = dots.filter(d => d.live);
-
                 document.getElementById('statusText').textContent = 'Rendering 3D globe...';
                 const tc = readThemeColors();
                 myGlobe = Globe()
@@ -846,25 +974,18 @@
                     .backgroundColor(tc.bg)
                     .showAtmosphere(true)
                     .atmosphereColor(tc.atmosphere)
-                    .pathsData(visiblePaths())
-                    .pathPoints('coordinates')
-                    .pathPointLat('lat')
-                    .pathPointLng('lng')
-                    .pathPointAlt(pt => pt.alt || 0)
-                    .pathColor(segColor)
-                    .pathStroke(segStroke)
-                    .ringsData(liveDots)
-                    .ringLat('lat')
-                    .ringLng('lng')
-                    .ringColor(() => (t => `rgba(239,68,68,${(1 - t) * 0.7})`))
-                    .ringMaxRadius(2.6)
-                    .ringPropagationSpeed(0.6)
-                    .ringRepeatPeriod(3500)
-                    .htmlElementsData(dots)
+                    // Hover/click picking is done here in screen space (see
+                    // nearestTrackAtScreen and attachCoordPicker), so globe.gl's
+                    // own per-pointer-move raycast is switched off.
+                    .enablePointerInteraction(false)
+                    .htmlElementsData(buildPositionDots())
                     .htmlLat('lat')
                     .htmlLng('lng')
                     .htmlAltitude(0)
                     .htmlElement(dotEl);
+
+                updateSurfaceResolution();
+                rebuildTrackMeshes();
 
                 // Clamp camera distance: prevents zooming out so far the globe
                 // shrinks, and zooming in past the tile resolution.
@@ -911,7 +1032,7 @@
             if (id === hoverId) return;
             hoverId = id;
             applyHoverCursor();
-            refreshPathStyle();
+            restyleTracks();
         }
 
         function _escHtml(s) {
@@ -1035,10 +1156,9 @@
 
             dacArrows = activeTrack().dacArrows;
             updateDacToggle();
-            if (myGlobe) {
-                myGlobe.pathsData(visiblePaths());   // reorder + recolour in one pass
-                applyDots();   // active non-live track drops its grey dot; others update
-            }
+            restyleTracks();
+            syncDacMesh();
+            applyDots();   // active non-live track drops its grey dot; others update
             recentreOnActive(false);
             reportDacStatus();
 
@@ -1057,7 +1177,7 @@
         document.getElementById('dacToggle').addEventListener('click', () => {
             showDac = !showDac;
             updateDacToggle();
-            if (myGlobe) myGlobe.pathsData(visiblePaths());
+            syncDacMesh();
         });
 
         document.getElementById('smoothToggle').addEventListener('click', () => {
@@ -1089,8 +1209,27 @@
         // Build ONE mesh holding every cell as a coloured quad. A single
         // geometry (a few thousand triangles) keeps this fast — a per-cell
         // globe.gl polygon layer froze the tab at ~2500 cells.
-        const OVERLAY_ALT = 0.000005;  // just above surface, below track (0.000015) and arrows (0.00004)
         const OVERLAY_OPACITY = 0.72;
+
+        // Flat vertex-coloured surface material for the scalar overlay / currents
+        // backdrop — same depth-test-off, horizon-culled scheme as the ribbons.
+        function overlayMaterial(opacity) {
+            return new THREE.ShaderMaterial({
+                transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+                uniforms: { uOpacity: { value: opacity } },
+                vertexShader: `
+                    attribute vec3 vcolor; varying vec3 vCol; ${SURFACE_VARYING}
+                    void main() {
+                        vCol = vcolor;
+                        vec4 wp = modelMatrix * vec4(position, 1.0);
+                        vWorld = wp.xyz;
+                        gl_Position = projectionMatrix * viewMatrix * wp;
+                    }`,
+                fragmentShader: `
+                    uniform float uOpacity; varying vec3 vCol; ${SURFACE_VARYING}
+                    void main() { ${SURFACE_CULL} gl_FragColor = vec4(vCol, uOpacity); }`,
+            });
+        }
 
         function buildOverlayMesh(data, ov, opacity = OVERLAY_OPACITY) {
             const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
@@ -1161,7 +1300,7 @@
             function addVertex(i, j, col) {
                 const lat = latMin + i * spacing - H;
                 const lng = lonMin + j * spacing - H;
-                const p = myGlobe.getCoords(lat, lng, OVERLAY_ALT);
+                const p = myGlobe.getCoords(lat, lng, 0);
                 const idx = vi++;
                 positions[idx * 3] = p.x; positions[idx * 3 + 1] = p.y; positions[idx * 3 + 2] = p.z;
                 colors[idx * 3] = col[0]; colors[idx * 3 + 1] = col[1]; colors[idx * 3 + 2] = col[2];
@@ -1207,18 +1346,11 @@
 
             const geom = new THREE.BufferGeometry();
             geom.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, vi * 3), 3));
-            geom.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, vi * 3), 3));
+            geom.setAttribute('vcolor', new THREE.BufferAttribute(colors.subarray(0, vi * 3), 3));
             geom.setIndex(new THREE.BufferAttribute(index, 1));
-            const mat = new THREE.MeshBasicMaterial({
-                vertexColors: true, transparent: true, opacity,
-                side: THREE.DoubleSide, depthWrite: false,
-            });
-            const mesh = new THREE.Mesh(geom, mat);
-            // Draw the overlay backdrop before the transparent track/DAC arrows/flow
-            // particles so those always paint on top of it. Without this the mesh
-            // can sort in front and visually bury the arrows (depthWrite is off, so
-            // altitude alone doesn't decide the order for transparent layers).
-            mesh.renderOrder = -10;
+            const mesh = new THREE.Mesh(geom, overlayMaterial(opacity));
+            mesh.renderOrder = LAYER_ORDER.overlay;   // backdrop: under tracks, arrows and streaks
+            mesh.frustumCulled = false;
             return mesh;
         }
 
@@ -1365,14 +1497,15 @@
         let _coordDown = null;   // {x, y} at pointerdown, screen px
         const _COORD_MOVE_TOL = 6;   // px; a release within this of the press = a click
 
-        // ── Press-and-hold ruler ────────────────────────────────────────
-        // Holding the pointer still for _RULER_HOLD_MS arms the ruler: a
-        // start point drops, orbit controls are disabled so the drag can't
-        // also spin the globe, and every further move redraws the line to
-        // the current pointer position with a live distance. Releasing drops
-        // the end point and leaves the measurement on screen. Moving past
-        // _COORD_MOVE_TOL before the hold fires is a normal rotate instead —
-        // the timer gets cancelled and nothing about the ruler engages.
+        // ── Ruler (press-and-hold, or shift-drag) ───────────────────────
+        // Holding the pointer still for _RULER_HOLD_MS, or pressing with shift
+        // held, arms the ruler: a start point drops, orbit controls are
+        // disabled so the drag can't also spin the globe, and every further
+        // move redraws the line to the current pointer position with a live
+        // distance. Releasing drops the end point and leaves the measurement
+        // on screen. Moving past _COORD_MOVE_TOL before the hold fires is a
+        // normal rotate instead — the timer gets cancelled and nothing about
+        // the ruler engages.
         let _rulerHoldTimer = null;
         let _rulerArmed = false;
         let _rulerAnchor = null;   // {lat, lng} — where the hold landed
@@ -1390,21 +1523,14 @@
             return 2 * R * Math.asin(Math.sqrt(Math.min(1, a)));
         }
 
-        // Same altitude scale the rest of the app's overlays use (OVERLAY_ALT
-        // 0.000005, track 0.000015, DAC arrows 0.00004, CUR_ALT 0.000013) — the
-        // ruler sits above all of them so it's never hidden under the track.
-        // Kept this whole family an order of magnitude closer to the surface
-        // than the original values (see CONFIG.lineAltitude comment) — even
-        // the track/waypoints showed visible parallax on rotation before.
-        const RULER_ALT = 0.00006;
+        const RULER_COLOR = [249, 115, 22];   // orange, matches the endpoint dots
+        const RULER_WIDTH_PX = 2;
 
-        // Build a great-circle arc (as a THREE.BufferGeometry) between two
-        // lat/lng points, slerping between their unit vectors so the line
-        // follows the globe's curvature instead of cutting a straight chord
-        // through the sphere. Lifted a hair above the surface to avoid
-        // z-fighting with the terrain tiles.
-        function _greatCircleGeometry(a, b) {
-            const r = myGlobe.getGlobeRadius() * (1 + RULER_ALT);
+        // Great-circle arc between two lat/lng points as a polyline of globe-space
+        // points, slerping between their unit vectors so the line follows the
+        // globe's curvature instead of cutting a straight chord through the sphere.
+        function _greatCirclePoints(a, b) {
+            const r = myGlobe.getGlobeRadius();
             const pa = myGlobe.getCoords(a.lat, a.lng, 0);
             const pb = myGlobe.getCoords(b.lat, b.lng, 0);
             const va = new THREE.Vector3(pa.x, pa.y, pa.z).normalize();
@@ -1427,18 +1553,23 @@
                     ).multiplyScalar(r));
                 }
             }
-            return new THREE.BufferGeometry().setFromPoints(pts);
+            return pts.map(v => ({ x: v.x, y: v.y, z: v.z, t: 1 }));
         }
 
         function updateRulerLine(a, b) {
             if (!myGlobe) return;
-            const geom = _greatCircleGeometry(a, b);
+            const geom = buildRibbonGeometry([_greatCirclePoints(a, b)]);
             if (_rulerLine) {
                 _rulerLine.geometry.dispose();
                 _rulerLine.geometry = geom;
             } else {
-                _rulerLine = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.9 }));
-                _rulerLine.renderOrder = 999;
+                _rulerLine = new THREE.Mesh(geom, ribbonMaterial());
+                const u = _rulerLine.material.uniforms;
+                setRGBA(u.uColorA.value, ...RULER_COLOR, 0.9);
+                setRGBA(u.uColorB.value, ...RULER_COLOR, 0.9);
+                u.uWidthA.value = u.uWidthB.value = RULER_WIDTH_PX;
+                _rulerLine.renderOrder = LAYER_ORDER.ruler;   // above every other surface layer
+                _rulerLine.frustumCulled = false;
                 myGlobe.scene().add(_rulerLine);
             }
         }
@@ -1543,24 +1674,33 @@
             const el = document.getElementById('globe-container');
             if (!el || el._coordPickerWired) return;
             el._coordPickerWired = true;
+            // Drop the ruler's start point at a screen position and take over
+            // the drag from the orbit controls.
+            function armRuler(x, y) {
+                const geo = _snapPickCoords(x, y);
+                if (!geo) return;
+                // A real ruler start — clear any previous pin/measurement so
+                // the bubble isn't showing two things.
+                clearPin();
+                _rulerArmed = true;
+                _rulerAnchor = geo;
+                try { myGlobe.controls().enabled = false; } catch (_) {}
+                clearHover();
+                _rulerStart = geo;
+                applyDots();
+                updateRulerLine(geo, geo);
+                showRulerBubble(geo, geo, 0);
+            }
             el.addEventListener('pointerdown', (e) => {
                 _coordDown = { x: e.clientX, y: e.clientY };
                 clearTimeout(_rulerHoldTimer);
+                if (e.shiftKey) {
+                    armRuler(e.clientX, e.clientY);   // shift-drag: no hold needed
+                    return;
+                }
                 _rulerHoldTimer = setTimeout(() => {
                     if (!_coordDown) return;   // already released before the hold fired
-                    const geo = _snapPickCoords(_coordDown.x, _coordDown.y);
-                    if (!geo) return;
-                    // Holding lands on a real ruler start — clear any previous
-                    // pin/measurement so the bubble isn't showing two things.
-                    clearPin();
-                    _rulerArmed = true;
-                    _rulerAnchor = geo;
-                    try { myGlobe.controls().enabled = false; } catch (_) {}
-                    clearHover();
-                    _rulerStart = geo;
-                    applyDots();
-                    updateRulerLine(geo, geo);
-                    showRulerBubble(geo, geo, 0);
+                    armRuler(_coordDown.x, _coordDown.y);
                 }, _RULER_HOLD_MS);
             });
             el.addEventListener('pointermove', (e) => {
@@ -1689,7 +1829,7 @@
             const cart = [];
             for (let i = 0; i < t.formattedPath.length; i += stride) {
                 const p = t.formattedPath[i];
-                const w = myGlobe.getCoords(p.lat, p.lng, p.alt || 0);
+                const w = myGlobe.getCoords(p.lat, p.lng, 0);
                 cart.push([w.x, w.y, w.z]);
             }
             t.cart = cart;
@@ -1867,7 +2007,7 @@
             let best = null, bestD = tolPx * tolPx;
             for (let i = 0; i < at.formattedPath.length; i += stride) {
                 const p = at.formattedPath[i];
-                const w = myGlobe.getCoords(p.lat, p.lng, p.alt || 0);
+                const w = myGlobe.getCoords(p.lat, p.lng, 0);
                 // Skip back-facing points so the far side can't be picked through the globe.
                 if (w.x * (ex - w.x) + w.y * (ey - w.y) + w.z * (ez - w.z) <= 0) continue;
                 _tmpV.set(w.x, w.y, w.z).project(cam);
@@ -2000,11 +2140,34 @@
                 closeBtn.type = 'button';
                 closeBtn.title = 'Remove';
                 closeBtn.innerHTML = '<span class="material-symbols-outlined">close</span>';
-                closeBtn.addEventListener('click', () => unpinItem(item.id));
+                closeBtn.addEventListener('click', (e) => { e.stopPropagation(); unpinItem(item.id); });
+                row.title = item.type === 'ruler' ? 'Fly to this measurement' : 'Fly to this point';
+                row.addEventListener('click', () => flyToPinned(item));
                 row.append(icon, text, closeBtn);
                 wrap.appendChild(row);
             }
             wrap.classList.toggle('visible', _pinnedItems.length > 0);
+        }
+
+        // Swing the camera to a pinned item: a point is centred and zoomed to at
+        // most PIN_FLY_ALT (never zooming back out if already closer); a ruler is
+        // centred on its great-circle midpoint at an altitude that frames it.
+        const PIN_FLY_ALT = 0.15;
+        function flyToPinned(item) {
+            if (!myGlobe) return;
+            const cur = myGlobe.pointOfView().altitude;
+            if (item.type === 'point') {
+                myGlobe.pointOfView({ lat: item.lat, lng: item.lng, altitude: Math.min(cur, PIN_FLY_ALT) }, 700);
+                return;
+            }
+            const pa = myGlobe.getCoords(item.a.lat, item.a.lng, 0);
+            const pb = myGlobe.getCoords(item.b.lat, item.b.lng, 0);
+            const mid = new THREE.Vector3(pa.x + pb.x, pa.y + pb.y, pa.z + pb.z);
+            if (mid.lengthSq() < 1e-9) mid.set(pa.x, pa.y, pa.z);   // antipodal: fall back to one end
+            const geo = myGlobe.toGeoCoords(mid.normalize().multiplyScalar(myGlobe.getGlobeRadius()));
+            const spanDeg = item.km / 111.2;   // arc length as degrees of great circle
+            const alt = Math.max(0.05, spanDeg * 1.6 / CONFIG.zoomScaleFactor);
+            myGlobe.pointOfView({ lat: geo.lat, lng: geo.lng, altitude: alt }, 700);
         }
 
         // The string handed to the clipboard — plain signed decimal "lat, lon",
@@ -2313,7 +2476,6 @@
         const CUR_PARTICLES = 4000;        // particles advected each frame
         const CUR_TRAIL = 44;              // points kept per particle's fading trail (longer = longer streaks)
         const CUR_LINE_COLOR = [0, 0, 0];  // streak colour, 0–1 per channel ([1,1,1] = white). Black so the lines stand out against the speed backdrop instead of blending into it.
-        const CUR_ALT = 0.000013;          // above the speed mesh, just below the track
         const CUR_LIFE_MIN = 90, CUR_LIFE_MAX = 220;   // particle lifespan (frames)
         const CUR_BASE_OPACITY = 1.0;
         const CUR_DEG_PER_SEC = 0.32;      // arc/sec a p90-strength current sweeps
@@ -2393,21 +2555,24 @@
         }
 
         // Minimal shader so each streaklet vertex carries its own fade alpha —
-        // standard line materials only do a single global opacity.
+        // standard line materials only do a single global opacity. Surface
+        // layer like the rest: no depth test, far hemisphere culled in-shader.
         function flowMaterial() {
             return new THREE.ShaderMaterial({
-                transparent: true, depthWrite: false, side: THREE.DoubleSide,
+                transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
                 uniforms: { uOpacity: { value: CUR_BASE_OPACITY } },
                 vertexShader: `
                     attribute float alpha; attribute vec3 vcolor;
-                    varying float vAlpha; varying vec3 vCol;
+                    varying float vAlpha; varying vec3 vCol; ${SURFACE_VARYING}
                     void main() {
                         vAlpha = alpha; vCol = vcolor;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                        vec4 wp = modelMatrix * vec4(position, 1.0);
+                        vWorld = wp.xyz;
+                        gl_Position = projectionMatrix * viewMatrix * wp;
                     }`,
                 fragmentShader: `
-                    uniform float uOpacity; varying float vAlpha; varying vec3 vCol;
-                    void main() { gl_FragColor = vec4(vCol, vAlpha * uOpacity); }`,
+                    uniform float uOpacity; varying float vAlpha; varying vec3 vCol; ${SURFACE_VARYING}
+                    void main() { ${SURFACE_CULL} gl_FragColor = vec4(vCol, vAlpha * uOpacity); }`,
             });
         }
 
@@ -2438,7 +2603,7 @@
                 lat[i] = la; lng[i] = lo;
                 life[i] = CUR_LIFE_MIN + Math.random() * (CUR_LIFE_MAX - CUR_LIFE_MIN);
                 age[i] = Math.random() * life[i];   // stagger so respawns are spread
-                const p = myGlobe.getCoords(la, lo, CUR_ALT);
+                const p = myGlobe.getCoords(la, lo, 0);
                 fillTrail(flowState, i, p.x, p.y, p.z);
             }
 
@@ -2449,6 +2614,7 @@
             geom.setAttribute('vcolor', new THREE.BufferAttribute(new Float32Array(segVerts * 3), 3));
             geom.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segVerts), 1));
             flowLines = new THREE.LineSegments(geom, flowMaterial());
+            flowLines.renderOrder = LAYER_ORDER.flow;   // over the speed backdrop, under the track
             flowLines.frustumCulled = false;
             myGlobe.scene().add(flowLines);
         }
@@ -2479,7 +2645,7 @@
                 // Advance one step (dtFrames folds in elapsed frame time).
                 s.lng[i] += u * s.degPerStep * dtFrames / cosLat;
                 s.lat[i] += v * s.degPerStep * dtFrames;
-                const p = myGlobe.getCoords(s.lat[i], s.lng[i], CUR_ALT);
+                const p = myGlobe.getCoords(s.lat[i], s.lng[i], 0);
 
                 const tb = i * L * 3;
                 if (respawned) {
@@ -2704,6 +2870,7 @@
                 if (myGlobe) {
                     myGlobe.width(window.innerWidth).height(window.innerHeight);
                 }
+                updateSurfaceResolution();
                 fitColourBar();
                 _refitCoordBubble();
             });
@@ -2717,8 +2884,7 @@
                 if (myGlobe) {
                     const tc = readThemeColors();
                     myGlobe.backgroundColor(tc.bg).atmosphereColor(tc.atmosphere);
-                    // trigger a re-colour of the existing path (segColor reads theme on each call)
-                    myGlobe.pathColor(myGlobe.pathColor());
+                    restyleTracks();   // grey level / accent are theme-dependent
                 }
             } else if (event.data.type === 'pinCoord') {
                 // Another globe was clicked, or a plot point was picked — drop the
@@ -2736,7 +2902,7 @@
                 const want = event.data.show;
                 showDac = (typeof want === 'boolean') ? want : !showDac;
                 updateDacToggle();
-                if (myGlobe) myGlobe.pathsData(visiblePaths());
+                syncDacMesh();
             } else if (event.data.type === 'queryDac') {
                 reportDacStatus();
             } else if (event.data.type === 'setActive') {
@@ -2750,10 +2916,8 @@
                     if (!activeTrack() && allTracks.length) activeId = allTracks[0].id;
                     dacArrows = activeTrack() ? activeTrack().dacArrows : [];
                     updateDacToggle();
-                    if (myGlobe) {
-                        myGlobe.pathsData(visiblePaths());
-                        applyDots();
-                    }
+                    rebuildTrackMeshes();
+                    applyDots();
                 });
             } else if (event.data.type === 'fitView') {
                 fitView(event.data);
