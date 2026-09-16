@@ -2493,6 +2493,19 @@
             el.style.width = '100%'; el.style.height = '100%';
             if (!def.isFrame) { el.classList.add('flex'); el.style.display = 'flex'; }
             else { el.style.display = 'block'; }
+            // Re-parenting an iframe reloads it from its src. The primary globe's src
+            // only ever carries the id it was first loaded with (later glider swaps
+            // are in-place 'setActive' messages, see loadMapImage), so if the active
+            // file changed while the globe was stashed, point the src at the current
+            // file first — otherwise the move-triggered reload resurrects the old glider.
+            if (def.stashId === 'gliderMap' && el.src && el.src.includes('map_view.html')) {
+                const want = datasetSelect.value;
+                let have = null;
+                try { have = new URL(el.src, location.href).searchParams.get('id'); } catch (_) {}
+                if (want && have !== want) {
+                    el.src = `/static/map_view.html?id=${encodeURIComponent(want)}&theme=${getCurrentTheme()}`;
+                }
+            }
             panel.body.appendChild(el);
             panel.hostedEl = el;
             if (def.isFrame) panel.iframe = el;   // so theme/activate/panelByWindow work
