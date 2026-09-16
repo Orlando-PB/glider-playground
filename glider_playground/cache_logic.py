@@ -116,7 +116,10 @@ DATA_DIR = _resolve_data_dir()
 #      impossible by orders of magnitude (corrupt single samples, e.g. CNDC
 #      5.3e6 mS/cm) - they overflowed inside GSW and poisoned the derived
 #      salinity/density outputs; raw values are untouched
-CACHE_VERSION = "24"
+# v25: 3D view payload gains per-point epoch-ms times (position slider)
+# v26: 3D view payload gains per-point pitch/roll (degrees) for the vehicle model
+# v27: 3D view track cap raised (MAX_POINTS_3D) now it carries no temperature colouring
+CACHE_VERSION = "27"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -364,16 +367,18 @@ def _load_once():
                     rec["status"] = STATUS_PENDING
                     rec["progress"] = 0
                     rec["stage"] = "queued"
-            if stale_version:
-                # Also retry files that errored under the old logic — the bump
-                # may be the very fix they were waiting for.
+            if stale_version or rec.get("status") == STATUS_ERROR:
+                # Retry errored files on every start: a bump may be the very
+                # fix they were waiting for, and plenty of errors are transient
+                # (a network blip fetching bathymetry, an import-lock deadlock
+                # under a busy startup). A genuinely broken file just errors
+                # again quickly, so this costs nothing.
                 rec["status"] = STATUS_PENDING
                 rec["progress"] = 0
                 rec["stage"] = "queued"
                 rec["error"] = ""
             _registry[rid] = rec
-        if stale_version:
-            _persist_locked()
+        _persist_locked()
 
 
 def _is_nrt(last_time_iso: Optional[str]) -> bool:

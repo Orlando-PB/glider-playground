@@ -23,6 +23,7 @@ Nothing here downloads profile data or touches the file cache.
 
 from __future__ import annotations
 
+import array
 import gzip
 import json
 import logging
@@ -32,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import requests
 
 from . import cache_logic
@@ -42,6 +44,13 @@ ARGO_DIR = cache_logic.CACHE_ROOT / "argo"
 INDEX_URL = "https://data-argo.ifremer.fr/ar_index_global_prof.txt.gz"
 INDEX_GZ = ARGO_DIR / "ar_index_global_prof.txt.gz"
 FLOATS_JSON = ARGO_DIR / "floats.json"
+# Per-profile arrays (every positioned profile in the index), written next to
+# floats.json by the same build pass so the 3D view can ask "which floats
+# surfaced inside this box during this deployment?" without rescanning the
+# 60 MB index. Row-aligned float32 lat/lon, int64 date (YYYYMMDDHHMMSS) and
+# int32 WMO; ~60 MB for the ~3M-row global index, mmapped on query.
+PROFILES_NPZ_STEM = ARGO_DIR / "profiles"
+_PROFILE_ARRAYS = ("lat", "lon", "date", "wmo")
 DETAIL_URL = "https://fleetmonitoring.euro-argo.eu/floats/{wmo}"
 
 INDEX_TTL = 24 * 3600        # re-download the global index at most daily
@@ -66,6 +75,7 @@ def _parse_index(path: Path) -> list[dict]:
     ``YYYYMMDDHHMMSS`` strings, so they compare lexically.
     """
     floats: dict[str, dict] = {}
+    p_lat, p_lon, p_date, p_wmo = array.array("f"), array.array("f"), array.array("q"), array.array("i")
     with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             if not line or line[0] == "#" or line.startswith("file,"):
@@ -97,8 +107,97 @@ def _parse_index(path: Path) -> list[dict]:
                         rec["lat"], rec["lon"] = round(lat, 4), round(lon, 4)
                 except ValueError:
                     pass
+            # Every positioned, dated profile goes into the per-profile arrays.
+            if date and len(date) >= 8 and date.isdigit():
+                try:
+                    lat, lon = float(p[2]), float(p[3])
+                except ValueError:
+                    continue
+                if -90 <= lat <= 90 and -180 <= lon <= 360 and wmo.isdigit():
+                    if lon > 180:
+                        lon -= 360
+                    p_lat.append(lat); p_lon.append(lon)
+                    p_date.append(int(date.ljust(14, "0")[:14])); p_wmo.append(int(wmo))
+    _write_profiles(p_lat, p_lon, p_date, p_wmo)
     out = [r for r in floats.values() if r["lat"] is not None and r["last"]]
     out.sort(key=lambda r: r["last"], reverse=True)
+    return out
+
+
+def _write_profiles(p_lat, p_lon, p_date, p_wmo):
+    """Persist the per-profile arrays as separate .npy files (mmap-able)."""
+    try:
+        ARGO_DIR.mkdir(parents=True, exist_ok=True)
+        for name, arr, dt in (("lat", p_lat, np.float32), ("lon", p_lon, np.float32),
+                              ("date", p_date, np.int64), ("wmo", p_wmo, np.int32)):
+            f = Path(f"{PROFILES_NPZ_STEM}_{name}.npy")
+            tmp = f.with_suffix(".tmp.npy")
+            np.save(str(tmp), np.frombuffer(arr, dtype=arr.typecode).astype(dt, copy=False))
+            tmp.replace(f)
+        with _lock:
+            _profiles_cache.clear()
+    except Exception as e:  # noqa: BLE001
+        log.warning("argo: could not write profile arrays: %s", e)
+
+
+# ---------- profiles inside a box + time window (3D view) ----------
+
+_profiles_cache: dict[tuple, dict] = {}
+PROFILES_MAX = 2000
+
+
+def _date_int(ms: float) -> int:
+    d = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+    return int(d.strftime("%Y%m%d%H%M%S"))
+
+
+def profiles_in(min_lat: float, max_lat: float, min_lon: float, max_lon: float,
+                t0_ms: float, t1_ms: float) -> dict:
+    """Positioned Argo profiles inside the box whose date lies in [t0, t1].
+
+    Returns ``{"status": "ready"|"building"|"error", "count": n,
+    "profiles": [[wmo, lat, lon, epoch_ms], ...]}`` sorted by time. Serves
+    from the mmapped per-profile arrays; kicks the index build if missing.
+    """
+    _ensure_loaded()
+    files = {n: Path(f"{PROFILES_NPZ_STEM}_{n}.npy") for n in _PROFILE_ARRAYS}
+    if not all(f.exists() for f in files.values()):
+        with _lock:
+            err = _build_error if not _building else None
+        return {"status": "error" if err else "building", "error": err, "count": 0, "profiles": []}
+    key = (round(min_lat, 3), round(max_lat, 3), round(min_lon, 3), round(max_lon, 3),
+           int(t0_ms // 3600000), int(t1_ms // 3600000), files["lat"].stat().st_mtime_ns)
+    with _lock:
+        hit = _profiles_cache.get(key)
+    if hit is not None:
+        return hit
+    try:
+        lat = np.load(str(files["lat"]), mmap_mode="r")
+        lon = np.load(str(files["lon"]), mmap_mode="r")
+        m = (lat >= min_lat) & (lat <= max_lat) & (lon >= min_lon) & (lon <= max_lon)
+        idx = np.flatnonzero(m)
+        rows = []
+        if idx.size:
+            date = np.load(str(files["date"]), mmap_mode="r")[idx]
+            d0, d1 = _date_int(t0_ms), _date_int(t1_ms)
+            sel = (date >= d0) & (date <= d1)
+            idx, date = idx[sel], date[sel]
+            wmo = np.load(str(files["wmo"]), mmap_mode="r")[idx]
+            order = np.argsort(date, kind="stable")
+            for j in order[:PROFILES_MAX]:
+                ds = str(int(date[j])).rjust(14, "0")
+                try:
+                    ms = datetime.strptime(ds, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp() * 1000.0
+                except ValueError:
+                    continue
+                rows.append([int(wmo[j]), round(float(lat[idx[j]]), 4), round(float(lon[idx[j]]), 4), ms])
+        out = {"status": "ready", "count": len(rows), "profiles": rows}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e), "count": 0, "profiles": []}
+    with _lock:
+        if len(_profiles_cache) > 64:
+            _profiles_cache.clear()
+        _profiles_cache[key] = out
     return out
 
 

@@ -442,6 +442,12 @@ def api_argo_float(wmo: str):
     return argo_logic.float_detail(wmo)
 
 
+@app.get("/api/argo/profiles")
+def api_argo_profiles(min_lat: float, max_lat: float, min_lon: float, max_lon: float, t0: float, t1: float):
+    """Argo profiles (surfacings) inside a lat/lon box between epoch-ms t0 and t1 — for the 3D view."""
+    return argo_logic.profiles_in(min_lat, max_lat, min_lon, max_lon, t0, t1)
+
+
 # ---------- Research ships (experimental; see ships_logic.py) ----------
 
 @app.get("/api/ships")

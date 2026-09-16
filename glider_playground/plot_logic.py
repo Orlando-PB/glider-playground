@@ -4,6 +4,17 @@ import logging
 import struct
 import shutil
 import xarray as xr
+# xarray imports dask lazily the first time it decodes a CF time variable.
+# With several worker threads opening files at once (e.g. a CACHE_VERSION bump
+# reprocessing everything at startup, plus the overlay/live workers) that
+# first import can happen concurrently and deadlock on Python's per-module
+# import lock ("deadlock detected by _ModuleLock('dask.callbacks')"). Import
+# it once here, on the main thread, so it's already loaded before any worker
+# touches xarray. Optional dependency - skip quietly if it isn't installed.
+try:
+    import dask  # noqa: F401
+except Exception:
+    pass
 import numpy as np
 import pandas as pd
 from netCDF4 import Dataset

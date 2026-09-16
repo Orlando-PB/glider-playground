@@ -22,6 +22,10 @@ from . import plot_logic
 # Desktop/RAM mode keeps the active globe track detailed; server/low-memory
 # mode renders far fewer points per track so the globe stays fast.
 MAX_POINTS = 1000 if plot_logic._LOW_MEMORY else 5000
+# The 3D view carries no colour data any more, so it can afford a denser
+# track than the map: the model is interpolated between samples, so this
+# mostly sharpens dive shapes and pitch/roll changes. Separate cache entry.
+MAX_POINTS_3D = 4000 if plot_logic._LOW_MEMORY else 20000
 BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 100.0
 GEO_GAP_THRESHOLD_SEC = 2 * 86400.0   # 2 days
@@ -339,6 +343,19 @@ def get_dac_vectors(filepath):
     ]
 
 
+# Original-row indices of the points get_core_spatial_data() kept, keyed the
+# same way as its lru_cache, so callers can pull extra per-point variables
+# (e.g. pitch/roll for the 3D view) aligned with the cached track without
+# widening that function's return signature.
+_CORE_INDEX = {}
+
+
+def get_core_spatial_index(filepath, max_points=MAX_POINTS):
+    """Row indices (into the raw file arrays) of the cached spatial track."""
+    get_core_spatial_data(filepath, max_points)
+    return _CORE_INDEX.get((filepath, max_points))
+
+
 @functools.lru_cache(maxsize=32)
 def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     """Read LAT/LON/PRES/TEMP, apply QC, subsample, and cache.
@@ -383,6 +400,7 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     if not valid.any():
         raise ValueError("No valid spatial data after QC filters")
 
+    idx = np.flatnonzero(valid)
     lat = lat[valid]
     lon = lon[valid]
     pres = pres[valid]
@@ -397,6 +415,7 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     _report_spatial_stage(f"spatial QC: subsampling {len(lat):,} valid fixes")
     if len(lat) > max_points:
         step = len(lat) // max_points
+        idx = idx[::step]
         lat = lat[::step]
         lon = lon[::step]
         pres = pres[::step]
@@ -407,6 +426,7 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
 
     _report_spatial_stage("spatial QC: trimming position outliers")
     keep = _trim_position_outliers(lat, lon, times)
+    idx = idx[keep]
     lat = lat[keep]
     lon = lon[keep]
     pres = pres[keep]
@@ -418,6 +438,7 @@ def get_core_spatial_data(filepath, max_points=MAX_POINTS):
     if len(lat) == 0:
         raise ValueError("No valid spatial data after position outlier trim")
 
+    _CORE_INDEX[(filepath, max_points)] = idx
     return lat, lon, pres, temp, times
 
 
@@ -688,9 +709,45 @@ def generate_kmz(filepath, name):
 
 def generate_3d_data(filepath):
     try:
-        lat, lon, pres, temp, _times = get_core_spatial_data(filepath)
+        lat, lon, pres, temp, times = get_core_spatial_data(filepath, MAX_POINTS_3D)
     except Exception as e:
         return {"error": f"Internal error: {e}"}
+
+    # Epoch-ms per track point (None where missing) - drives the position
+    # slider's timestamp readout in the 3D view. Kept numeric so the frontend
+    # never has to parse a date string (see the timezone note in CLAUDE.md).
+    time_ms = None
+    if times is not None and len(times) == len(lat):
+        time_ms = [None if np.isnan(t) else float(t) * 1000.0 for t in times]
+
+    # Vehicle attitude (degrees, None where missing) so the 3D view can pose
+    # the model with the measured pitch/roll instead of the track tangent.
+    # Files vary in naming; OG1 uses PITCH/ROLL, others GLIDER_PITCH/GLIDER_ROLL.
+    pitch = roll = None
+    try:
+        idx = get_core_spatial_index(filepath, MAX_POINTS_3D)
+        if idx is not None and len(idx) == len(lat):
+            arrs = _read_named_arrays(filepath, ['GLIDER_PITCH', 'PITCH', 'GLIDER_ROLL', 'ROLL'])
+            units = plot_logic._get_var_units(filepath)
+
+            def _attitude(*names):
+                for nm in names:
+                    a = arrs.get(nm)
+                    if a is None or len(a) <= idx.max():
+                        continue
+                    v = a[idx].astype(float)
+                    u = str(units.get(nm, '')).lower()
+                    if 'rad' in u:
+                        v = np.degrees(v)
+                    v[~np.isfinite(v) | (np.abs(v) > 180)] = np.nan
+                    if not np.isnan(v).all():
+                        return [None if np.isnan(x) else round(float(x), 2) for x in v]
+                return None
+
+            pitch = _attitude('GLIDER_PITCH', 'PITCH')
+            roll = _attitude('GLIDER_ROLL', 'ROLL')
+    except Exception:
+        pitch = roll = None
 
     min_lon, max_lon = float(np.min(lon)), float(np.max(lon))
     min_lat, max_lat = float(np.min(lat)), float(np.max(lat))
@@ -718,6 +775,9 @@ def generate_3d_data(filepath):
         "lat": lat.tolist(),
         "elevation": (-pres).tolist(),
         "temp": [None if np.isnan(t) else float(t) for t in temp] if temp is not None else None,
+        "time_ms": time_ms,
+        "pitch": pitch,
+        "roll": roll,
         "bathy_lon": b_lon,
         "bathy_lat": b_lat,
         "bathy_z": b_z,

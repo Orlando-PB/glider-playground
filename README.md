@@ -100,6 +100,21 @@ The surface overlays and currents are fetched live from [Copernicus Marine](http
 
 Once you're logged in, the overlay layers fetch on demand. Until then the app will prompt you with whichever of these steps is missing.
 
+### Citing Copernicus data
+
+Overlays and currents are derived from Copernicus Marine products, so anything you publish from them should carry the credit line the [licence](https://marine.copernicus.eu/user-corner/service-commitments-and-licence) asks for (the map shows it whenever a layer is on):
+
+> Generated using E.U. Copernicus Marine Service Information; DOI links below
+
+| Layer | Product | DOI |
+|---|---|---|
+| Temperature, Salinity, Currents | Global Ocean Physics Analysis and Forecast | [10.48670/moi-00016](https://doi.org/10.48670/moi-00016) |
+| O₂, pH, Biomass | Global Ocean Biogeochemistry Analysis and Forecast | [10.48670/moi-00015](https://doi.org/10.48670/moi-00015) |
+| Chlorophyll-a | Global Ocean Colour L4 (NRT / Multi-Year) | [10.48670/moi-00279](https://doi.org/10.48670/moi-00279) / [10.48670/moi-00281](https://doi.org/10.48670/moi-00281) |
+| Sea Surface Height | Global Ocean Sea Level L4 (NRT / Multi-Year) | [10.48670/moi-00149](https://doi.org/10.48670/moi-00149) / [10.48670/moi-00148](https://doi.org/10.48670/moi-00148) |
+
+For a paper, Copernicus recommends "*Product Title*. E.U. Copernicus Marine Service Information (CMEMS). Marine Data Store (MDS). DOI: 10.48670/moi-xxxxx (Accessed on DD MMM YYYY)".
+
 ---
 
 ## Plotting & Inspecting

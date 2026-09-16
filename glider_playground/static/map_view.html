@@ -112,11 +112,15 @@
             flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 5px;
             font-size: 9px; line-height: 1.3; white-space: nowrap;
             max-width: calc(100vw - 140px); overflow: hidden; text-overflow: ellipsis;
-            color: var(--text-muted); opacity: 0.85; user-select: none; pointer-events: none;
+            /* White text with difference blending: inverts against whatever is
+               underneath (dark ocean → light text, bright land/overlay → dark
+               text) so it stays legible over the globe in both themes. */
+            color: #fff; mix-blend-mode: difference; opacity: 0.9;
+            user-select: none; pointer-events: none;
         }
         body.hasAttrib #attrib { display: flex; }
         #attrib a { color: inherit; text-decoration: underline; pointer-events: auto; }
-        #attrib a:hover { color: var(--text-primary); }
+        #attrib a:hover { opacity: 0.7; }
         #attrib .sep { opacity: 0.6; }
         #chla-bar-title {
             font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
@@ -1445,9 +1449,9 @@
 
             const nVX = nCols + 1;
             const vertexIndex = new Int32Array((nRows + 1) * nVX).fill(-1);
-            // Interior cells share smoothed corners; boundary cells (see below)
-            // each get their own private, unshared quad — so allow for both.
-            const maxVerts = (nRows + 1) * nVX + n * 4;
+            // Smooth: every cell shares corner vertices with its neighbours.
+            // Blocky: each cell gets its own private, unshared quad.
+            const maxVerts = overlaySmooth ? (nRows + 1) * nVX : n * 4;
             const positions = new Float32Array(maxVerts * 3);
             const colors = new Float32Array(maxVerts * 3);
             let vi = 0;
@@ -1455,21 +1459,6 @@
             function hasCell(r, c) {
                 return r >= 0 && r < nRows && c >= 0 && c < nCols && !Number.isNaN(cellVal[r * nCols + c]);
             }
-            // True only when every one of the 8 surrounding cells has data —
-            // i.e. this cell is nowhere near the bbox edge or a data gap
-            // (land, cloud, coastline). Only these get smoothed: blending a
-            // vertex across a real/missing boundary is what made land behind
-            // the overlay look blurred, and it also softened the bbox edges
-            // the user wants kept straight.
-            function isInterior(r, c) {
-                for (let dr = -1; dr <= 1; dr++) {
-                    for (let dc = -1; dc <= 1; dc++) {
-                        if ((dr || dc) && !hasCell(r + dr, c + dc)) return false;
-                    }
-                }
-                return true;
-            }
-
             function addVertex(i, j, col) {
                 const lat = latMin + i * spacing - H;
                 const lng = lonMin + j * spacing - H;
@@ -1480,9 +1469,12 @@
                 return idx;
             }
 
-            // Shared, smoothed corner for an interior cell — averaged over
-            // whichever of the (always all-present, since the cell is
-            // interior) 4 contributing cells touch this vertex.
+            // Shared, smoothed corner — averaged over whichever of the up-to-4
+            // cells touching this vertex actually have data. Missing cells
+            // (bbox edge, land, cloud) contribute nothing and never emit a
+            // quad, so the outline stays geometrically crisp: edge cells are
+            // smoothed *along* the boundary without any colour bleeding
+            // *across* it.
             function sharedVertex(i, j) {
                 const key = i * nVX + j;
                 let idx = vertexIndex[key];
@@ -1503,12 +1495,11 @@
             for (let k = 0; k < n; k++) {
                 const r = rowOf[k], c = colOf[k];
                 let v00, v01, v11, v10;
-                if (overlaySmooth && isInterior(r, c)) {
+                if (overlaySmooth) {
                     v00 = sharedVertex(r, c); v01 = sharedVertex(r, c + 1);
                     v11 = sharedVertex(r + 1, c + 1); v10 = sharedVertex(r + 1, c);
                 } else {
-                    // Boundary cell — its own flat, hard-edged quad, same as
-                    // the original blocky render, so no colour crosses the gap.
+                    // Blocky mode — each cell its own flat, hard-edged quad.
                     const col = overlayColor01(ov, cellVal[r * nCols + c], data.p10, data.p90);
                     v00 = addVertex(r, c, col); v01 = addVertex(r, c + 1, col);
                     v11 = addVertex(r + 1, c + 1, col); v10 = addVertex(r + 1, c, col);
@@ -2474,10 +2465,36 @@
             document.body.classList.toggle('hasAttrib', el.innerHTML !== '');
         }
         window.setAttrib = setAttrib;
-        const COPERNICUS_ATTRIB = 'Overlay data: <a href="https://marine.copernicus.eu/" target="_blank" rel="noopener">Copernicus Marine</a>';
+        // Copernicus Marine licence (§2.4, derivative works): credit must read
+        // "Generated using E.U. Copernicus Marine Service Information" followed by
+        // the DOI of every product used. Product DOIs per overlay key (the server
+        // falls back NRT → MY for chla/ssh, so both products are cited for those).
+        const COPERNICUS_DOI = {
+            'moi-00016': 'Global Ocean Physics Analysis and Forecast',
+            'moi-00015': 'Global Ocean Biogeochemistry Analysis and Forecast',
+            'moi-00279': 'Global Ocean Colour L4 NRT',
+            'moi-00281': 'Global Ocean Colour L4 Multi-Year',
+            'moi-00149': 'Global Ocean Sea Level L4 NRT',
+            'moi-00148': 'Global Ocean Sea Level L4 Multi-Year',
+        };
+        const COPERNICUS_PRODUCTS = {
+            chla: ['moi-00279', 'moi-00281'],
+            temp: ['moi-00016'], salinity: ['moi-00016'], currents: ['moi-00016'],
+            o2: ['moi-00015'], ph: ['moi-00015'], biomass: ['moi-00015'],
+            ssh: ['moi-00149', 'moi-00148'],
+        };
         function updateCopernicusAttrib() {
-            const on = (!!activeOverlay && !!overlayCache[activeOverlay]) || (currentsActive && !!currentsData);
-            setAttrib('copernicus', on ? COPERNICUS_ATTRIB : null);
+            const keys = [];
+            if (activeOverlay && overlayCache[activeOverlay]) keys.push(activeOverlay);
+            if (currentsActive && currentsData) keys.push('currents');
+            if (!keys.length) { setAttrib('copernicus', null); return; }
+            const dois = [...new Set(keys.flatMap(k => COPERNICUS_PRODUCTS[k] || []))];
+            const links = dois.map(d =>
+                `<a href="https://doi.org/10.48670/${d}" target="_blank" rel="noopener" title="${COPERNICUS_DOI[d] || ''}">10.48670/${d}</a>`
+            ).join(', ');
+            setAttrib('copernicus',
+                'Generated using <a href="https://marine.copernicus.eu/" target="_blank" rel="noopener">E.U. Copernicus Marine Service Information</a>'
+                + (links ? '; ' + links : ''));
         }
 
         // Draw whatever activeOverlay points at (rebuilding the mesh), or nothing.

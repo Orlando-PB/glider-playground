@@ -7,6 +7,8 @@
          the full ~1MB-gzip build. Cuts parse time and drops a third-party fetch. -->
     <script src="/static/plotly-gl3d-2.32.0.min.js"></script>
     <script src="/static/console_log.js"></script>
+    <!-- Decorative scenery (kelp, trees...) behind the "Scenery" style toggle; see static/3d_view/scenery/. -->
+    <script src="/static/3d_view/scenery/scenery.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style"
@@ -96,13 +98,60 @@
         }
         #scaleNote a { color: inherit; text-decoration: underline; }
         #scaleNote a:hover { color: var(--text-primary); }
+
+        /* ── Glider position bar (bottom-centre): play/pause + scrub slider +
+           time/depth readout. Hidden until the scene has rendered. ─────── */
+        #posBar {
+            display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 60; align-items: center; gap: 8px; padding: 6px 10px;
+            width: clamp(180px, 55%, 520px); box-sizing: border-box;
+            border-radius: 10px; background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+            box-shadow: 0 1px 8px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
+        }
+        #posBar.ready { display: flex; }
+        #posPlay {
+            display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+            width: 24px; height: 24px; border: none; border-radius: 6px; cursor: pointer;
+            background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text-primary);
+        }
+        #posPlay:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+        #posPlay .material-symbols-outlined { font-size: 16px; }
+        #posPlay { position: relative; overflow: visible; }
+        #posPlay svg.ring { position: absolute; inset: -3px; width: 30px; height: 30px; pointer-events: none; display: none; }
+        #posPlay.cooldown svg.ring { display: block; }
+        #posPlay svg.ring circle {
+            fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+            transform: rotate(-90deg); transform-origin: 50% 50%;
+            stroke-dasharray: 81.7; stroke-dashoffset: 81.7;
+        }
+        #posPlay.cooldown svg.ring circle { animation: ringFill var(--cooldown, 1.5s) linear forwards; }
+        @keyframes ringFill { from { stroke-dashoffset: 81.7; } to { stroke-dashoffset: 0; } }
+        #posSlider {
+            flex: 1 1 auto; min-width: 60px; margin: 0; cursor: pointer;
+            accent-color: #ffd60a; height: 4px;
+        }
+        #posSpeed {
+            flex: 0 0 auto; min-width: 34px; height: 24px; padding: 0 6px; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+            background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary);
+        }
+        #posSpeed:hover { background: color-mix(in srgb, var(--text-primary) 20%, transparent); }
+        #posReadout {
+            flex: 0 0 auto; font-size: 10px; font-variant-numeric: tabular-nums;
+            color: var(--text-muted); white-space: nowrap; text-align: right; line-height: 1.25;
+        }
+        #posReadout b { color: var(--text-primary); font-weight: 600; }
     </style>
     <script>
         (function() {
             try {
+                // Theme from the URL; when absent (the placeholder frame the
+                // shell loads before any dataset is picked) inherit the parent
+                // shell's theme so an empty panel doesn't flash dark in light mode.
                 const p = new URLSearchParams(window.location.search);
-                const t = p.get('theme') === 'light' ? 'light' : 'dark';
-                document.documentElement.setAttribute('data-theme', t);
+                let t = p.get('theme');
+                if (!t) { try { t = window.parent.document.documentElement.getAttribute('data-theme'); } catch (_) {} }
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
             } catch (_) {
                 document.documentElement.setAttribute('data-theme', 'dark');
             }
@@ -116,6 +165,12 @@
     </div>
 
     <div id="plot3d"></div>
+    <div id="posBar">
+        <button id="posPlay" title="Play glider along track"><span class="material-symbols-outlined">play_arrow</span><svg class="ring" viewBox="0 0 30 30"><circle cx="15" cy="15" r="13"/></svg></button>
+        <input id="posSlider" type="range" min="0" max="0" value="0" step="1" title="Glider position along track">
+        <button id="posSpeed" title="Playback speed">1x</button>
+        <span id="posReadout"></span>
+    </div>
     <span id="scaleNote">Bathymetry data provided by <a href="https://www.ncei.noaa.gov/products/etopo-global-relief-model" target="_blank" rel="noopener">NOAA</a></span>
 
     <!-- Style sidebar (collapsible). Rows are generated by JS from EFFECTS.
@@ -159,6 +214,9 @@
         const maxEyeDist = 2.6;
         const maxEyeDistTrueHeight = 1.9;   // flat true-scale scene z-fights sooner when far away
         const eyeCap = () => (fx.trueHeight ? maxEyeDistTrueHeight : maxEyeDist);
+        // ...nor zoom in past this: the pivot sits on the glider, so any closer
+        // and the near clip plane starts eating the glider and the seabed.
+        const minEyeDist = 0.25;
 
         // Depth-buffer precision is set by the near/far clip ratio. Plotly's
         // gl-plot3d defaults to 0.01 .. 1000, which wastes almost all of the
@@ -167,24 +225,66 @@
         // gets closer than a few tenths, so tighten the planes. Not a public
         // Plotly option: reach into the live scene, which re-reads these every
         // frame.
-        const clipNear = 0.15, clipFar = 50;
+        const clipNear = 0.02, clipFar = 12;   // eye never nearer than minEyeDist to the pivot; scene ≲ 3 units across
         const tightenClipPlanes = () => {
             try {
                 const gl = document.getElementById('plot3d')._fullLayout.scene._scene.glplot;
                 gl.zNear = clipNear; gl.zFar = clipFar;
             } catch (_) {}
         };
+        const trackColour = '#ffd60a';       // glider dive track (single bright yellow - reads against blue water)
+        const trackAheadColour = '#7a6a10';  // the part of the track still to come: thinner + darker
         const waterTopColour = '#90e0ef';
         const waterBottomColour = '#004e89';
-        const waterOpacity = 0.4;
+        const waterOpacity = 0.28;   // five translucent panes stack up when looking through the box, so keep each one light
 
         const verticalExaggeration = 100;
         // Land (bathy values above sea level) gets a much gentler exaggeration
         // than the water column; otherwise coastal hills tower over the scene.
         const landExaggeration = 5;
 
-        const idleDelayMs = 4000;
-        const orbitSpeed = 0.0015;
+        // Playback: the glider sweeps the track in trackSeconds (at 1x). The
+        // camera follows from behind - it eases round to look from where the
+        // glider has come toward where it's going, so the glider sits on the
+        // near side with the water ahead in the distance. At the end of the
+        // track it holds for endHoldSeconds, then starts again.
+        const trackSeconds = 1600;   // at 1x: seconds for the glider to sweep the whole deployment
+        const idleOrbitSeconds = 240; // wall clock per full turn: a slow drift so the view never sits dead still (surface waits, hold at the end)
+        // Viewing angle relative to "directly behind": wanders smoothly between
+        // roughly side-on to port and side-on to starboard (±viewSwingDeg) on
+        // two slow, incommensurate periods, so it lingers behind for a while,
+        // drifts round to a side view, and comes back - never a snap.
+        const viewSwingDeg = 80;
+        const viewPeriodsS = [95, 217];
+        const endHoldSeconds = 4;    // wall-clock pause at the end before looping
+        const camAzimuthTau = 6;     // s: how lazily the camera swings round behind the glider (wall clock)
+        const camHeadingMove = 0.08; // scene units the track must progress before the heading counts
+        const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 25];
+        const cameraTau = 2.0;       // s: camera-centre smoothing time constant (bigger = lazier follow)
+        const trackEveryMs = 500;    // past/ahead track split cadence during playback
+        const trackLineMax = 4000;   // points in the drawn track line (the split re-uploads both halves; the model still uses every sample)
+        const followDist = 1.0;      // scene units: the camera eases in to this if it's further out during playback (never pushes out)
+        const leadFrac = 0.3;        // the pivot sits this fraction of the camera distance ahead of the glider, so the glider is off-centre with the water ahead filling the frame
+        const cooldownMs = 1500;     // resume delay after a manual rotate/zoom
+        // Argo floats. The index only gives us surfacings (position + time per
+        // profile), so between two of them the float follows the standard Argo
+        // mission synthetically: a short surface stint, descent to park depth,
+        // a long drift at park depth, a deeper dip, then the ascent that ends
+        // at the next surfacing. Horizontal position is interpolated between
+        // the two surfacings, so the float drifts underwater like a real one.
+        const ARGO = {
+            surfaceH: 1,        // hours at the surface after a profile
+            descendH: 6,        // hours from surface to park depth
+            parkM: 1000,        // park depth (m) - the mission default
+            deepStartH: 12,     // hours before the next surfacing the deep dip begins
+            deepEndH: 7,        // hours before the next surfacing the ascent begins
+            profileM: 2000,     // profile depth (m)
+            leadH: 12,          // show a float this many hours before its first known profile (ascending)
+        };
+        const argoWindowHours = ARGO.leadH;   // query margin around the deployment span
+        const argoLength = 0.03;     // scene units top-to-bottom (same visual size as the glider)
+        const buoyLength = 0.014;    // start (green) / end (red) buoys, scene units tall
+        const buoyOffset = 0.022;    // scene units sideways from the track end (glider half-length is 0.015)
 
         // ── Style toggles ────────────────────────────────────────────────
         // Each entry is a row in the Style panel (bottom-right, same look as the
@@ -192,10 +292,10 @@
         // choices persist in localStorage under FX_STORE_KEY.
         const EFFECTS = [
             { key: 'greenLand',  label: 'Colour land',      icon: 'park',          def: true  },
-            { key: 'depthShade', label: 'Depth shading',    icon: 'gradient',      def: true  },
             { key: 'trueHeight', label: 'True height',      icon: 'straighten',    def: false },
+            { key: 'scenery',    label: 'Scenery',          icon: 'nature',        def: true  },   // decorative life (static/3d_view/scenery/) + depth-shaded seabed
         ];
-        const FX_STORE_KEY = 'gp3d_fx_v2';   // bump when defaults change so they take effect
+        const FX_STORE_KEY = 'gp3d_fx_v3';   // bump when defaults change so they take effect
         const fx = {};
         for (const e of EFFECTS) fx[e.key] = e.def;
         try {
@@ -233,15 +333,6 @@
                 });
                 body.appendChild(btn);
             }
-            // Auto-rotate play/pause row (wired up once the scene has rendered).
-            {
-                const btn = document.createElement('button');
-                btn.className = 'fxBtn on';
-                btn.id = 'spinToggle';
-                btn.title = 'Pause auto-rotate';
-                btn.innerHTML = `<span class="material-symbols-outlined ovSwatch" style="font-size:14px;">pause</span><span class="lbl">Auto-rotate</span>`;
-                body.appendChild(btn);
-            }
             document.getElementById('layer-header').addEventListener('click', () => {
                 const panel = document.getElementById('layer-panel');
                 const collapsed = panel.classList.toggle('collapsed');
@@ -257,6 +348,76 @@
             const startTime = performance.now();
 
             let currentEye = { x: 1.25, y: -1.25, z: 0.6 };
+            // The camera looks at (and orbits around) the glider. Plotly's
+            // camera.center / eye are both absolute, in normalised scene units
+            // (the data box is centred on the origin and spans aspectratio).
+            let currentCenter = { x: 0, y: 0, z: 0 };
+            let sceneBox = null;            // ranges + aspect from buildScene, for centerFor()
+            const eyeOffset = () => ({ x: currentEye.x - currentCenter.x, y: currentEye.y - currentCenter.y, z: currentEye.z - currentCenter.z });
+            const eyeDist = () => { const o = eyeOffset(); return Math.hypot(o.x, o.y, o.z); };
+            const clampEye = () => {
+                const r = eyeDist();
+                const want = r > eyeCap() ? eyeCap() : r < minEyeDist ? minEyeDist : 0;
+                if (!want) return false;
+                const k = want / r, o = eyeOffset();
+                currentEye = { x: currentCenter.x + o.x * k, y: currentCenter.y + o.y * k, z: currentCenter.z + o.z * k };
+                return true;
+            };
+            // Normalised scene position of track point i (horizontal only - the
+            // vertical pivot stays at the box centre so the view doesn't bob).
+            function centerFor(data, f) {
+                if (!sceneBox) return { x: 0, y: 0, z: 0 };
+                const B = sceneBox, p = sample(data, f);
+                return {
+                    x: ((p[0] - B.xRange[0]) / (B.xRange[1] - B.xRange[0]) - 0.5) * B.aspectX,
+                    y: ((p[1] - B.yRange[0]) / (B.yRange[1] - B.yRange[0]) - 0.5) * B.aspectY,
+                    z: 0,
+                };
+            }
+            // Move the pivot to track point i, carrying the eye with it so the
+            // viewing angle/distance are unchanged (the scene slides, not the camera).
+            function lookAtIdx(data, i) {
+                const c = centerFor(data, i);
+                currentEye = { x: currentEye.x + c.x - currentCenter.x, y: currentEye.y + c.y - currentCenter.y, z: currentEye.z + c.z - currentCenter.z };
+                currentCenter = c;
+            }
+            let posIdx = 0;                 // current slider index into the track
+            let sceneScale = null;          // data units per scene unit, set by buildScene
+            let gliderTraceIdx = -1;
+            let pastTraceIdx = -1, aheadTraceIdx = -1;
+            let argoTraceIdx = -1;
+            let sceneryTraceIdx = -1;       // merged scenery mesh (only when fx.scenery and the seafloor is drawn)
+            let buoyModels = null;         // { start: mesh, end: mesh } (green / red buoys), or null if not loaded
+            let argoModel = null;           // merged mesh, metres, +z up, origin at hull mid
+            let argoFloats = [];            // [{wmo, profs:[{lat,lon,ms}...] sorted}] inside the scene box + deployment window
+            let argoShownKey = '';          // which profiles are currently drawn (to skip redundant updates)
+            let gliderModel = null;         // merged { x,y,z,i,j,k,cell,colorscale,length } in metres, +x nose, +z up
+
+            // Catmull-Rom upsample of the bathy grid to about `target` points
+            // along its longer side (integer factor, at most 4×). Lon/lat are
+            // linear; heights get a smooth cubic through the samples, so the
+            // mesh facets get finer without adding steps. Factor 1 = untouched.
+            const bathyUpsampleTo = 160;
+            const coastStepFrac = 0.012;   // land's minimum height as a fraction of the box depth (coast step)
+            function upsampleGrid(lon, lat, z, target) {
+                const nx = lon.length, ny = lat.length;
+                const f = Math.min(4, Math.max(1, Math.round(target / Math.max(nx, ny))));
+                if (f === 1 || nx < 2 || ny < 2) return { lon, lat, z };
+                const NX = (nx - 1) * f + 1, NY = (ny - 1) * f + 1;
+                const cr = (p0, p1, p2, p3, t) => 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+                const at = (arr, i) => arr[Math.max(0, Math.min(arr.length - 1, i))];
+                const lin = (arr, N) => { const o = new Array(N); for (let X = 0; X < N; X++) { const i = Math.floor(X / f), t = (X % f) / f; o[X] = i + 1 < arr.length ? arr[i] + (arr[i + 1] - arr[i]) * t : arr[i]; } return o; };
+                const rows = z.map(row => { const o = new Array(NX); for (let X = 0; X < NX; X++) { const i = Math.floor(X / f), t = (X % f) / f; o[X] = t ? cr(at(row, i - 1), row[i], at(row, i + 1), at(row, i + 2), t) : row[i]; } return o; });
+                const Z = new Array(NY);
+                for (let Y = 0; Y < NY; Y++) {
+                    const j = Math.floor(Y / f), t = (Y % f) / f;
+                    if (!t) { Z[Y] = rows[j]; continue; }
+                    const r0 = at(rows, j - 1), r1 = rows[j], r2 = at(rows, j + 1), r3 = at(rows, j + 2), o = new Array(NX);
+                    for (let X = 0; X < NX; X++) o[X] = cr(r0[X], r1[X], r2[X], r3[X], t);
+                    Z[Y] = o;
+                }
+                return { lon: lin(lon, NX), lat: lin(lat, NY), z: Z };
+            }
 
             // Build the full trace list + layout for the current `fx` settings.
             function buildScene(data) {
@@ -299,8 +460,16 @@
                 // z value, so scale positive (land) heights down here so they end
                 // up drawn at lExag instead.
                 const landScale = lExag / vExag;
+                // Smoothly upsample the (≤ ~80²) bathy grid before meshing so
+                // the flat facets are fine enough to read as terrain, not tiles.
+                const grid = upsampleGrid(data.bathy_lon, data.bathy_lat, data.bathy_z, showSeafloor ? bathyUpsampleTo : 1);
+                const bLon = grid.lon, bLat = grid.lat;
+                // Land gets a small minimum height (a fraction of the box depth)
+                // so the coast is a clean step above the water plane instead of
+                // a grazing slope the sea surface slices through.
+                const coastStep = Math.abs(displayMinZ) * coastStepFrac;
                 const bathyZ = showSeafloor
-                    ? data.bathy_z.map(row => row.map(z => (z > 0 ? z * landScale : z)))
+                    ? grid.z.map(row => row.map(z => (z > 0 ? Math.max(z * landScale, coastStep) : z)))
                     : null;
 
                 const minZ = displayMinZ;
@@ -312,15 +481,15 @@
                     : minZ - (Math.abs(minZ) * 0.15);
                 const distZ = Math.abs(baseZ);
 
-                const xLen = data.bathy_lon.length;
-                const yLen = data.bathy_lat.length;
+                const xLen = bLon.length;
+                const yLen = bLat.length;
 
                 const tiny = 0.00001;
 
-                const lon0 = data.bathy_lon[0];
-                const lon1 = data.bathy_lon[xLen - 1];
-                const lat0 = data.bathy_lat[0];
-                const lat1 = data.bathy_lat[yLen - 1];
+                const lon0 = bLon[0];
+                const lon1 = bLon[xLen - 1];
+                const lat0 = bLat[0];
+                const lat1 = bLat[yLen - 1];
 
                 const noContours = { contours: { x: {show: false, highlight: false}, y: {show: false, highlight: false}, z: {show: false, highlight: false} } };
 
@@ -338,8 +507,9 @@
                     const makeStops = (snow) => {
                         const stops = [];
                         if (bathyMin < 0) {
-                            stops.push([bathyMin, fx.depthShade ? earthDeepColour : earthColour]);
-                            stops.push([0, fx.depthShade ? earthColour : earthGradientEnd]);
+                            // Scenery on: seabed darkens with depth; off: plain earth ramp.
+                            stops.push([bathyMin, fx.scenery ? earthDeepColour : earthColour]);
+                            stops.push([0, fx.scenery ? earthColour : earthGradientEnd]);
                         }
                         if (bathyMax > 0) {
                             const lc  = fx.greenLand ? lerpHex(landColour, snowColour, snow) : earthColour;
@@ -350,9 +520,8 @@
                         if (stops.length === 1) stops.push([stops[0][0] + 1, stops[0][1]]);
                         return stops;
                     };
-
-                    // Per-row snow fraction from latitude: 0 equatorward of the
-                    // cutoff, 1 poleward, smooth blend across snowBlendKm.
+                    // Snow fraction from latitude: 0 equatorward of the cutoff,
+                    // 1 poleward, smooth blend across snowBlendKm.
                     const blendDeg = snowBlendKm / 111.111;
                     const snowAt = (lat) => {
                         if (!fx.greenLand || bathyMax <= 0) return 0;
@@ -360,63 +529,70 @@
                         const c = Math.max(0, Math.min(1, t));
                         return c * c * (3 - 2 * c);
                     };
-                    const rowSnow = data.bathy_lat.map(snowAt);
-                    const snowMin = Math.min(...rowSnow), snowMax = Math.max(...rowSnow);
-                    // Number of distinct snow levels: one if the grid is wholly
-                    // on one side of the cutoff, else a handful of steps across
-                    // the blend. Plotly interpolates a surface's colour value
-                    // linearly across each cell, so a single trace can't carry a
-                    // per-row colour ramp without bleeding (an ice vertex next to
-                    // a sea vertex would sweep through the green land colours).
-                    // Instead split the seabed into contiguous row chunks, one per
-                    // level, each with a plain height-based ramp. Chunks share
-                    // their boundary row so there is no gap.
-                    const M = (snowMax - snowMin) < 1e-3 ? 1 : 8;
+                    // Colour at height z / snow fraction, lightly quantised and
+                    // memoised. Applied per VERTEX (`vertexcolor`, exact colours -
+                    // no colourscale texture to bleed between).
+                    const colourCache = new Map();
                     const span = Math.max(bathyMax - bathyMin, 1e-6);
-                    const surfBase = {
-                        type: 'surface', showscale: false, hoverinfo: 'skip',
-                        cmin: bathyMin, cmax: bathyMax,
-                        lighting: { ambient: 0.6, diffuse: 0.8, specular: 0.1, roughness: 0.6 }, ...noContours
-                    };
-                    const rampFor = (snow) => makeStops(snow).map(([v, c]) => [Math.max(0, Math.min(1, (v - bathyMin) / span)), c]);
-
-                    if (M > 1) {
-                        const rowLevel = rowSnow.map(f => Math.round(f * (M - 1)));
-                        let r0 = 0;
-                        while (r0 < yLen - 1) {
-                            let r1 = r0;
-                            while (r1 + 1 < yLen && rowLevel[r1 + 1] === rowLevel[r0]) r1++;
-                            const rEnd = Math.min(yLen - 1, r1 + 1);   // overlap one row into the next chunk
-                            traces.push({
-                                ...surfBase,
-                                x: data.bathy_lon,
-                                y: data.bathy_lat.slice(r0, rEnd + 1),
-                                z: bathyZ.slice(r0, rEnd + 1),
-                                colorscale: rampFor(rowLevel[r0] / (M - 1))
-                            });
-                            r0 = rEnd;
+                    const facetColour = (z, snow) => {
+                        const zq = Math.round((z - bathyMin) / span * 128) / 128, sq = Math.round(snow * 8) / 8;
+                        const key = zq + ':' + sq;
+                        let col = colourCache.get(key);
+                        if (col) return col;
+                        const zz = bathyMin + zq * span, stops = makeStops(sq);
+                        col = stops[stops.length - 1][1];
+                        for (let q = 1; q < stops.length; q++) {
+                            if (zz <= stops[q][0]) { const [z0, c0] = stops[q - 1], [z1, c1] = stops[q]; col = z1 > z0 ? lerpHex(c0, c1, (zz - z0) / (z1 - z0)) : c1; break; }
                         }
-                    } else {
-                        traces.push({ ...surfBase, x: data.bathy_lon, y: data.bathy_lat, z: bathyZ, colorscale: rampFor(snowMin) });
-                    }
-
-                    const zSouth = bathyZ[0];
-                    const zNorth = bathyZ[yLen - 1];
-                    const zWest = bathyZ.map(row => row[0]);
-                    const zEast = bathyZ.map(row => row[xLen - 1]);
-
-                    const earthWallConfig = {
-                        type: 'surface', colorscale: [[0, earthColour], [1, earthColour]],
-                        showscale: false, hoverinfo: 'skip',
-                        lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
-                        ...noContours
+                        colourCache.set(key, col);
+                        return col;
                     };
 
-                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(baseZ), zSouth] });
-                    traces.push({ ...earthWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [zNorth, Array(xLen).fill(baseZ)] });
-                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: zWest.map(z => [baseZ, z]) });
-                    traces.push({ ...earthWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: zEast.map(z => [z, baseZ]) });
-                    traces.push({ ...earthWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[baseZ, baseZ], [baseZ, baseZ]] });
+                    // One mesh for seabed + walls + base: shared rim vertices so
+                    // the walls meet the seabed exactly (no overlapping slivers
+                    // to z-fight). Grid vertex (ix, iy) is index iy*xLen+ix; the
+                    // rim is copied down to baseZ for the walls.
+                    const G = { x: [], y: [], z: [], i: [], j: [], k: [], col: [] };
+                    for (let iy = 0; iy < yLen; iy++) {
+                        const snow = snowAt(bLat[iy]);
+                        for (let ix = 0; ix < xLen; ix++) { const z = bathyZ[iy][ix]; G.x.push(bLon[ix]); G.y.push(bLat[iy]); G.z.push(z); G.col.push(facetColour(z, snow)); }
+                    }
+                    const V = (ix, iy) => iy * xLen + ix;
+                    const face = (a, b, c) => { G.i.push(a); G.j.push(b); G.k.push(c); };
+                    for (let iy = 0; iy < yLen - 1; iy++) for (let ix = 0; ix < xLen - 1; ix++) {
+                        const v00 = V(ix, iy), v10 = V(ix + 1, iy), v01 = V(ix, iy + 1), v11 = V(ix + 1, iy + 1);
+                        // Split along alternating diagonals so ridges don't all lean one way.
+                        if ((ix + iy) % 2) { face(v00, v10, v11); face(v00, v11, v01); }
+                        else { face(v00, v10, v01); face(v10, v11, v01); }
+                    }
+                    // Rim (anticlockwise from the SW corner) and its copy at baseZ.
+                    const rim = [];
+                    for (let ix = 0; ix < xLen - 1; ix++) rim.push(V(ix, 0));
+                    for (let iy = 0; iy < yLen - 1; iy++) rim.push(V(xLen - 1, iy));
+                    for (let ix = xLen - 1; ix > 0; ix--) rim.push(V(ix, yLen - 1));
+                    for (let iy = yLen - 1; iy > 0; iy--) rim.push(V(0, iy));
+                    // Walls + base are the plain earth tone. They get their OWN
+                    // copy of the rim (same positions, earth colour) rather than
+                    // sharing the seabed's vertices, or the seabed colour (snow,
+                    // green) would blend down the wall face.
+                    const rimTop = rim.map(v => { G.x.push(G.x[v]); G.y.push(G.y[v]); G.z.push(G.z[v]); G.col.push(earthColour); return G.x.length - 1; });
+                    const rimBase = rim.map(v => { G.x.push(G.x[v]); G.y.push(G.y[v]); G.z.push(baseZ); G.col.push(earthColour); return G.x.length - 1; });
+                    for (let q = 0; q < rim.length; q++) {
+                        const r = (q + 1) % rim.length;
+                        face(rimTop[q], rimBase[q], rimBase[r]); face(rimTop[q], rimBase[r], rimTop[r]);
+                    }
+                    // Base: fan from the SW base corner over the base ring.
+                    for (let q = 1; q < rimBase.length - 1; q++) face(rimBase[0], rimBase[q + 1], rimBase[q]);
+
+                    // Smooth shading: the grid is already a smooth cubic upsample,
+                    // so smoothed normals give clean relief with no triangle
+                    // edges; flat normals outlined every facet.
+                    traces.push({
+                        x: G.x, y: G.y, z: G.z, i: G.i, j: G.j, k: G.k, vertexcolor: G.col,
+                        type: 'mesh3d', showscale: false, flatshading: false, hoverinfo: 'skip',
+                        lighting: { ambient: 0.65, diffuse: 0.75, specular: 0.05, roughness: 0.8, fresnel: 0.05 },
+                        name: 'Seabed'
+                    });
                 }
 
                 const waterWallConfig = {
@@ -424,7 +600,8 @@
                     colorscale: [[0, waterBottomColour], [1, waterTopColour]],
                     cmin: baseZ, cmax: 0,
                     opacity: waterOpacity, showscale: false, hoverinfo: 'skip',
-                    lighting: { ambient: 0.8, diffuse: 0.8, roughness: 0.9 },
+                    // Mostly flat tint: specular/fresnel on the panes reads as a reflective haze.
+                    lighting: { ambient: 0.9, diffuse: 0.35, specular: 0, roughness: 1, fresnel: 0 },
                     ...noContours
                 };
 
@@ -435,63 +612,561 @@
 
                 // Sea surface.
                 traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon1 + tiny], y: [lat0 - tiny, lat1 + tiny], z: [[0, 0], [0, 0]] });
-                traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(0), wZSouth] });
-                traces.push({ ...waterWallConfig, x: data.bathy_lon, y: [lat1, lat1 + tiny], z: [wZNorth, Array(xLen).fill(0)] });
-                traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: data.bathy_lat, z: wZWest.map(z => [0, z]) });
-                traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: data.bathy_lat, z: wZEast.map(z => [z, 0]) });
+                traces.push({ ...waterWallConfig, x: bLon, y: [lat0 - tiny, lat0], z: [Array(xLen).fill(0), wZSouth] });
+                traces.push({ ...waterWallConfig, x: bLon, y: [lat1, lat1 + tiny], z: [wZNorth, Array(xLen).fill(0)] });
+                traces.push({ ...waterWallConfig, x: [lon0 - tiny, lon0], y: bLat, z: wZWest.map(z => [0, z]) });
+                traces.push({ ...waterWallConfig, x: [lon1, lon1 + tiny], y: bLat, z: wZEast.map(z => [z, 0]) });
 
 
-
-                const hasTemp = data.temp && data.temp.length > 0;
-
-                traces.push({
-                    x: data.lon, y: data.lat, z: data.elevation,
-                    mode: 'lines',
-                    line: {
-                        color: hasTemp ? data.temp : data.elevation,
-                        colorscale: hasTemp ? [
-                            [0, '#313695'],
-                            [0.25, '#74add1'],
-                            [0.5, '#ffffbf'],
-                            [0.75, '#f46d43'],
-                            [1, '#a50026']
-                        ] : 'Portland',
-                        width: 5,
-                        reversescale: hasTemp ? false : true,
-                    },
-                    type: 'scatter3d', name: 'Glider', hoverinfo: 'skip'
-                });
 
                 const aspectX = distX / maxHoriz;
                 const aspectY = distY / maxHoriz;
                 const aspectZ = (distZ / maxHoriz) * vExag;
+
+                // Explicit axis ranges (rather than autorange) so the glider
+                // marker can convert between data units and scene units
+                // exactly - see sceneScale below.
+                const xRange = [lon0 - tiny, lon1 + tiny];
+                const yRange = [lat0 - tiny, lat1 + tiny];
+                // Headroom above the highest ground (or the surface) so nothing
+                // standing on it is clipped by the axis range: a glider pitched
+                // up at the surface (~0.8 of its length above its centre, mast
+                // included) or the tallest scenery on the highest land. Objects
+                // are sized in scene units, and scene→data scale (kz) itself
+                // depends on the range, so solve top = zTop0 + h·(top − baseZ)/aspectZ.
+                const zTop0 = showSeafloor ? Math.max(0, ...bathyZ.flat()) : 0;
+                const hTop = Math.max(gliderLength * 0.8, fx.scenery ? Scenery.maxHeight() : 0);
+                const zRange = [baseZ, hTop < aspectZ * 0.5 ? (zTop0 - hTop * baseZ / aspectZ) / (1 - hTop / aspectZ) : zTop0 + hTop * (zTop0 - baseZ) / aspectZ];
+                // Data units per scene unit along each axis. A shape that is
+                // `r` scene units across in every direction looks round on
+                // screen regardless of the (very anisotropic) data scaling.
+                sceneScale = {
+                    kx: (xRange[1] - xRange[0]) / aspectX,
+                    ky: (yRange[1] - yRange[0]) / aspectY,
+                    kz: (zRange[1] - zRange[0]) / aspectZ,
+                };
+                sceneBox = { xRange, yRange, zRange, aspectX, aspectY, aspectZ };
+                // Keep the pivot on the glider (ranges/aspect may have changed on a
+                // style toggle, so recompute rather than trusting the old value).
+                { const c = centerFor(data, posIdx); currentEye = { x: currentEye.x + c.x - currentCenter.x, y: currentEye.y + c.y - currentCenter.y, z: currentEye.z + c.z - currentCenter.z }; currentCenter = c; }
+
+                const n = data.lon.length;
+
+                // The dive track, split at the slider: where the glider has
+                // been (bright, thick) and where it still has to go (thin, dark).
+                const tk = trackGeometry(data, posIdx);
+                aheadTraceIdx = traces.length;
+                traces.push({
+                    ...tk.ahead, mode: 'lines', line: { color: trackAheadColour, width: 2 },
+                    type: 'scatter3d', name: 'Track ahead', hoverinfo: 'skip'
+                });
+                pastTraceIdx = traces.length;
+                traces.push({
+                    ...tk.past, mode: 'lines', line: { color: trackColour, width: 5 },
+                    type: 'scatter3d', name: 'Track so far', hoverinfo: 'skip'
+                });
+
+                // Start / end buoys on the surface (green = start, red = end),
+                // merged into one static mesh. Falls back to diamond markers if
+                // the models didn't load.
+                if (n > 0 && buoyModels) {
+                    // Offset each buoy sideways (perpendicular to the local track
+                    // heading, in scene units) so it sits beside the glider
+                    // rather than on top of it at the first/last frame.
+                    // The heading window grows until the track has actually moved
+                    // sideways on screen: positions are interpolated between GPS
+                    // fixes, so the first few samples of a dive often share one
+                    // lon/lat and would give no direction at all (buoy on the
+                    // glider). Falls back to "east" if the whole track is a point.
+                    const S = sceneScale;
+                    const beside = (from, dir) => {
+                        const [hx, hy] = horizHeading(data, from, dir, gliderLength);
+                        return [-hy * buoyOffset * S.kx, hx * buoyOffset * S.ky];   // port side, data units
+                    };
+                    const o0 = beside(0, +1), o1 = beside(n - 1, -1);
+                    const parts = [[buoyModels.start, data.lon[0] + o0[0], data.lat[0] + o0[1]], [buoyModels.end, data.lon[n - 1] + o1[0], data.lat[n - 1] + o1[1]]];
+                    const B = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [] }, colors = [];
+                    for (const [M, lon, lat] of parts) {
+                        const g = uprightGeometry(M, buoyLength, lon, lat, 0), base = B.x.length;
+                        B.x.push(...g.x); B.y.push(...g.y); B.z.push(...g.z);
+                        B.i.push(...M.i.map(v => v + base)); B.j.push(...M.j.map(v => v + base)); B.k.push(...M.k.map(v => v + base));
+                        // Re-index this model's colours into the merged palette.
+                        const map = M.colorscale.map(([, c]) => { if (!colors.includes(c)) colors.push(c); return colors.indexOf(c); });
+                        B.cell.push(...M.cell.map(ci => map[ci]));
+                    }
+                    const cmax = Math.max(colors.length - 1, 1);
+                    traces.push({
+                        ...B, type: 'mesh3d', intensity: B.cell, intensitymode: 'cell',
+                        cmin: 0, cmax, colorscale: colors.map((c, q) => [q / cmax, c]), showscale: false,
+                        flatshading: true, lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
+                        name: 'Start/End', hoverinfo: 'skip'
+                    });
+                } else if (n > 0) {
+                    traces.push({
+                        x: [data.lon[0], data.lon[n - 1]], y: [data.lat[0], data.lat[n - 1]], z: [0, 0],
+                        mode: 'markers',
+                        marker: { size: 5, color: ['#2E9E4F', '#D32F2F'], symbol: 'diamond', line: { color: '#ffffff', width: 1 } },
+                        type: 'scatter3d', name: 'Start/End', hoverinfo: 'skip'
+                    });
+                }
+
+                // The glider at the current slider position. Its trace index is
+                // remembered so playback can update it in place without a
+                // full re-render. Low-poly look: one flat-shaded mesh, hull +
+                // fins coloured per triangle via a discrete colourscale, soft
+                // matte lighting.
+                const body = gliderGeometry(data, posIdx);
+                gliderTraceIdx = traces.length;
+                traces.push({
+                    ...body, i: gliderModel.i, j: gliderModel.j, k: gliderModel.k,
+                    type: 'mesh3d', intensity: gliderModel.cell, intensitymode: 'cell',
+                    cmin: 0, cmax: gliderModel.cmax, colorscale: gliderModel.colorscale, showscale: false,
+                    flatshading: true,
+                    lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
+                    name: 'Glider', hoverinfo: 'skip'
+                });
+
+                // Argo floats currently at the surface (may be none → hidden).
+                if (argoModel) {
+                    const ag = argoGeometry(data, playClockMs());
+                    argoShownKey = ag ? ag.key : '';
+                    argoTraceIdx = traces.length;
+                    traces.push({
+                        type: 'mesh3d', visible: !!ag,
+                        x: ag ? ag.x : [0], y: ag ? ag.y : [0], z: ag ? ag.z : [0],
+                        i: ag ? ag.i : [0], j: ag ? ag.j : [0], k: ag ? ag.k : [0],
+                        intensity: ag ? ag.cell : [0], intensitymode: 'cell',
+                        cmin: 0, cmax: argoModel.cmax, colorscale: argoModel.colorscale, showscale: false,
+                        flatshading: true, lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
+                        name: 'Argo floats', hoverinfo: 'skip'
+                    });
+                }
+
+                // Decorative scenery: stands on the drawn seabed/land, or (when
+                // the seafloor is out of the focus range) only floats in the water.
+                sceneryTraceIdx = -1;
+                if (fx.scenery) {
+                    // Same latitude→snow blend the land colouring uses (0 when land isn't coloured).
+                    const snowAt = lat => {
+                        if (!fx.greenLand) return 0;
+                        const c = Math.max(0, Math.min(1, (Math.abs(lat) - snowLatCutoff) / (snowBlendKm / 111.111) + 0.5));
+                        return c * c * (3 - 2 * c);
+                    };
+                    const sc = Scenery.build({ ...data, bathy_lon: bLon, bathy_lat: bLat }, showSeafloor ? bathyZ : null, sceneScale, fileId, snowAt, baseZ);
+                    if (sc) { sceneryTraceIdx = traces.length; traces.push(sc); }
+                }
 
                 const noAxis = { showgrid: false, zeroline: false, showline: false, showticklabels: false, showbackground: false, title: '', visible: false };
                 const layout = {
                     hovermode: false,
                     margin: { l: 0, r: 0, b: 0, t: 0 },
                     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-                    scene: { xaxis: noAxis, yaxis: noAxis, zaxis: noAxis, aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { ...currentEye } } },
+                    scene: {
+                        xaxis: { ...noAxis, range: xRange, autorange: false },
+                        yaxis: { ...noAxis, range: yRange, autorange: false },
+                        zaxis: { ...noAxis, range: zRange, autorange: false },
+                        aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { ...currentEye }, center: { ...currentCenter } }
+                    },
                     showlegend: false
                 };
                 return { traces, layout };
             }
 
-            fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`)
-                .then(response => response.json())
-                .then(data => {
+            // ── Glider marker geometry ───────────────────────────────────
+            // The vehicle mesh (static/3d_view/models/<kind>.json: metres, +x nose,
+            // y across the wings, +z up) is scaled to a fixed on-screen size
+            // and oriented along the track. Everything is done in "scene
+            // units" (via sceneScale) so the model keeps its proportions no
+            // matter how stretched the data axes are, then converted back to
+            // lon/lat/depth for Plotly. Only x/y/z change per frame; the
+            // i/j/k index arrays are reused untouched.
+            const gliderLength = 0.03;     // scene units nose-to-tail (scene is ~1 unit across)
+
+            // Track split at index i; both halves share the current point so
+            // there's no gap. The line itself is drawn from a decimated copy
+            // (trackLineMax points) - re-uploading two 20k-point lines every
+            // half second is what used to hitch playback - with the exact
+            // current sample spliced in so the split lands on the glider.
+            let trackLine = null;   // { idx: [sample indices], x, y, z }
+            function trackGeometry(data, i) {
+                if (!trackLine) {
+                    const n = data.lon.length, step = Math.max(1, Math.ceil(n / trackLineMax)), idx = [];
+                    for (let q = 0; q < n; q += step) idx.push(q);
+                    if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+                    trackLine = { idx, x: idx.map(q => data.lon[q]), y: idx.map(q => data.lat[q]), z: idx.map(q => data.elevation[q]) };
+                }
+                const L = trackLine;
+                // First decimated point strictly after i.
+                let lo = 0, hi = L.idx.length;
+                while (lo < hi) { const mid = (lo + hi) >> 1; if (L.idx[mid] <= i) lo = mid + 1; else hi = mid; }
+                const cx = data.lon[i], cy = data.lat[i], cz = data.elevation[i];
+                return {
+                    past:  { x: L.x.slice(0, lo).concat(cx), y: L.y.slice(0, lo).concat(cy), z: L.z.slice(0, lo).concat(cz) },
+                    ahead: { x: [cx].concat(L.x.slice(lo)),  y: [cy].concat(L.y.slice(lo)),  z: [cz].concat(L.z.slice(lo)) },
+                };
+            }
+
+            // Track point at fractional index f (linear between samples).
+            function sample(data, f) {
+                const n = data.lon.length;
+                f = Math.max(0, Math.min(n - 1, f));
+                const i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1), t = f - i0;
+                return [data.lon[i0] + (data.lon[i1] - data.lon[i0]) * t,
+                        data.lat[i0] + (data.lat[i1] - data.lat[i0]) * t,
+                        data.elevation[i0] + (data.elevation[i1] - data.elevation[i0]) * t];
+            }
+
+            // Interpolated value of a per-point array with nulls (null if either
+            // neighbour is missing).
+            function sampleVar(arr, f) {
+                if (!arr) return null;
+                const n = arr.length;
+                f = Math.max(0, Math.min(n - 1, f));
+                const i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1), t = f - i0;
+                const a = arr[i0], b = arr[i1];
+                if (a == null || b == null) return null;
+                return a + (b - a) * t;
+            }
+
+            // Horizontal direction of travel at sample `from` (unit vector, scene
+            // units), looking `dir` (+1 forward / -1 back) along the track until
+            // the path has moved at least `minMove` on screen. Positions are
+            // interpolated between GPS fixes, so a short window at the start of
+            // a dive often has no horizontal movement at all. Falls back to east.
+            function horizHeading(data, from, dir, minMove) {
+                const S = sceneScale, n = data.lon.length;
+                let hx = 0, hy = 0, j = from;
+                for (let step = 0; step < n; step++) {
+                    j += dir;
+                    if (j < 0 || j >= n) break;
+                    hx = (data.lon[j] - data.lon[from]) / S.kx; hy = (data.lat[j] - data.lat[from]) / S.ky;
+                    if (Math.hypot(hx, hy) >= minMove) break;
+                }
+                if (dir < 0) { hx = -hx; hy = -hy; }
+                const hl = Math.hypot(hx, hy);
+                return hl > 1e-9 ? [hx / hl, hy / hl] : [1, 0];
+            }
+
+            // Broad direction of travel around fractional index f, for the camera:
+            // horizontal displacement between points far enough either side that
+            // the track has really progressed (camHeadingMove on screen). Returns
+            // a unit [hx, hy] in scene units, or null when the track loops back
+            // on itself and there is no clear direction (camera keeps its azimuth).
+            function travelHeading(data, f) {
+                const S = sceneScale, n = data.lon.length;
+                const P = g => { const p = sample(data, g); return [p[0] / S.kx, p[1] / S.ky]; };
+                const c = P(f);
+                let W = Math.max(2, n / 400);
+                for (let it = 0; it < 12; it++, W *= 1.8) {
+                    if (W > n / 3) break;
+                    const a = P(f - W), b = P(f + W);
+                    const hx = b[0] - a[0], hy = b[1] - a[1], hl = Math.hypot(hx, hy);
+                    if (hl >= camHeadingMove) return [hx / hl, hy / hl];
+                    // Straddling the ends shrinks one side; still fine - only
+                    // the displacement magnitude matters.
+                }
+                return null;
+            }
+
+            // Model placement: vertices (metres, +z up) scaled to `length` scene
+            // units and dropped upright at data point (lon, lat, z). Returns the
+            // x/y/z arrays in data units.
+            function uprightGeometry(M, length, lon, lat, z) {
+                const S = sceneScale, k = length / M.length;
+                const c = [lon / S.kx, lat / S.ky, z / S.kz];
+                const m = M.x.length, xs = new Array(m), ys = new Array(m), zs = new Array(m);
+                for (let q = 0; q < m; q++) {
+                    xs[q] = (c[0] + M.x[q] * k) * S.kx;
+                    ys[q] = (c[1] + M.y[q] * k) * S.ky;
+                    zs[q] = (c[2] + M.z[q] * k) * S.kz;
+                }
+                return { x: xs, y: ys, z: zs };
+            }
+
+            // Synthetic Argo state at clock `ms` for one float's sorted
+            // profiles: {lon, lat, depth (m, positive down)} or null when the
+            // float isn't yet "known" (before its first profile's ascent).
+            function argoState(profs, ms) {
+                const H = 3600e3;
+                const first = profs[0], last = profs[profs.length - 1];
+                if (ms < first.ms - ARGO.leadH * H) return null;
+                // Ascent into the first known profile (park → deep dip → up).
+                if (ms < first.ms) {
+                    const t = (first.ms - ms) / H;   // hours to go
+                    let depth;
+                    if (t > ARGO.deepStartH) depth = ARGO.parkM;
+                    else if (t > ARGO.deepEndH) depth = ARGO.parkM + (ARGO.profileM - ARGO.parkM) * (ARGO.deepStartH - t) / (ARGO.deepStartH - ARGO.deepEndH);
+                    else depth = ARGO.profileM * t / ARGO.deepEndH;
+                    return { lon: first.lon, lat: first.lat, depth };
+                }
+                // Surfacing at or before `ms`, and the next one (if any).
+                let lo = 0, hi = profs.length - 1;
+                while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (profs[mid].ms <= ms) lo = mid; else hi = mid; }
+                const a = profs[lo], b = profs[hi].ms > ms ? profs[hi] : null;
+                const since = (ms - a.ms) / H;
+                if (!b) {
+                    // Last known profile: surface stint, descend, park for good.
+                    let depth;
+                    if (since < ARGO.surfaceH) depth = 0;
+                    else if (since < ARGO.surfaceH + ARGO.descendH) depth = ARGO.parkM * (since - ARGO.surfaceH) / ARGO.descendH;
+                    else depth = ARGO.parkM;
+                    return { lon: a.lon, lat: a.lat, depth };
+                }
+                // One cycle a → b as a piecewise-linear depth keyframe track.
+                // Nominal phases need ~19 h; a shorter cycle compresses every
+                // phase proportionally so the keyframes stay ordered and the
+                // depth stays continuous (no overlapping "surface" and "ascent"
+                // rules fighting each other).
+                const T = (b.ms - a.ms) / H;
+                const need = ARGO.surfaceH + ARGO.descendH + ARGO.deepStartH;
+                const k = T < need ? T / need : 1;
+                const keys = [
+                    [0, 0],
+                    [ARGO.surfaceH * k, 0],
+                    [(ARGO.surfaceH + ARGO.descendH) * k, ARGO.parkM],
+                    [T - ARGO.deepStartH * k, ARGO.parkM],
+                    [T - ARGO.deepEndH * k, ARGO.profileM],
+                    [T, 0],
+                ];
+                let depth = 0;
+                for (let q = 1; q < keys.length; q++) {
+                    if (since <= keys[q][0]) {
+                        const [t0, d0] = keys[q - 1], [t1, d1] = keys[q];
+                        depth = t1 > t0 ? d0 + (d1 - d0) * (since - t0) / (t1 - t0) : d1;
+                        break;
+                    }
+                }
+                const u = Math.max(0, Math.min(1, (ms - a.ms) / (b.ms - a.ms)));   // drift fraction
+                return { lon: a.lon + (b.lon - a.lon) * u, lat: a.lat + (b.lat - a.lat) * u, depth };
+            }
+
+            // Seabed depth (m, positive down; 0 over land/no data) at lon/lat
+            // from the bathymetry grid (nearest cell). Used to keep synthetic
+            // float depths above the seafloor in shallow water.
+            function seabedDepthAt(data, lon, lat) {
+                const bx = data.bathy_lon, by = data.bathy_lat, bz = data.bathy_z;
+                if (!bx || !by || !bz || bx.length < 2 || by.length < 2) return Infinity;
+                const ix = Math.max(0, Math.min(bx.length - 1, Math.round((lon - bx[0]) / (bx[bx.length - 1] - bx[0]) * (bx.length - 1))));
+                const iy = Math.max(0, Math.min(by.length - 1, Math.round((lat - by[0]) / (by[by.length - 1] - by[0]) * (by.length - 1))));
+                const z = bz[iy] && bz[iy][ix];
+                return (z == null || !isFinite(z)) ? Infinity : Math.max(0, -z);
+            }
+
+            // All Argo floats in play at clock `ms`: one merged mesh (a copy of
+            // the model per float) at each float's synthetic position. `key`
+            // identifies the set of floats (not their positions) so the caller
+            // can tell a membership change from a mere move. Null when empty.
+            function argoGeometry(data, ms) {
+                if (!argoModel || !argoFloats.length || ms == null || !sceneBox) return null;
+                // Keep submerged floats inside the drawn box: the scene floor is
+                // set by the glider's dives, so a float parked at 1000 m under a
+                // 200 m glider sits just above the floor instead of vanishing.
+                const floorZ = sceneBox.zRange[0] * 0.9;
+                const out = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [], key: '', count: 0 };
+                const shown = [];
+                for (const fl of argoFloats) {
+                    const st = argoState(fl.profs, ms);
+                    if (!st) continue;
+                    shown.push(fl.wmo);
+                    // Never below the seabed (keep a little clearance so the model
+                    // doesn't intersect the surface mesh) nor below the scene floor.
+                    const seabed = seabedDepthAt(data, st.lon, st.lat);
+                    const clearance = argoLength * 0.6 * sceneScale.kz;   // data units (m) ≈ the model's half-height on screen
+                    const depth = Math.min(st.depth, Math.max(0, seabed - clearance));
+                    const g = uprightGeometry(argoModel, argoLength, st.lon, st.lat, Math.max(floorZ, -depth));
+                    const base = out.x.length;
+                    out.x.push(...g.x); out.y.push(...g.y); out.z.push(...g.z);
+                    out.i.push(...argoModel.i.map(v => v + base)); out.j.push(...argoModel.j.map(v => v + base)); out.k.push(...argoModel.k.map(v => v + base));
+                    out.cell.push(...argoModel.cell);
+                }
+                if (!shown.length) return null;
+                out.key = shown.join('|'); out.count = shown.length;
+                return out;
+            }
+
+            function gliderGeometry(data, f) {
+                const n = data.lon.length;
+                const S = sceneScale;
+                const P = g => { const p = sample(data, g); return [p[0] / S.kx, p[1] / S.ky, p[2] / S.kz]; };
+                const c = P(f);
+                // Heading + pitch: from a few samples behind to a few ahead so
+                // the model doesn't twitch on every sample.
+                const w = Math.max(1, Math.min(8, Math.floor(n / 200)));
+                const a0 = P(f - w), a1 = P(f + w);
+                let fw = [a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]];
+                // Level out over the first/last few samples: at the very ends
+                // the heading window is one-sided and often points straight
+                // down the first dive, which looks wrong on a parked glider.
+                const edge = Math.max(2, 2 * w);
+                const level = Math.min(1, Math.min(f, n - 1 - f) / edge);   // 0 at the ends → 1 inside
+                fw[2] *= level;
+                // If the local window has no real horizontal movement (interpolated
+                // positions during a dive), take the heading from a longer look
+                // along the track - the same one the start/end buoys use - so the
+                // parked glider and its buoy agree on which way is "forward".
+                if (Math.hypot(fw[0], fw[1]) < gliderLength * 0.25) {
+                    const near = Math.round(f), dir = near < n / 2 ? +1 : -1;
+                    const [hx, hy] = horizHeading(data, near, dir, gliderLength);
+                    const vz = fw[2];
+                    fw = [hx * gliderLength, hy * gliderLength, vz];
+                }
+                let len = Math.hypot(...fw);
+                if (!(len > 1e-9)) { fw = [1, 0, 0]; len = 1; }
+                fw = fw.map(v => v / len);
+
+                // Attitude. With measured pitch/roll in the file: heading from
+                // the track, pitch and roll from the sensors (true angles, so
+                // the model won't lie along the vertically-exaggerated track).
+                // Without: tangent to the drawn track, wings level.
+                let pitchDeg = sampleVar(data.pitch, f), rollDeg = sampleVar(data.roll, f);
+                if (pitchDeg != null) { pitchDeg *= level; rollDeg = (rollDeg || 0) * level; }
+                let sd, up;
+                if (pitchDeg != null) {
+                    const hl = Math.hypot(fw[0], fw[1]);
+                    const h = hl > 1e-9 ? [fw[0] / hl, fw[1] / hl, 0] : [1, 0, 0];   // horizontal heading
+                    const pr = pitchDeg * Math.PI / 180, cp = Math.cos(pr), sp = Math.sin(pr);
+                    fw = [h[0] * cp, h[1] * cp, sp];
+                    const s0 = [-h[1], h[0], 0];                                       // port side, level
+                    const u0 = [fw[1] * s0[2] - fw[2] * s0[1], fw[2] * s0[0] - fw[0] * s0[2], fw[0] * s0[1] - fw[1] * s0[0]];
+                    const rr = (rollDeg || 0) * Math.PI / 180, cr = Math.cos(rr), sr = Math.sin(rr);
+                    sd = [s0[0] * cr + u0[0] * sr, s0[1] * cr + u0[1] * sr, s0[2] * cr + u0[2] * sr];
+                    up = [u0[0] * cr - s0[0] * sr, u0[1] * cr - s0[1] * sr, u0[2] * cr - s0[2] * sr];
+                } else {
+                    // Wings stay level: side = up × forward (horizontal), up = forward × side.
+                    const ref = Math.abs(fw[2]) < 0.99 ? [0, 0, 1] : [0, 1, 0];
+                    sd = [ref[1] * fw[2] - ref[2] * fw[1], ref[2] * fw[0] - ref[0] * fw[2], ref[0] * fw[1] - ref[1] * fw[0]];
+                    const sl = Math.hypot(...sd); sd = sd.map(v => v / sl);
+                    up = [fw[1] * sd[2] - fw[2] * sd[1], fw[2] * sd[0] - fw[0] * sd[2], fw[0] * sd[1] - fw[1] * sd[0]];
+                }
+
+                const k = gliderLength / gliderModel.length;   // metres -> scene units
+                const M = gliderModel, m = M.x.length, xs = new Array(m), ys = new Array(m), zs = new Array(m);
+                for (let q = 0; q < m; q++) {
+                    const mx = M.x[q] * k, my = M.y[q] * k, mz = M.z[q] * k;
+                    xs[q] = (c[0] + fw[0] * mx + sd[0] * my + up[0] * mz) * S.kx;
+                    ys[q] = (c[1] + fw[1] * mx + sd[1] * my + up[1] * mz) * S.ky;
+                    zs[q] = (c[2] + fw[2] * mx + sd[2] * my + up[2] * mz) * S.kz;
+                }
+                return { x: xs, y: ys, z: zs };
+            }
+
+            // Which vehicle to draw: the file's detected platform kind, with the
+            // same name heuristics as the file list as a fallback; Slocum if unknown.
+            const MODEL_KINDS = ['slocum', 'seaglider', 'alr'];
+            function platformKindFor(kind, name) {
+                if (kind && MODEL_KINDS.includes(kind)) return kind;
+                const n = String(name || '').toLowerCase();
+                if (/^alr[_\-\d]/.test(n)) return 'alr';
+                if (/^(sg\d|seaglider)/.test(n)) return 'seaglider';
+                if (/slocum/.test(n)) return 'slocum';
+                return '';
+            }
+            const modelPromise = fetch('/api/files').then(r => r.json()).catch(() => ({ files: [] }))
+                .then(({ files }) => {
+                    const rec = (files || []).find(f => f.id === fileId) || {};
+                    return platformKindFor(rec.platform_kind, rec.name) || 'slocum';
+                })
+                .then(kind => loadModel(kind));
+            // Argo float model: optional, never blocks the scene.
+            const argoModelPromise = loadModel('argo').catch(() => null);
+            // Start/end buoys: loaded with the scene (tiny files); optional.
+            const buoyPromise = Promise.all([loadModel('buoy_green'), loadModel('buoy_red')])
+                .then(([start, end]) => ({ start, end })).catch(() => null);
+
+            // Scenery models: optional, never block the scene; redraw once they
+            // arrive if the toggle is already on.
+            Scenery.load(loadModel).then(() => { if (fx.scenery && rerender) rerender(); }).catch(() => {});
+
+            // `name` is a vehicle/object in static/3d_view/models, or a full
+            // URL (starts with '/') for models kept elsewhere (scenery).
+            function loadModel(name) {
+                const url = name.startsWith('/') ? name : `/static/3d_view/models/${name}.json`;
+                return fetch(url).then(r => { if (!r.ok) throw new Error(url); return r.json(); }).then(parts => {
+                    // Merge hull + fins into one mesh; each triangle carries the
+                    // index of its part's colour (drawn with intensitymode:'cell').
+                    const M = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [] };
+                    const colors = [];
+                    for (const p of Object.values(parts)) {
+                        if (!colors.includes(p.color)) colors.push(p.color);
+                        const ci = colors.indexOf(p.color), base = M.x.length;
+                        M.x.push(...p.x); M.y.push(...p.y); M.z.push(...p.z);
+                        M.i.push(...p.i.map(v => v + base)); M.j.push(...p.j.map(v => v + base)); M.k.push(...p.k.map(v => v + base));
+                        for (let q = 0; q < p.i.length; q++) M.cell.push(ci);
+                    }
+                    M.cmax = Math.max(colors.length - 1, 1);
+                    M.colorscale = colors.map((c, q) => [q / M.cmax, c]);
+                    if (colors.length === 1) M.colorscale.push([1, colors[0]]);
+                    // Nose-to-tail length: from the hull if the model has one
+                    // (vehicles), else from every vertex (buoys, moorings, ships).
+                    const hx = parts.hull ? parts.hull.x : M.x;
+                    M.length = Math.max(...hx) - Math.min(...hx);
+                    if (!parts.hull) M.length = Math.max(...M.z) - Math.min(...M.z);   // upright objects: height
+                    return M;
+                });
+            }
+
+            // Playback clock value (epoch ms) at the current position, or null
+            // when the file has no times. Set once the slider is wired up.
+            let playClockMs = () => null;
+
+            Promise.all([fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`).then(r => r.json()), modelPromise, buoyPromise])
+                .then(([data, model, buoys]) => {
                     if (data.error) throw new Error(data.error);
+                    gliderModel = model;
+                    buoyModels = buoys;
+
+                    // Argo floats that surfaced inside the scene box during the
+                    // deployment. Arrives after the first draw; the scene is
+                    // rebuilt once (camera kept) when it does.
+                    if (data.time_ms) {
+                        const ts = data.time_ms.filter(v => v != null && isFinite(v));
+                        if (ts.length) {
+                            const b = data.bounds, q = new URLSearchParams({
+                                min_lat: b.min_lat, max_lat: b.max_lat, min_lon: b.min_lon, max_lon: b.max_lon,
+                                t0: Math.min(...ts) - argoWindowHours * 3600e3, t1: Math.max(...ts) + argoWindowHours * 3600e3,
+                            });
+                            Promise.all([fetch('/api/argo/profiles?' + q).then(r => r.json()), argoModelPromise])
+                                .then(([res, m]) => {
+                                    if (!m || !res || !res.profiles || !res.profiles.length) return;
+                                    argoModel = m;
+                                    const byWmo = new Map();
+                                    for (const r of res.profiles) {
+                                        if (!byWmo.has(r[0])) byWmo.set(r[0], []);
+                                        byWmo.get(r[0]).push({ lat: r[1], lon: r[2], ms: r[3] });
+                                    }
+                                    // The index lists some profiles twice (real-time + delayed-mode
+                                    // files, descending + ascending halves); collapse anything within
+                                    // a few hours of the previous one or the cycle logic sees a
+                                    // zero-length cycle and the float snaps.
+                                    argoFloats = [...byWmo].map(([wmo, profs]) => {
+                                        profs.sort((a, b) => a.ms - b.ms);
+                                        const out = [];
+                                        for (const p of profs) if (!out.length || p.ms - out[out.length - 1].ms > 3 * 3600e3) out.push(p);
+                                        return { wmo, profs: out };
+                                    });
+                                    if (rerender) rerender();
+                                })
+                                .catch(() => {});
+                        }
+                    }
 
                     const config = { displayModeBar: false, responsive: true };
-                    const first = buildScene(data);
+                    let first = buildScene(data);
+                    // Open the view already behind the glider at follow distance,
+                    // looking the way it's about to go, instead of the generic
+                    // corner view (which the follow camera would then have to
+                    // swing all the way round from).
+                    {
+                        const hd = travelHeading(data, posIdx);
+                        if (hd) {
+                            currentEye = { x: currentCenter.x - hd[0] * followDist, y: currentCenter.y - hd[1] * followDist, z: currentEye.z };
+                            first = buildScene(data);
+                        }
+                    }
 
                     // Re-render in place on a style toggle, keeping the camera.
                     rerender = () => {
-                        const r = Math.hypot(currentEye.x, currentEye.y, currentEye.z);
-                        if (r > eyeCap()) {
-                            const k = eyeCap() / r;
-                            currentEye = { x: currentEye.x * k, y: currentEye.y * k, z: currentEye.z * k };
-                        }
+                        clampEye();
                         const scene = buildScene(data);
                         Plotly.react('plot3d', scene.traces, scene.layout, config).then(tightenClipPlanes);
                     };
@@ -508,92 +1183,286 @@
 
                         const plotDiv = document.getElementById('plot3d');
 
-                        let lastInteractionTime = 0;
-                        let paused = false;   // hard pause toggled by a click
+                        // ── Position slider ──────────────────────────────
+                        const posSlider = document.getElementById('posSlider');
+                        const posPlay = document.getElementById('posPlay');
+                        const posReadout = document.getElementById('posReadout');
+                        const nPts = data.lon.length;
+                        posSlider.max = String(Math.max(0, nPts - 1));
+                        posSlider.value = '0';
 
-                        const resetIdle = () => { lastInteractionTime = Date.now(); };
+                        const fmtTime = ms => {
+                            if (ms == null || !isFinite(ms)) return '';
+                            const iso = new Date(ms).toISOString();   // epoch-ms -> always UTC
+                            return iso.slice(0, 10) + ' ' + iso.slice(11, 16) + ' UTC';
+                        };
+                        const updateReadout = () => {
+                            const depth = Math.max(0, -data.elevation[posIdx]);
+                            const t = data.time_ms ? fmtTime(data.time_ms[posIdx]) : '';
+                            const p = data.pitch ? data.pitch[posIdx] : null, r = data.roll ? data.roll[posIdx] : null;
+                            const att = (p != null ? ' · pitch ' + p.toFixed(0) + '°' : '') + (r != null ? ' · roll ' + r.toFixed(0) + '°' : '');
+                            const ag = argoFloats.length && playClockMs() != null ? argoFloats.filter(fl => argoState(fl.profs, playClockMs())).length : 0;
+                            posReadout.innerHTML = (t ? t + '<br>' : '') + '<b>' + depth.toFixed(0) + ' m</b>' + att + (ag ? ' · ' + ag + ' Argo' : '');
+                        };
+                        // Data updates (mesh / track split) each force a full
+                        // Plotly replot, so during playback they run at a throttled
+                        // cadence. The camera goes through relayout alone, which is
+                        // just a viewport change - cheap enough for every frame.
+                        const pushCamera = () => Plotly.relayout('plot3d',
+                            { 'scene.camera.eye': { ...currentEye }, 'scene.camera.center': { ...currentCenter } });
+                        // Fast path: hand new x/y/z straight to the trace's WebGL
+                        // wrapper (what Plotly.restyle ends up doing) without the
+                        // replot around it, which is what stalls the frame. Same
+                        // reach-into-internals as tightenClipPlanes; falls back to a
+                        // normal restyle if the internals aren't where we expect.
+                        const fastXYZ = (indices, upd) => {
+                            try {
+                                const scene = plotDiv._fullLayout.scene._scene;
+                                indices.forEach((ti, q) => {
+                                    const ft = plotDiv._fullData[ti], w = scene.traces[ft.uid];
+                                    if (!w || typeof w.update !== 'function') throw new Error('no wrapper');
+                                    const patch = { x: upd.x[q], y: upd.y[q], z: upd.z[q] };
+                                    Object.assign(plotDiv.data[ti], patch); Object.assign(ft, patch);
+                                    w.update(ft);
+                                });
+                                const gl = scene.glplot;
+                                if (typeof gl.redraw === 'function') gl.redraw(); else gl.dirty = true;
+                            } catch (_) {
+                                Plotly.restyle('plot3d', upd, indices);
+                            }
+                        };
+                        const pushGlider = (f) => {
+                            if (gliderTraceIdx < 0) return;
+                            const b = gliderGeometry(data, f);
+                            fastXYZ([gliderTraceIdx], { x: [b.x], y: [b.y], z: [b.z] });
+                            updateReadout();
+                        };
+                        const pushTrack = () => {
+                            if (pastTraceIdx < 0) return;
+                            const t = trackGeometry(data, posIdx);
+                            fastXYZ([pastTraceIdx, aheadTraceIdx], { x: [t.past.x, t.ahead.x], y: [t.past.y, t.ahead.y], z: [t.past.z, t.ahead.z] });
+                        };
+                        // Argo floats: only touch the trace when the visible set
+                        // changes (they don't move between surfacings). Showing /
+                        // hiding goes through a normal restyle (rare); a change of
+                        // members while visible takes the fast path.
+                        const pushArgo = () => {
+                            if (argoTraceIdx < 0) return;
+                            const ag = argoGeometry(data, playClockMs());
+                            const key = ag ? ag.key : '';
+                            const wasShown = !!argoShownKey;
+                            const membersChanged = key !== argoShownKey;
+                            argoShownKey = key;
+                            if (!ag) { if (wasShown) Plotly.restyle('plot3d', { visible: false }, [argoTraceIdx]); return; }
+                            const patch = { x: ag.x, y: ag.y, z: ag.z, i: ag.i, j: ag.j, k: ag.k, intensity: ag.cell };
+                            if (!wasShown || membersChanged) { Plotly.restyle('plot3d', { ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, [v]])), visible: true }, [argoTraceIdx]); return; }
+                            try {
+                                const scene = plotDiv._fullLayout.scene._scene;
+                                const ft = plotDiv._fullData[argoTraceIdx], w = scene.traces[ft.uid];
+                                Object.assign(plotDiv.data[argoTraceIdx], patch); Object.assign(ft, patch);
+                                w.update(ft);
+                            } catch (_) {
+                                Plotly.restyle('plot3d', Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, [v]])), [argoTraceIdx]);
+                            }
+                        };
+                        // Scenery sway (underwater plants only), wall-clock driven.
+                        const pushScenery = (t) => {
+                            if (sceneryTraceIdx < 0) return;
+                            const s = Scenery.sway(t / 1000);
+                            if (s) fastXYZ([sceneryTraceIdx], { x: [s.x], y: [s.y], z: [s.z] });
+                        };
+                        // Slider scrub: snap the camera to the glider and redraw everything.
+                        let posRaf = 0;
+                        const setPos = (i) => {
+                            posIdx = Math.max(0, Math.min(nPts - 1, i | 0));
+                            posSlider.value = String(posIdx);
+                            if (!posRaf) posRaf = requestAnimationFrame(() => {
+                                posRaf = 0;
+                                posFloat = posIdx;
+                                lookAtIdx(data, posIdx);
+                                pushGlider(posIdx); pushArgo(); pushTrack(); pushCamera();
+                            });
+                        };
+                        posSlider.addEventListener('input', () => setPos(+posSlider.value));
+
+                        // ── Playback ─────────────────────────────────────
+                        // One rAF loop. Each lap: the glider travels the track while
+                        // the camera orbits it; at the end the glider parks while the
+                        // orbit completes its 360°, then it all starts again.
+                        // The camera centre chases the glider through a low-pass
+                        // filter (cameraTau) so GPS scatter never reaches the view.
+                        // A manual rotate/zoom holds everything and resumes after a
+                        // cooldown (ring on the play button); a plain click anywhere,
+                        // or the button, pauses fully.
+                        let playing = false, playRaf = 0, lastT = 0;
+                        let posFloat = 0;         // fractional track position
+                        // Playback runs on the deployment clock so it's linear in
+                        // real time however unevenly the samples are spaced. Times
+                        // are forward-filled over gaps and forced monotonic; if the
+                        // file has no usable times the sample index is the clock.
+                        const clock = (() => {
+                            const raw = data.time_ms;
+                            if (!raw || raw.length !== nPts) return null;
+                            const tm = new Array(nPts); let last = null;
+                            for (let q = 0; q < nPts; q++) { const v = raw[q]; if (v != null && isFinite(v) && (last == null || v > last)) last = v; tm[q] = last; }
+                            let first = tm.findIndex(v => v != null);
+                            if (first < 0 || tm[nPts - 1] <= tm[first]) return null;
+                            for (let q = 0; q < first; q++) tm[q] = tm[first];
+                            return tm;
+                        })();
+                        const clockSpan = clock ? clock[nPts - 1] - clock[0] : nPts - 1;
+                        playClockMs = () => clock ? clockAt(posFloat) : null;
+                        const clockAt = f => {          // fractional index -> clock value
+                            if (!clock) return f;
+                            const i0 = Math.floor(f), i1 = Math.min(nPts - 1, i0 + 1);
+                            return clock[i0] + (clock[i1] - clock[i0]) * (f - i0);
+                        };
+                        const indexAt = c => {          // clock value -> fractional index
+                            if (!clock) return c;
+                            let lo = 0, hi = nPts - 1;
+                            while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (clock[mid] <= c) lo = mid; else hi = mid; }
+                            const d = clock[hi] - clock[lo];
+                            return d > 0 ? lo + (c - clock[lo]) / d : lo;
+                        };
+                        let endHeld = 0;          // wall seconds spent holding at the end of the track
+                        let viewT = 0;            // wall seconds of playback, drives the viewing-angle wander
+                        let lastTrackT = 0;
+                        let holding = false;      // pointer down on the plot (rotating)
+                        let cooldownTimer = 0;    // pending resume after a manual interaction
+                        let speed = 1;
+                        const posSpeed = document.getElementById('posSpeed');
+                        posSpeed.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
+                            posSpeed.textContent = speed + 'x';
+                        });
+                        const setIcon = () => {
+                            posPlay.querySelector('.material-symbols-outlined').textContent = playing ? 'pause' : 'play_arrow';
+                            posPlay.title = playing ? 'Pause' : 'Play glider along track';
+                        };
+                        const clearCooldown = () => {
+                            clearTimeout(cooldownTimer); cooldownTimer = 0;
+                            posPlay.classList.remove('cooldown');
+                        };
+                        const setPlaying = (on) => {
+                            playing = on; clearCooldown(); setIcon();
+                            cancelAnimationFrame(playRaf); playRaf = 0;
+                            if (on) { posFloat = posIdx; lastT = 0; playRaf = requestAnimationFrame(tick); }
+                        };
+                        // Temporary hold: called on any manual camera interaction.
+                        const holdThenResume = () => {
+                            if (!playing) return;
+                            clearTimeout(cooldownTimer);
+                            lastT = 0;   // don't integrate the time spent held
+                            posPlay.classList.remove('cooldown');
+                            void posPlay.offsetWidth;   // restart the ring animation
+                            posPlay.style.setProperty('--cooldown', cooldownMs + 'ms');
+                            posPlay.classList.add('cooldown');
+                            cooldownTimer = setTimeout(() => { cooldownTimer = 0; posPlay.classList.remove('cooldown'); }, cooldownMs);
+                        };
+                        const held = () => holding || cooldownTimer !== 0;
+
+                        function tick(t) {
+                            playRaf = requestAnimationFrame(tick);
+                            if (held()) { lastT = t; return; }
+                            const dtRaw = lastT ? Math.min(0.1, (t - lastT) / 1000) : 0;
+                            lastT = t;
+                            if (!dtRaw) return;
+                            const dt = dtRaw * speed;
+
+                            if (posIdx < nPts - 1) {
+                                posFloat = Math.min(nPts - 1, indexAt(clockAt(posFloat) + dt * clockSpan / trackSeconds));
+                            } else if ((endHeld += dtRaw) >= endHoldSeconds) {
+                                posFloat = 0; endHeld = 0;           // held at the end → start again
+                            }
+                            posIdx = Math.round(posFloat);
+
+                            // Camera: ease the pivot toward the glider and carry the eye
+                            // with it, then swing the eye round (shortest way) toward
+                            // the azimuth directly behind the direction of travel.
+                            // Pivot a little ahead of the glider (along its heading) so
+                            // the glider sits toward one side of the frame rather than
+                            // dead centre. Uses the previous frame's eye distance.
+                            const target = centerFor(data, posFloat);
+                            const hd0 = travelHeading(data, posFloat);
+                            if (hd0) {
+                                const o0 = eyeOffset(), r0 = Math.min(followDist, Math.hypot(o0.x, o0.y));
+                                target.x += hd0[0] * leadFrac * r0; target.y += hd0[1] * leadFrac * r0;
+                            }
+                            const a = 1 - Math.exp(-dtRaw / cameraTau);
+                            const dx = (target.x - currentCenter.x) * a, dy = (target.y - currentCenter.y) * a;
+                            currentCenter = { x: currentCenter.x + dx, y: currentCenter.y + dy, z: currentCenter.z };
+                            const o = { x: currentEye.x + dx - currentCenter.x, y: currentEye.y + dy - currentCenter.y };
+                            let r = Math.hypot(o.x, o.y);
+                            if (r > followDist) r += (followDist - r) * (1 - Math.exp(-dtRaw / camAzimuthTau));   // ease in, never out
+                            let th = Math.atan2(o.y, o.x);
+                            // A slow constant drift keeps the picture alive while the
+                            // glider sits still (surface intervals, the end hold);
+                            // the follow-behind easing rides on top of it.
+                            th += dtRaw * 2 * Math.PI / idleOrbitSeconds;
+                            viewT += dtRaw;
+                            const swing = (viewSwingDeg * Math.PI / 180) *
+                                (0.6 * Math.sin(2 * Math.PI * viewT / viewPeriodsS[0]) + 0.4 * Math.sin(2 * Math.PI * viewT / viewPeriodsS[1] + 1.3));
+                            const hd = hd0;
+                            if (hd) {
+                                const want = Math.atan2(-hd[1], -hd[0]) + swing;      // behind the glider, swung to one side
+                                let d = want - th;
+                                d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+                                th += d * (1 - Math.exp(-dtRaw / camAzimuthTau));
+                            }
+                            currentEye = { x: currentCenter.x + r * Math.cos(th), y: currentCenter.y + r * Math.sin(th), z: currentEye.z };
+                            // Glider every frame (interpolated), track split less often
+                            // (it slices the whole track), camera last so its redraw
+                            // picks up both.
+                            pushGlider(posFloat);
+                            pushArgo();   // floats move every frame too (same fast path; only a membership change replots)
+                            pushScenery(t);
+                            if (t - lastTrackT >= trackEveryMs) { lastTrackT = t; posSlider.value = String(posIdx); pushTrack(); }
+                            pushCamera();
+                        }
+                        posPlay.addEventListener('click', (e) => { e.stopPropagation(); setPlaying(!playing); });
+                        posSlider.addEventListener('pointerdown', () => { if (playing) setPlaying(false); });
+
+                        // Manual camera interaction on the plot: hold while the pointer
+                        // is down, then cool down. A click without movement pauses fully.
+                        let downX = 0, downY = 0, moved = false;
+                        plotDiv.addEventListener('pointerdown', (e) => {
+                            holding = true; moved = false; downX = e.clientX; downY = e.clientY;
+                            if (playing) { clearTimeout(cooldownTimer); cooldownTimer = 0; posPlay.classList.remove('cooldown'); }
+                        }, true);
+                        document.addEventListener('pointermove', (e) => {
+                            if (holding && (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4)) moved = true;
+                        }, true);
+                        const release = (e) => {
+                            if (!holding) return;
+                            holding = false;
+                            if (e && e.target && e.target.closest && e.target.closest('#posBar, #layer-panel')) return;
+                            if (!moved) { if (playing) setPlaying(false); return; }   // plain click → full pause
+                            holdThenResume();
+                        };
+                        document.addEventListener('pointerup', release, true);
+                        document.addEventListener('pointercancel', release, true);
+                        plotDiv.addEventListener('wheel', () => holdThenResume(), { capture: true, passive: true });
+
+                        updateReadout();
+                        document.getElementById('posBar').classList.add('ready');
 
                         plotDiv.on('plotly_relayout', (e) => {
-                            if (e && e['scene.camera'] && e['scene.camera'].eye) {
-                                currentEye = { ...currentEye, ...e['scene.camera'].eye };
-                            } else if (e && e['scene.camera.eye']) {
-                                currentEye = { ...currentEye, ...e['scene.camera.eye'] };
-                            }
+                            const cam = (e && e['scene.camera']) || {};
+                            const eye = cam.eye || (e && e['scene.camera.eye']);
+                            const ctr = cam.center || (e && e['scene.camera.center']);
+                            if (eye) currentEye = { ...currentEye, ...eye };
+                            if (ctr) currentCenter = { ...currentCenter, ...ctr };   // user panned (right-drag)
                             // Clamp zoom-out: pull the eye back in if it drifted past the cap.
-                            const r = Math.hypot(currentEye.x, currentEye.y, currentEye.z);
-                            if (r > eyeCap()) {
-                                const k = eyeCap() / r;
-                                currentEye = { x: currentEye.x * k, y: currentEye.y * k, z: currentEye.z * k };
-                                Plotly.relayout('plot3d', { 'scene.camera.eye': currentEye });
-                            }
+                            if (clampEye()) Plotly.relayout('plot3d', { 'scene.camera.eye': currentEye });
                         });
-                        // Swallow zoom-out wheel events once at the cap so the
-                        // view doesn't flicker out and snap back.
+                        // Swallow wheel events once at either zoom cap so the
+                        // view doesn't flicker past and snap back.
                         plotDiv.addEventListener('wheel', (e) => {
-                            if (e.deltaY > 0 && Math.hypot(currentEye.x, currentEye.y, currentEye.z) >= eyeCap() - 1e-3) {
+                            if ((e.deltaY > 0 && eyeDist() >= eyeCap() - 1e-3) || (e.deltaY < 0 && eyeDist() <= minEyeDist + 1e-3)) {
                                 e.preventDefault(); e.stopPropagation();
                             }
                         }, { capture: true, passive: false });
-
-                        plotDiv.addEventListener('mousedown', resetIdle, true);
-                        plotDiv.addEventListener('wheel', resetIdle, true);
-                        plotDiv.addEventListener('touchstart', resetIdle, true);
-                        plotDiv.addEventListener('touchmove', resetIdle, true);
-
-                        // Pause / resume on a click (not a drag-to-rotate). A click
-                        // is a press+release with little movement; a drag rotates and
-                        // must NOT toggle the pause.
-                        const spinToggle = document.getElementById('spinToggle');
-                        const updateSpinIcon = () => {
-                            spinToggle.querySelector('.ovSwatch').textContent = paused ? 'play_arrow' : 'pause';
-                            spinToggle.classList.toggle('on', !paused);
-                            spinToggle.title = paused ? 'Resume auto-rotate' : 'Pause auto-rotate';
-                        };
-                        const togglePause = () => { paused = !paused; updateSpinIcon(); };
-
-                        let _downX = 0, _downY = 0, _downT = 0, _moved = false;
-                        document.addEventListener('pointerdown', (e) => {
-                            _downX = e.clientX; _downY = e.clientY; _downT = Date.now(); _moved = false;
-                        }, true);
-                        document.addEventListener('pointermove', (e) => {
-                            if (Math.abs(e.clientX - _downX) > 4 || Math.abs(e.clientY - _downY) > 4) _moved = true;
-                        }, true);
-                        document.addEventListener('pointerup', (e) => {
-                            if (e.target.closest && e.target.closest('#spinToggle, #layer-panel')) return; // controls handle themselves
-                            if (!_moved && (Date.now() - _downT) < 400) togglePause();
-                        }, true);
-                        spinToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
-                        updateSpinIcon();
-
-                        let lastFrameTime = 0;
-
-                        function animate(time) {
-                            requestAnimationFrame(animate);
-
-                            if (paused) return;
-                            if (Date.now() - lastInteractionTime < idleDelayMs) return;
-                            if (time - lastFrameTime < 30) return;
-
-                            lastFrameTime = time;
-
-                            const cx = currentEye.x;
-                            const cy = currentEye.y;
-                            const cz = currentEye.z;
-
-                            const r = Math.sqrt(cx*cx + cy*cy);
-                            let theta = Math.atan2(cy, cx);
-                            theta += orbitSpeed;
-
-                            currentEye = {
-                                x: r * Math.cos(theta),
-                                y: r * Math.sin(theta),
-                                z: cz
-                            };
-
-                            Plotly.relayout('plot3d', { 'scene.camera.eye': currentEye });
-                        }
-
-                        requestAnimationFrame(animate);
                     });
                 })
                 .catch(err => {

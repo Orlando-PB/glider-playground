@@ -289,7 +289,84 @@
         let _originalPlotData = null;
         let _currentZoom = null;
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
-        let _suppressRelayout = false;  // true while we are driving relayout programmatically
+        let _suppressRelayout = false;  // true while the draw gate is running a programmatic draw
+
+        // ---- The draw gate ---------------------------------------------------
+        // EVERY Plotly draw on plotDiv (react / restyle / relayout / resize) goes
+        // through drawPlot(). It is the single owner of four invariants that used
+        // to be enforced by separate ad-hoc guards, each of which missed cases:
+        //   1. Never draw while a zoom drag is live. A react/restyle mid-drag tears
+        //      down the drag layer and the scattergl scene under the pointer, so
+        //      every point vanishes until the drag ends. Plotly sets gd._dragging
+        //      for the drag's duration and a zoom box leaves a .zoombox node; we
+        //      poll both and hold the draw until they clear.
+        //   2. Never run two draws concurrently. Two reacts racing on one div
+        //      corrupt Plotly's axis autorange (empty-plot [-1, 6] default → blank
+        //      plot). Draws are serialised: the next starts when the previous
+        //      promise settles.
+        //   3. A programmatic draw's own plotly_relayout is not a user zoom.
+        //      _suppressRelayout is raised for exactly the lifetime of each job.
+        //   4. Deferred draws coalesce per `key`: a newer job with the same key
+        //      replaces a still-queued one (the replaced job resolves undefined so
+        //      callers awaiting it never hang). Keys: 'data' (trace rebuild),
+        //      'colour' (cmin/cmax restyle), 'axes' (range relayout), 'margin',
+        //      'resize'.
+        // Jobs always start from a macrotask (setTimeout 0), never on the caller's
+        // stack — Plotly emits plotly_doubleclick / plotly_relayout in the middle
+        // of its own relayout, so a draw issued synchronously from those handlers
+        // would race Plotly's in-progress redraw on the same div.
+        // `skipIf` is re-checked at run time so a job made stale while it waited
+        // (e.g. its fetch was aborted by a newer zoom) is dropped, not drawn.
+        const _draw = { busy: false, queue: [], timer: null };
+        function drawPlot(key, fn, opts) {
+            const o = opts || {};
+            return new Promise((resolve, reject) => {
+                // Already stale (e.g. its fetch was aborted before it got here): don't
+                // let it supersede a live job of the same key only to be dropped.
+                if (o.skipIf && o.skipIf()) { resolve(undefined); return; }
+                _draw.queue = _draw.queue.filter(j => {
+                    if (j.key !== key) return true;
+                    j.resolve(undefined);   // superseded — settle so awaiters continue
+                    return false;
+                });
+                _draw.queue.push({ key, fn, resolve, reject,
+                                   suppress: o.suppress !== false, skipIf: o.skipIf || null });
+                clearTimeout(_draw.timer);
+                _draw.timer = setTimeout(_drawPump, 0);
+            });
+        }
+        function _drawPump() {
+            clearTimeout(_draw.timer); _draw.timer = null;
+            if (_draw.busy || !_draw.queue.length) return;
+            const gd = document.getElementById('plotDiv');
+            if (gd && (gd._dragging || gd.querySelector('.zoombox'))) {
+                _draw.timer = setTimeout(_drawPump, 50);
+                return;
+            }
+            const job = _draw.queue.shift();
+            if (job.skipIf && job.skipIf()) { job.resolve(undefined); _drawPump(); return; }
+            _draw.busy = true;
+            // Any data rebuild starting here runs after Plotly's own post-double-click
+            // relayout has passed (jobs start from a later macrotask), so the flag
+            // that ignores that relayout can be cleared even if the reset job itself
+            // was superseded by a newer 'data' job.
+            if (job.key === 'data') _dblClickPending = false;
+            if (job.suppress) _suppressRelayout = true;
+            let p;
+            try { p = Promise.resolve(job.fn(gd)); } catch (e) { p = Promise.reject(e); }
+            p.then(job.resolve, (e) => { console.error('Plot draw failed:', e); job.reject(e); })
+             .finally(() => {
+                 if (job.suppress) _suppressRelayout = false;
+                 _draw.busy = false;
+                 _drawPump();
+             });
+        }
+        // Drop every queued draw (a replot re-drives this iframe with new data, so
+        // anything queued against the old plotData must not run).
+        function drawPlotClear() {
+            clearTimeout(_draw.timer); _draw.timer = null;
+            _draw.queue.splice(0).forEach(j => j.resolve(undefined));
+        }
         // Side padding (fraction of the x-span) added beyond the data on each edge.
         // Must match the parent's union-range padding in index.html
         // (unionTimeRange's `pad = span * 0.015`) so a plot that's already aligned
@@ -389,21 +466,7 @@
             let changed = false;
             if (plotDiv.style.left !== wantLeft) { plotDiv.style.left = wantLeft; changed = true; }
             if (plotDiv.style.width !== wantWidth) { plotDiv.style.width = wantWidth; changed = true; }
-            if (changed && plotDiv._fullLayout) _resizeWhenIdle(plotDiv);
-        }
-
-        // Plotly.Plots.resize mid-drag (e.g. the profile sidebar refresh scheduled
-        // 400ms after a zoom, landing while the user is already dragging a second
-        // zoom box) tears down the drag layer and blanks the WebGL scene until the
-        // drag ends. Hold the resize until Plotly's drag flag / zoom box clears.
-        let _resizeIdleTimer = null;
-        function _resizeWhenIdle(plotDiv) {
-            clearTimeout(_resizeIdleTimer);
-            if (plotDiv._dragging || plotDiv.querySelector('.zoombox')) {
-                _resizeIdleTimer = setTimeout(() => _resizeWhenIdle(plotDiv), 50);
-                return;
-            }
-            try { Plotly.Plots.resize(plotDiv); } catch (_) {}
+            if (changed && plotDiv._fullLayout) drawPlot('resize', gd => Plotly.Plots.resize(gd));
         }
 
         // ---- Depth-profile marginal (SVG) -------------------------------------
@@ -1351,10 +1414,9 @@
             // keeps the existing WebGL context and shaders, which is the whole point of
             // the reuse. A genuine first draw → newPlot. Same traces/layout/config either way.
             const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false, showTips: false };
-            const _alreadyDrawn = !!document.getElementById('plotDiv')._fullLayout;
-            const drawDone = (_alreadyDrawn
-                ? Plotly.react('plotDiv', traces, layout, PLOT_CFG)
-                : Plotly.newPlot('plotDiv', traces, layout, PLOT_CFG)
+            const drawDone = drawPlot('data', gd => gd._fullLayout
+                ? Plotly.react(gd, traces, layout, PLOT_CFG)
+                : Plotly.newPlot(gd, traces, layout, PLOT_CFG)
             ).then(function(plotDiv) {
                 applyCbar();
                 // Kick off the profile sidebar now (it paints concurrently with this
@@ -1384,7 +1446,11 @@
             // Plotly event handlers persist on the div across Plotly.react reuses, so
             // attach them exactly once (a warm replot would otherwise stack duplicate
             // listeners that each re-fire hover/zoom messages to the parent).
-            if (!_handlersAttached) {
+            // Draws go through the drawPlot gate and start on a later macrotask, so
+            // on a cold start plotDiv.on doesn't exist yet here — wait for the first
+            // draw to land before attaching.
+            drawDone.then(function() {
+            if (_handlersAttached || typeof plotDiv.on !== 'function') return;
             _handlersAttached = true;
 
             // Re-project the clicked-point overlay marker after every redraw (zoom,
@@ -1403,31 +1469,23 @@
             });
 
             // Double-click reset. Plotly emits 'plotly_doubleclick' and then, on the
-            // SAME call stack, runs its own _guiRelayout on the div (restoring the
-            // initial range / autorange). Calling Plotly.react from inside the
-            // doubleclick handler therefore raced Plotly's own relayout on one div,
-            // which corrupts the axis autorange (empty-plot [-1, 6] default) — the
-            // "double-click leaves a blank plot until I re-pick the preset" bug.
-            // So: only flag the reset here, and run it from the plotly_relayout that
-            // Plotly fires once its own redraw has finished. A short fallback timer
-            // covers the (rare) case where Plotly emits no relayout at all.
+            // SAME call stack, runs its own _guiRelayout (restoring its saved initial
+            // range — which is NOT necessarily our full extent: it's captured once per
+            // div and never refreshed on a warm replot). The draw gate runs our reset
+            // from a later macrotask, after Plotly's redraw and the relayout it emits
+            // have finished, so the two never race on one div. The relayout Plotly
+            // emits for that double-click (autorange, or ranges from its stale
+            // initial range) must not be read as a fresh user zoom: _dblClickPending
+            // makes the handler ignore it, and is cleared when the reset job actually
+            // runs — which is always after that relayout — so it can't go stale and
+            // swallow a later real zoom.
             plotDiv.on('plotly_doubleclick', function() {
                 _dblClickPending = true;
-                clearTimeout(_dblClickFallback);
-                _dblClickFallback = setTimeout(() => {
-                    if (_dblClickPending) { _dblClickPending = false; resetZoomToFull(); }
-                }, 250);
+                resetZoomToFull();
             });
 
             plotDiv.on('plotly_relayout', function(eventData) {
-                if (_dblClickPending) {
-                    // Plotly's post-double-click relayout has landed — now it's safe
-                    // to do the full-data re-render without two draws racing.
-                    _dblClickPending = false;
-                    clearTimeout(_dblClickFallback);
-                    resetZoomToFull();
-                    return;
-                }
+                if (_dblClickPending) return;   // Plotly's own post-double-click relayout; reset already queued
                 if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
                 const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
@@ -1565,7 +1623,7 @@
                 _lastUpDidPick = handlePlotClick(e.clientX, e.clientY);
             }, true);
 
-            }   // end if (!_handlersAttached)
+            });   // end handler attach (once, after first draw)
 
             return drawDone;
         }
@@ -1579,33 +1637,29 @@
         // Plotly's axis autorange (it fell back to its empty-plot default [-1,6]
         // range despite valid data). This guard makes a reset idempotent so only the
         // first of the two events actually redraws.
-        let _resettingZoom = false;
-        let _dblClickPending = false;   // set by plotly_doubleclick, consumed by the relayout it triggers
-        let _dblClickFallback = null;
+        let _dblClickPending = false;   // set by plotly_doubleclick, cleared when the reset job runs
         function resetZoomToFull() {
-            if (_resettingZoom) return;
-            _resettingZoom = true;
             if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
             clearTimeout(_pendingBounds);
             _currentZoom = null;
             setZoomHint(false);
             if (_originalPlotData) {
                 plotData = _originalPlotData;
-                // Suppress the relayout this react emits: Plotly resolves the autoranged
-                // axes to concrete full-extent ranges and fires plotly_relayout with them,
-                // which the handler would otherwise read as a fresh zoom and kick off a
-                // full-dataset hi-res refetch — overriding the user's quality cap.
-                // `finally` so a rejected react can't leave both flags stuck true
-                // (which would silently swallow every later double-click).
-                _suppressRelayout = true;
-                Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null))
-                    .catch(err => console.error('Zoom reset render failed:', err))
-                    .finally(() => { _suppressRelayout = false; _resettingZoom = false; });
+                const pd = plotData;
+                // Coalesces with any other queued 'data' draw (a real double-click
+                // reaches here twice: once from plotly_doubleclick, once from the
+                // autorange relayout) — only one react runs. The gate suppresses the
+                // relayout the react emits (Plotly resolves the autoranged axes to
+                // concrete ranges), which would otherwise read as a fresh zoom and
+                // trigger a full-dataset hi-res refetch.
+                drawPlot('data', gd => {
+                    _dblClickPending = false;
+                    return Plotly.react(gd, createTraces(pd), buildLayout(null, null));
+                });
                 if (window.logRedraw) window.logRedraw('zoom out (dbl-click)', (plotData.x && plotData.x.length) || 0);
                 window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
             } else {
-                _suppressRelayout = false;
-                _resettingZoom = false;
+                _dblClickPending = false;
             }
             // A profile/cycle filter narrows what "reset to full" means for THIS
             // panel to just that selection's own extent (_globalExtent, taken from
@@ -1688,7 +1742,7 @@
                 cMin = q(0.001); cMax = q(0.999);                  // 0.1th / 99.9th percentile
                 if (cMin === cMax) { cMin = vals[0]; cMax = vals[vals.length - 1]; }
                 const traceIdx = colouredTraceIdx();
-                Plotly.restyle('plotDiv', { 'marker.cmin': [cMin], 'marker.cmax': [cMax] }, [traceIdx]);
+                drawPlot('colour', gd => Plotly.restyle(gd, { 'marker.cmin': [cMin], 'marker.cmax': [cMax] }, [traceIdx]));
                 _cbarMin = cMin; _cbarMax = cMax; applyCbar();
             }
             return { plotted: cnt, cMin, cMax };
@@ -1788,20 +1842,6 @@
                 // blank plot that only a full re-render fixes (see resetZoomToFull).
                 if (controller.signal.aborted) return;
 
-                // If the user is mid-drag (a second zoom box before this chunk
-                // landed), a Plotly.react now tears down the drag layer and the
-                // scattergl scene under the pointer — every point vanishes until
-                // the drag ends and its own relayout fetches afresh. Hold the
-                // render until the drag finishes. Plotly sets gd._dragging for
-                // the duration of a drag; a zoom box also leaves a .zoombox node.
-                const gd = document.getElementById('plotDiv');
-                while (gd && (gd._dragging || gd.querySelector('.zoombox'))) {
-                    await new Promise(r => setTimeout(r, 50));
-                    // The drag that ended is a new zoom: its relayout aborted us and
-                    // will fetch its own chunk — this (now stale) one must not draw.
-                    if (controller.signal.aborted) return;
-                }
-
                 // Carry over var/unit metadata from the full-dataset load
                 if (_originalPlotData) {
                     if (!newData.x_var) newData.x_var = _originalPlotData.x_var;
@@ -1809,29 +1849,32 @@
                     if (!newData.x_units) newData.x_units = _originalPlotData.x_units;
                     if (!newData.y_units) newData.y_units = _originalPlotData.y_units;
                 }
-
-                plotData = newData;
-                plotData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
+                newData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
                 // Remember whether this chunk is the full raw set for its (padded)
                 // fetched box, and the box itself in numeric ms/value space. A later
                 // zoom-IN that lands inside this box, on a complete chunk, needs no
                 // refetch — see _chunkCovers / the relayout + updateLimits fast paths.
-                plotData._complete = !!newData.complete;
-                plotData._fetchBox = { xMin: xMinVal - xPad, xMax: xMaxVal + xPad,
-                                       yMin: yMinVal - yPad, yMax: yMaxVal + yPad };
+                newData._complete = !!newData.complete;
+                newData._fetchBox = { xMin: xMinVal - xPad, xMax: xMaxVal + xPad,
+                                      yMin: yMinVal - yPad, yMax: yMaxVal + yPad };
 
-                const zoom = _currentZoom;
-                const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
-                // yAuto marks an x-only zoom (e.g. a synced time-axis update): keep
-                // the y axis autoranged rather than pinning it to the full extent.
-                const yRange = (zoom && !zoom.yAuto) ? [zoom.yMin, zoom.yMax] : null;
-
-                _suppressRelayout = true;
-                Plotly.react('plotDiv', createTraces(newData), buildLayout(xRange, yRange))
-                    .then(() => { _suppressRelayout = false; });
-                if (window.logRedraw) window.logRedraw('zoom (hi-res)', (newData.x && newData.x.length) || 0);
-
-                window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max, plotted: newData.plotted }, '*');
+                // The gate holds this draw while a second zoom box is being dragged,
+                // and drops it (skipIf) if that drag's relayout aborted us — the new
+                // zoom fetches its own chunk. Committing plotData INSIDE the job keeps
+                // the on-screen data and our record of it in step: a dropped job
+                // leaves the previous chunk both drawn and recorded.
+                await drawPlot('data', gd => {
+                    plotData = newData;
+                    const zoom = _currentZoom;
+                    const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
+                    // yAuto marks an x-only zoom (e.g. a synced time-axis update): keep
+                    // the y axis autoranged rather than pinning it to the full extent.
+                    const yRange = (zoom && !zoom.yAuto) ? [zoom.yMin, zoom.yMax] : null;
+                    const p = Plotly.react(gd, createTraces(newData), buildLayout(xRange, yRange));
+                    if (window.logRedraw) window.logRedraw('zoom (hi-res)', (newData.x && newData.x.length) || 0);
+                    window.parent.postMessage({ type: 'bgFetchComplete', cMin: newData.c_min, cMax: newData.c_max, plotted: newData.plotted }, '*');
+                    return p;
+                }, { skipIf: () => controller.signal.aborted });
 
             } catch (err) {
                 if (err.name !== 'AbortError') console.error('Background fetch failed:', err);
@@ -1852,11 +1895,12 @@
                 // the new plot starts clean (no stale zoom / base record / in-flight fetch).
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
+                drawPlotClear();     // nothing queued against the old data may draw
                 hidePointBubble();   // the old pin's point won't survive the new data
                 urlParams = new URLSearchParams(msg.params || '');
                 _multiview = urlParams.get('multiview') === '1';
                 _profileSidebar = urlParams.get('profile_sidebar') === 'true';
-                _currentZoom = null; _originalPlotData = null; _suppressRelayout = false;
+                _currentZoom = null; _originalPlotData = null; _dblClickPending = false;
                 setZoomHint(false);
                 _cbarMin = null; _cbarMax = null;
                 _profileFetchSeq++;   // supersede any in-flight profile render
@@ -1883,10 +1927,10 @@
                 const t = msg.theme === 'light' ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', t);
                 if (plotData) {
-                    const zoom = _currentZoom;
+                    const pd = plotData, zoom = _currentZoom;
                     const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
                     const yRange = zoom ? [zoom.yMin, zoom.yMax] : null;
-                    Plotly.react('plotDiv', createTraces(plotData), buildLayout(xRange, yRange));
+                    drawPlot('data', gd => Plotly.react(gd, createTraces(pd), buildLayout(xRange, yRange)));
                 }
                 return;
             }
@@ -1977,15 +2021,14 @@
                 const wasBase = plotData === _originalPlotData;
                 if (showBase && !wasBase) plotData = _originalPlotData;
 
-                _suppressRelayout = true;
                 if (showBase && !wasBase) {
                     // We swapped a high-res chunk back to the base record: the traces
                     // genuinely changed, so rebuild them, clipped to the requested axis
                     // range (y left autoranged when no y bounds were supplied).
-                    Plotly.react('plotDiv', createTraces(plotData),
-                        buildLayout(hasX ? [msg.limits.xMin, msg.limits.xMax] : null,
-                                    hasY ? [msg.limits.yMin, msg.limits.yMax] : null))
-                        .then(() => { _suppressRelayout = false; });
+                    const pd = plotData;
+                    const xr = hasX ? [msg.limits.xMin, msg.limits.xMax] : null;
+                    const yr = hasY ? [msg.limits.yMin, msg.limits.yMax] : null;
+                    drawPlot('data', gd => Plotly.react(gd, createTraces(pd), buildLayout(xr, yr)));
                 } else {
                     // Already showing the right data (base record on a zoom-out, or the
                     // current chunk on a zoom-in) — only the axes need to move. A relayout
@@ -1996,7 +2039,7 @@
                     else if (showBase) update['xaxis.autorange'] = true;
                     if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
                     else if (showBase) update['yaxis.autorange'] = invY ? 'reversed' : true;
-                    Plotly.relayout('plotDiv', update).then(() => { _suppressRelayout = false; });
+                    drawPlot('axes', gd => Plotly.relayout(gd, update));
                 }
 
                 const xMin = hasX ? msg.limits.xMin : gl.xMin;
@@ -2037,18 +2080,18 @@
             // Driven reset (e.g. the parent's "align time axes" toggle being turned
             // off) — same effect as a double-click zoom-out, but initiated remotely.
             if (msg.type === 'resetZoom') {
-                _suppressRelayout = false;
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
                 _currentZoom = null;
                 setZoomHint(false);
                 if (_originalPlotData) {
                     plotData = _originalPlotData;
-                    Plotly.react('plotDiv', createTraces(plotData), buildLayout(null, null));
+                    const pd = plotData;
+                    drawPlot('data', gd => Plotly.react(gd, createTraces(pd), buildLayout(null, null)));
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                 } else {
                     const invY = urlParams.get('invert_y') === 'true';
-                    Plotly.relayout('plotDiv', { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true });
+                    drawPlot('axes', gd => Plotly.relayout(gd, { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true }));
                 }
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: {} }, '*');
                 renderProfileSidebar();   // zoom cleared remotely → drop the marginal greying
@@ -2064,16 +2107,19 @@
                 const ackColour = () => requestAnimationFrame(() => {
                     try { window.parent.postMessage({ type: 'colourUpdated' }, '*'); } catch (_) {}
                 });
-                const p = Plotly.restyle('plotDiv', { 'marker.cmin': [msg.limits.cMin], 'marker.cmax': [msg.limits.cMax] }, [traceIdx]);
-                _cbarMin = msg.limits.cMin; _cbarMax = msg.limits.cMax; applyCbar();
-                if (p && p.then) p.then(ackColour); else ackColour();
+                // A superseded (coalesced) job still resolves, so the ack always fires
+                // and the parent's slider never waits on its 1s safety timer.
+                const cMin = msg.limits.cMin, cMax = msg.limits.cMax;
+                drawPlot('colour', gd => Plotly.restyle(gd, { 'marker.cmin': [cMin], 'marker.cmax': [cMax] }, [traceIdx]))
+                    .then(ackColour, ackColour);
+                _cbarMin = cMin; _cbarMax = cMax; applyCbar();
             }
 
             if (msg.type === 'setMultiview') {
                 const nv = !!msg.multiview;
                 if (nv !== _multiview) {
                     _multiview = nv;
-                    try { Plotly.relayout('plotDiv', { 'margin.r': cbarActive() ? 5 : 20 }); } catch (_) {}
+                    drawPlot('margin', gd => Plotly.relayout(gd, { 'margin.r': cbarActive() ? 5 : 20 }));
                     applyCbar();
                 }
             }
@@ -2118,7 +2164,7 @@
                 const newCMax = calcCMax !== -Infinity ? calcCMax : plotData.c_max;
 
                 const traceIdx = colouredTraceIdx();
-                Plotly.restyle('plotDiv', { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [traceIdx]);
+                drawPlot('colour', gd => Plotly.restyle(gd, { 'marker.cmin': [newCMin], 'marker.cmax': [newCMax] }, [traceIdx]));
                 _cbarMin = newCMin; _cbarMax = newCMax; applyCbar();
                 window.parent.postMessage({ type: 'autoColourResult', cMin: newCMin, cMax: newCMax }, '*');
             }
