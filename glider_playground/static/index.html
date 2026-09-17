@@ -2215,6 +2215,7 @@
                 } else {
                     panel.iframe.src = `/static/main_plot.html?${params}&_gpt0=${t0.toFixed(1)}&_gpt1=${tSrc.toFixed(1)}`;
                 }
+                sync3dColour();
             } else if (panel.type === 'map') {
                 if (!datasetSelect.value) return;
                 if (panel.hostedEl) loadMapImage();        // primary globe (stashed gliderMap)
@@ -2391,6 +2392,7 @@
             if (panel.type === 'plot') {
                 activePlotPanelId = id;
                 plotIframe = panel.iframe;
+                sync3dColour();
                 resetColourFlow();   // don't let a stale lock block this plot's slider
                 applyToolbarState(panel.state);
                 if (baseCMin !== null && cmapInput.value !== 'discrete_09') {
@@ -3204,6 +3206,24 @@
                 }
             });
         }
+        // The 3D track takes the colour of the plot being viewed: the selected plot, else the top one.
+        // Timeseries plots with a numeric colour variable only; anything else leaves the 3D view as it is.
+        let _last3dColour = '';
+        function sync3dColour(force) {
+            if (!Object.values(panels).some(p => p.type === '3d')) return;
+            const plots = Object.values(panels).filter(p => p.type === 'plot' && p.state && p.state.x && p.state.datasetId === datasetSelect.value);
+            const top = p => { const r = p.el.getBoundingClientRect(); return r.top * 1e5 + r.left; };
+            const lead = plots.find(p => p.id === activePlotPanelId) || plots.sort((a, b) => top(a) - top(b))[0];
+            if (!lead) return;
+            const s = lead.state, info = n => variableCache.find(v => v.name === n);
+            const xi = info(s.x), ci = s.c && info(s.c);
+            if (!xi || xi.type !== 'datetime' || !ci || ci.type === 'datetime') return;
+            const sig = `${s.datasetId}|${s.c}|${s.cmap}`;
+            if (!force && sig === _last3dColour) return;
+            _last3dColour = sig;
+            post3d({ type: 'followColour', var: s.c, cmap: s.cmap });
+        }
+
         function forEachPlotFrame(cb, exceptId) {
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
@@ -3259,6 +3279,8 @@
                 // A frame that loaded after the last setActive() missed the broadcast; tell it now.
                 event.source.postMessage({ type: 'panelActive', active: srcPanel.id === activePanelId }, '*');
             }
+
+            if (msg.type === 'view3dReady') { sync3dColour(true); return; }
 
             // Colour-trim ack: releases the flow-control lock so the next slider value can be sent.
             if (msg.type === 'colourUpdated') {
@@ -6145,5 +6167,6 @@
         });
 
     </script>
+    <script src="/missions/static/missions_shell.js"></script>
 </body>
 </html>

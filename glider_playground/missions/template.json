@@ -1,0 +1,29 @@
+{
+  "_help": [
+    "Mission template. Replace the values, delete the blocks you don't need (only 'title' and 'platforms' matter), then Save.",
+    "Easiest route: give this template, missions/README.md and your data files' names + date ranges to an AI and ask it to write the mission.",
+    "'file' is the filename of a .nc already added to Glider Playground. Dates are naive UTC. 'offset' is [right, down] in pixels."
+  ],
+  "id": "my-mission",
+  "title": "My mission",
+  "summary": "One line for the mission list.",
+  "time": { "start": "2024-06-01", "end": "2024-07-01" },
+
+  "platforms": [
+    { "key": "glider1", "label": "Glider 1", "file": "my_glider_file.nc", "model": "slocum", "colour": "#d6336c", "show_label": true },
+    { "key": "glider2", "label": "Glider 2", "file": "my_other_file.nc", "model": "seaglider", "colour": "#12295c" }
+  ],
+
+  "stations": [
+    { "label": "STATION", "lat": 60.0, "lon": -24.0, "radius_km": 30, "colour": "#0f8b8d", "buoy": "blue" }
+  ],
+  "stages": [
+    { "title": "Transit", "detail": "1–5 Jun", "at": { "platform": "glider1", "time": "2024-06-03" }, "offset": [0, -60] }
+  ],
+  "events": [
+    { "date": "10 Jun", "text": "Gliders meet", "time": "2024-06-10", "at": { "platform": "glider1", "time": "2024-06-10" }, "offset": [0, -60] }
+  ],
+  "places": [
+    { "text": "ICELAND", "lat": 64.9, "lon": -18.5, "style": "big" }
+  ]
+}

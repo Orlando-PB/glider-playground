@@ -34,3 +34,4 @@ glider-playground = "glider_playground.cli:main"
 include = ["glider_playground*"]
 [tool.setuptools.package-data]
 "glider_playground" = ["plot_presets.json", "static/*", "static/**/*"]
+"glider_playground.missions" = ["README.md", "template.json", "examples/*.json", "static/*"]

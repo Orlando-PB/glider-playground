@@ -1,0 +1,87 @@
+{
+  "_help": [
+    "A mission = one 3D scene with several platforms, a shared time bar, and labels. Full field guide: missions/README.md.",
+    "Dates are naive UTC ('2024-06-09' or '2024-06-09T05:10'). Positions are decimal degrees. 'offset' is [right, down] in pixels from the anchor.",
+    "Anything pinned to a platform ('at': {'platform': key, 'time': date}) sits on that platform's real track at that time."
+  ],
+
+  "title": "BIO-Carbon",
+  "summary": "Two ALR1500s, four MARS Slocum gliders, Argo floats and RRS Discovery in the Iceland Basin, summer 2024.",
+
+  "time": { "start": "2024-05-24", "end": "2024-10-01" },
+  "region": { "lat": [54.5, 67.0], "lon": [-32.0, 0.0] },
+  "camera": { "eye": [-0.1, -1.12, 1.04], "center": [0.08, 0.12, -0.2] },
+
+  "platforms": [
+    { "key": "alr4", "label": "ALR4", "file": ["ALR_4_649_Processed.nc", "ALR_4_649.nc"], "model": "alr", "colour": "#12295c", "width": 6,
+      "show_label": true, "key_label": "ALR4 · mixed layer, ~20 m" },
+    { "key": "alr6", "label": "ALR6", "file": ["ALR_6_650_Processed.nc", "ALR_6_650.nc"], "model": "alr", "colour": "#4c6fb8", "width": 6,
+      "show_label": true, "key_label": "ALR6 · profiling to ~1000 m" },
+    { "key": "nelson", "label": "Nelson", "file": ["Nelson_646_Processed.nc", "Nelson_646_R.nc", "Nelson_646.nc"], "model": "slocum",
+      "colour": "#d6336c", "from": "2024-05-27", "group": "MARS Slocum gliders" },
+    { "key": "cabot", "label": "Cabot", "file": ["Cabot_645_Processed.nc", "Cabot_645_R.nc", "Cabot_645.nc"], "model": "slocum",
+      "colour": "#9c36b5", "from": "2024-05-27", "group": "MARS Slocum gliders" },
+    { "key": "churchill", "label": "Churchill", "file": ["Churchill_647_Processed.nc", "Churchill_647_R.nc", "Churchill_647.nc"], "model": "slocum",
+      "colour": "#e8590c", "from": "2024-05-27", "group": "MARS Slocum gliders" },
+    { "key": "doombar", "label": "Doombar", "file": ["Doombar_648_Processed.nc", "Doombar_648_R.nc", "Doombar_648.nc"], "model": "slocum",
+      "colour": "#c2255c", "from": "2024-05-27", "group": "MARS Slocum gliders" }
+  ],
+
+  "floats": {
+    "colour": "#0f8b8d",
+    "wmo": ["3901581"],
+    "deployed_near": { "lat": 60.0, "lon": -24.0, "radius_km": 40, "between": ["2024-05-24", "2024-06-05"] }
+  },
+
+  "ships": [
+    { "key": "discovery", "label": "RRS Discovery", "model": "rrs_discovery", "colour": "#e8702a",
+      "note": "No navigation data: a rough path through the places and dates the other platforms pin down.",
+      "deploys": ["nelson", "cabot", "churchill", "doombar", "floats"],
+      "recovers": ["alr6", "alr4"],
+      "legs": [
+        { "label": "Discovery outbound", "time": ["2024-05-24", "2024-05-28"],
+          "points": [[54.5, -12.8], [57.3, -19.5], [59.2, -23.4], [60.0, -24.0]] },
+        { "label": "", "time": ["2024-05-28", "2024-06-22"], "follow": ["nelson", "cabot", "churchill", "doombar"], "offset_km": 25 },
+        { "label": "to Aberdeen", "time": ["2024-06-24", "2024-06-27"],
+          "points": [[59.97, -18.55], [60.0, -14.0], [60.1, -8.0], [59.85, -4.2], [59.5, -2.3], [58.3, -1.1], [57.35, -1.8]] },
+        { "label": "to ALR4 recovery", "time": ["2024-08-03", "2024-08-06T13:23"],
+          "points": [[57.5, -1.95], [58.2, -2.7], [58.68, -3.1], [58.66, -5.0], [58.58, -6.3], [58.3, -7.35], [58.02, -7.6], [57.7674, -7.0233]] },
+        { "label": "to Southampton", "time": ["2024-08-06T13:23", "2024-08-08"],
+          "points": [[57.7674, -7.0233], [57.45, -7.75], [56.7, -8.0], [55.75, -7.0], [55.3, -6.0], [54.6, -5.3]] }
+      ] }
+  ],
+
+  "stations": [
+    { "label": "CIB SUPERSTATION", "lat": 60.0, "lon": -24.0, "radius_km": 70, "colour": "#0f8b8d" }
+  ],
+
+  "stages": [
+    { "title": "Launch from Iceland", "detail": "ALR4 9 Jun · ALR6 11 Jun", "at": { "platform": "alr4", "time": "2024-06-09T06:00" }, "offset": [-150, -50] },
+    { "title": "Transit to Iceland Basin", "detail": "9–17 Jun · 400 km", "at": { "platform": "alr4", "time": "2024-06-13" }, "offset": [-230, -10] },
+    { "title": "Rendezvous with Discovery", "detail": "17–24 Jun · inter-calibration", "at": { "platform": "alr4", "time": "2024-06-20" }, "offset": [-40, 130] },
+    { "title": "Sampling alongside gliders", "detail": "25 Jun–13 Jul · 790 km", "at": { "platform": "alr4", "time": "2024-07-05" }, "offset": [190, -70] },
+    { "title": "Transect to Scotland", "detail": "13 Jul–1 Aug · 960 km", "at": { "platform": "alr4", "time": "2024-07-20" }, "offset": [120, -90] },
+    { "title": "Recovery", "detail": "6 Aug · NW Scotland", "at": { "platform": "alr4", "time": "2024-08-06T13:23" }, "offset": [-60, 110] }
+  ],
+  "stage_icon": "alr",
+
+  "events": [
+    { "date": "28 May", "text": "4 gliders + 2 floats deployed at CIB", "time": "2024-05-28", "at": { "lat": 60.0, "lon": -24.0 }, "offset": [-70, 0] },
+    { "date": "9 Jun", "text": "ALR4 launched (mixed layer, ~20 m)", "time": "2024-06-09", "at": { "platform": "alr4", "time": "2024-06-09T06:00" }, "offset": [30, 16] },
+    { "date": "11 Jun", "text": "ALR6 launched (profiling to ~1000 m)", "time": "2024-06-11", "at": { "platform": "alr6", "time": "2024-06-11T09:00" }, "offset": [30, -18] },
+    { "date": "17 Jun", "text": "ALRs reach the gliders", "time": "2024-06-17", "at": { "platform": "alr4", "time": "2024-06-17" }, "offset": [-6, -34] },
+    { "date": "22 Jun", "text": "ALR6 recovered by RRS Discovery", "time": "2024-06-22", "at": { "platform": "alr6", "time": "2024-06-22T08:00" }, "offset": [8, -34] },
+    { "date": "13 Jul", "text": "ALR4 leaves the gliders", "time": "2024-07-13", "at": { "platform": "alr4", "time": "2024-07-13" }, "offset": [34, -6] },
+    { "date": "1–6 Aug", "text": "ALR4 holds off Hebrides, recovered", "time": "2024-08-01", "at": { "platform": "alr4", "time": "2024-08-03" }, "offset": [36, 0] },
+    { "date": "19–30 Sep", "text": "Glider missions end", "time": "2024-09-19", "at": { "platform": "nelson", "time": "2024-09-30" }, "offset": [-30, 0] }
+  ],
+
+  "places": [
+    { "text": "ICELAND", "lat": 64.9, "lon": -18.5, "style": "big" },
+    { "text": "SCOTLAND", "lat": 57.0, "lon": -4.4, "style": "big" },
+    { "text": "Faroe Islands", "lat": 62.0, "lon": -6.9 },
+    { "text": "Aberdeen", "lat": 57.15, "lon": -2.2 },
+    { "text": "Iceland Basin", "lat": 62.6, "lon": -28.0, "style": "sea" },
+    { "text": "Rockall Trough", "lat": 56.2, "lon": -12.0, "style": "sea" }
+  ]
+}

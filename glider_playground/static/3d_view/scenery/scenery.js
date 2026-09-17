@@ -245,7 +245,8 @@ window.Scenery = (() => {
         return (z00 * (1 - tx) + z01 * tx) * (1 - ty) + (z10 * (1 - tx) + z11 * tx) * ty;
     }
 
-    // Build the merged scenery mesh3d trace (null when nothing to place). bathyZ: displayed heights, or null
+    // Build the scenery as two merged mesh3d traces, { still, moving } (either may be null; null when nothing to place):
+    // only `moving` (swimmers, swaying plants) is re-posed by sway(), so the rigid bulk is uploaded once. bathyZ: displayed heights, or null
     // when the seafloor is out of range (floaters only, above floorZ). S: sceneScale {kx, ky, kz} = data units
     // per scene unit. seed: file id. snowAt: lat → 0..1. floorZ: bottom of the box (data units, negative).
     function build(data, bathyZ, S, seed, snowAt, floorZ) {
@@ -255,7 +256,8 @@ window.Scenery = (() => {
         const bx = data.bathy_lon, by = data.bathy_lat, nx = bx.length, ny = by.length;
         if (nx < 2 || ny < 2) return null;
         const rand = rng(seed || '');
-        const out = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [] };
+        const bucket = () => ({ x: [], y: [], z: [], i: [], j: [], k: [], cell: [] });
+        const still = bucket(), live = bucket();
         const sway = { x: [], y: [], ph: [] };   // per-vertex sway offsets (data units) + phase
         const movers = [];                       // swimming instances, re-posed each frame (see pose())
         const colors = [];
@@ -334,7 +336,7 @@ window.Scenery = (() => {
                 if (lon - padX < lon0 || lon + padX > lon1 || lat - padY < lat0 || lat + padY > lat1) continue;
                 const k = h / M.length, phase = rand() * 2 * Math.PI;
                 let c = [lon / S.kx, lat / S.ky, anchor / S.kz], cy, sy;
-                const base = out.x.length;
+                const out = rule.swim || rule.sway ? live : still, base = out.x.length;
                 if (rule.swim) {
                     const sw = rule.swim;
                     // Fit the loop to the water: if it runs aground, tighten it, then swim shallower, else don't spawn.
@@ -394,6 +396,7 @@ window.Scenery = (() => {
                     out.x.push((c[0] + px) * S.kx);
                     out.y.push((c[1] + py) * S.ky);
                     out.z.push((c[2] + pz) * S.kz);
+                    if (out !== live) continue;
                     const w = amp * (mz / h);   // plants bend toward the tip
                     sway.x.push(w * Math.cos(swayDir) * S.kx); sway.y.push(w * Math.sin(swayDir) * S.ky); sway.ph.push(phase);
                 }
@@ -405,17 +408,18 @@ window.Scenery = (() => {
                 if (rule.group) groupCount[rule.group] = (groupCount[rule.group] || 0) + 1;
             }
         }
-        if (!out.x.length) return null;
-        state = { x: out.x, y: out.y, z: out.z, sway, movers, S, moving: movers.length > 0 || sway.x.some(v => v !== 0) };
+        if (!still.x.length && !live.x.length) return null;
+        state = { x: live.x, y: live.y, z: live.z, sway, movers, S, moving: movers.length > 0 || sway.x.some(v => v !== 0) };
         const cmax = Math.max(colors.length - 1, 1);
-        return {
+        const trace = (out, name) => out.x.length ? {
             type: 'mesh3d', x: out.x, y: out.y, z: out.z, i: out.i, j: out.j, k: out.k,
             intensity: out.cell, intensitymode: 'cell', cmin: 0, cmax,
             colorscale: colors.length === 1 ? [[0, colors[0]], [1, colors[0]]] : colors.map((col, q) => [q / cmax, col]),
             showscale: false, flatshading: true,
             lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
-            name: 'Scenery', hoverinfo: 'skip'
-        };
+            name, hoverinfo: 'skip'
+        } : null;
+        return { still: trace(still, 'Scenery'), moving: trace(live, 'Scenery (moving)') };
     }
 
     // Swimmer pose at time t: centre (scene units) on its ellipse plus yaw (cos/sin) along the path.
@@ -426,7 +430,7 @@ window.Scenery = (() => {
         return { c, cy: vx / vl, sy: vy / vl };
     }
 
-    // Animated copy of the last built geometry at `tSec`, or null when nothing moves. Fresh arrays each call.
+    // Animated copy of the `moving` trace's geometry at `tSec`, or null when nothing moves. Fresh arrays each call.
     function sway(tSec) {
         if (!state || !state.moving) return null;
         const { x, y, z, sway: s, movers, S } = state, n = x.length, w = 2 * Math.PI / SWAY_PERIOD_S;

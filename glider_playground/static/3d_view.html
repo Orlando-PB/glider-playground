@@ -7,6 +7,8 @@
     <script src="/static/vendor/plotly-gl3d-2.32.0.min.js"></script>
     <script src="/static/js/console_log.js"></script>
     <!-- Decorative scenery (kelp, trees...) behind the "Scenery" style toggle; see static/3d_view/scenery/. -->
+    <script src="/api/plot_presets.js"></script>
+    <script src="/static/3d_view/scene_kit.js"></script>
     <script src="/static/3d_view/scenery/scenery.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -73,6 +75,7 @@
         #layer-header .chev { margin-left: auto; transition: transform 0.2s; }
         /* Collapsed: same 32px height as #posBar so the two sit level. */
         #layer-panel.collapsed { max-width: none; height: 32px; justify-content: center; }
+        #layer-panel.collapsed #trackColourRow { display: none !important; }
         #layer-panel.collapsed #layer-title,
         #layer-panel.collapsed .chev,
         #layer-panel.collapsed #layer-body { display: none; }
@@ -89,6 +92,12 @@
         .fxBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
         .fxBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
         .ovSwatch { flex: 0 0 auto; }
+        #trackColourRow { display: none; padding: 6px 8px 4px; border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent); margin-top: 4px; }
+        #trackColourRow label { display: block; font-size: 10px; font-weight: 600; color: var(--text-secondary, var(--text-primary)); margin-bottom: 3px; }
+        #trackColourSel { width: 100%; font: inherit; font-size: 11px; font-weight: 600; padding: 3px 4px; border-radius: 6px; border: none; color: var(--text-primary);
+                          background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
+        #trackColourBar { display: none; margin-top: 6px; } #trackColourBar i { display: block; height: 7px; border-radius: 4px; }
+        #trackColourBar div { display: flex; justify-content: space-between; font-size: 10px; margin-top: 2px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
         #scaleNote {
             position: absolute; top: 8px; left: 10px; z-index: 40;
@@ -158,9 +167,10 @@
                 const p = new URLSearchParams(window.location.search);
                 let t = p.get('theme');
                 if (!t) { try { t = window.parent.document.documentElement.getAttribute('data-theme'); } catch (_) {} }
-                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+                if (!t) { const c = document.cookie.split('; ').find(v => v.startsWith('gp_theme=')); t = c ? decodeURIComponent(c.slice(9)) : 'light'; }   // the shell's theme cookie
+                document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
             } catch (_) {
-                document.documentElement.setAttribute('data-theme', 'dark');
+                document.documentElement.setAttribute('data-theme', 'light');
             }
         })();
     </script>
@@ -188,6 +198,8 @@
             <span class="material-symbols-outlined chev">expand_more</span>
         </button>
         <div id="layer-body"></div>
+        <div id="trackColourRow"><label for="trackColourSel">Track colour</label><select id="trackColourSel"></select>
+            <div id="trackColourBar"><i></i><div></div></div></div>
     </div>
 
     <script>
@@ -200,19 +212,11 @@
 
         window.addEventListener('message', function(event) {
             if (!event.data || event.data.type !== 'setTheme') return;
-            const t = event.data.theme === 'light' ? 'light' : 'dark';
+            const t = event.data.theme === 'dark' ? 'dark' : 'light';
             document.documentElement.setAttribute('data-theme', t);
         });
 
-        const earthColour = '#c2b2a4';
-        const earthGradientEnd = '#e5d9cc';
-        const earthDeepColour = '#7d7060';     // deep-seabed tone for the depth-shaded ramp
-        const landColour = '#a8bf9a';          // faded green for terrain above sea level
-        const landGradientEnd = '#c9d8bd';
-        const snowColour = '#cfd8df';          // polar land: cool ice-grey, kept off pure white so it reads against the light background
-        const snowGradientEnd = '#e9eef2';
-        const snowLatCutoff = 60;              // |lat| beyond this is drawn white (Greenland / Antarctica)
-        const snowBlendKm = 200;               // width of the green→white blend straddling the cutoff
+        const SK = window.SceneKit;   // the look shared with the mission view (static/3d_view/scene_kit.js)
 
         // Max eye distance: further out hits WebGL depth-precision glitches.
         const maxEyeDist = 2.6;
@@ -222,39 +226,15 @@
         // Min eye distance: closer and the near clip plane eats the glider and seabed.
         const minEyeDist = 0.25;
 
-        // Tighten near/far clip planes (Plotly's 0.01..1000 default z-fights on this flat scene).
-        // Not a public Plotly option: reaches into the live scene.
-        const clipNear = 0.02, clipFar = 12;   // eye never nearer than minEyeDist to the pivot; scene ≲ 3 units across
-        const tightenClipPlanes = () => {
-            try {
-                const gl = document.getElementById('plot3d')._fullLayout.scene._scene.glplot;
-                gl.zNear = clipNear; gl.zFar = clipFar;
-                disablePicking(gl);
-            } catch (_) {}
-        };
-        // Hover is off for every trace, but gl-plot3d still draws the whole scene a second time into its pick
-        // buffer on every dirty frame and reads the full canvas back (readPixels: a synchronous GPU stall that
-        // also slows the other panels). Skip both. toImage reads the default framebuffer, so it still works.
-        const disablePicking = (glplot) => {
-            (glplot.objects || []).forEach(o => { if (o.drawPick) o.drawPick = null; });
-            const gl = glplot.gl;
-            if (gl._gpNoPickRead) return;
-            gl._gpNoPickRead = true;
-            const read = gl.readPixels;
-            gl.readPixels = function () { if (gl.getParameter(gl.FRAMEBUFFER_BINDING)) return; return read.apply(gl, arguments); };
-        };
-        const trackColour = '#d9c45c';       // glider dive track (muted yellow so the vehicle stands out against it)
+        // Tight clip planes + no pick pass; redo after every (re)plot, which makes fresh WebGL objects.
+        const tightenClipPlanes = () => SK.tuneGl(document.getElementById('plot3d'));
+        const trackColour = SK.LOOK.trackColour;
         const trackAheadColour = '#6e643a';
         const trackOpacity = 0.7;            // travelled track: slightly see-through so the vehicle shows through it  // the part of the track still to come: thinner + darker
-        const waterTopColour = '#90e0ef';
-        const waterBottomColour = '#004e89';
-        const waterOpacity = 0.28;   // five translucent panes stack up when looking through the box, so keep each one light
 
         const verticalExaggeration = 100;   // upper limit; small-footprint / deep scenes get less (see buildScene)
         const targetTrackAspect = 0.7;      // glider's dive depth as a fraction of the scene width
         const maxBoxAspect = 1.5;           // tallest the whole box (down to the seabed) may get
-        // Land (bathy above sea level) gets a gentler exaggeration than the water column.
-        const landExaggeration = 5;
 
         // Playback: the glider sweeps the track in trackSeconds (at 1x) with a follow-behind camera,
         // holds endHoldSeconds at the end, then restarts.
@@ -282,21 +262,10 @@
         const maxOffFrac = 0.35;     // the pivot may never sit further than this fraction of the eye distance from the glider, so the glider stays in frame however fast it moves
         const leadFrac = 0.3;        // the pivot sits this fraction of the camera distance ahead of the glider, so the glider is off-centre with the water ahead filling the frame
         const cooldownMs = 1500;     // resume delay after a manual rotate/zoom
-        // Argo floats: the index only gives surfacings, so between them the float follows a synthetic
-        // standard mission (surface, park drift, deep dip, ascent) with interpolated horizontal position.
-        const ARGO = {
-            surfaceH: 1,        // hours at the surface after a profile
-            descendH: 6,        // hours from surface to park depth
-            parkM: 1000,        // park depth (m) - the mission default
-            deepStartH: 12,     // hours before the next surfacing the deep dip begins
-            deepEndH: 7,        // hours before the next surfacing the ascent begins
-            profileM: 2000,     // profile depth (m)
-            leadH: 12,          // show a float this many hours before its first known profile (ascending)
-        };
+        const ARGO = SK.ARGO;   // synthetic float cycle between known surfacings
         const argoWindowHours = ARGO.leadH;   // query margin around the deployment span
-        const argoLength = 0.03;     // scene units top-to-bottom (same visual size as the glider)
-        const buoyLength = 0.014;    // start (green) / end (red) buoys, scene units tall
-        const buoyOffset = 0.022;    // scene units sideways from the track end (glider half-length is 0.015)
+        const argoLength = SK.SIZES.argo, buoyLength = SK.SIZES.buoy;   // scene units tall; sizes are SceneKit's, as the mission view
+        const buoyOffset = 0.012;    // scene units sideways from the track end
 
         // ── Style toggles: one row each in the Style panel; choices persist in localStorage (FX_STORE_KEY) ──
         const EFFECTS = [
@@ -315,11 +284,34 @@
         const saveFx = () => { try { localStorage.setItem(FX_STORE_KEY, JSON.stringify(fx)); } catch (_) {} };
 
 
-        // ── Colour helpers ───────────────────────────────────────────────
-        const hexToRgb = hex => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-        const rgbToHex = rgb => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
-        const shade = (hex, k) => rgbToHex(hexToRgb(hex).map(v => v * k));
-        const lerpHex = (a, b, t) => { const A = hexToRgb(a), B = hexToRgb(b); return rgbToHex(A.map((v, i) => v + (B[i] - v) * t)); };
+        // ── Track colour: the travelled track coloured by a preset's variable (/api/3d_colour), else plain ──
+        const TRACK_COLOUR_KEY = 'gp3d_track_colour';
+        const trackNoDataColour = SK.LOOK.noDataColour;
+        let trackColourData = null;     // { values, cmin, cmax, plotMin, scale, palette, label, units }
+        const paletteFor = SK.paletteFor;
+        // Missing values sit just below the scale, on a grey band at its foot.
+        const DISCRETE_09 = ['#9ca3af', '#22c55e', '#3b82f6', '#f97316', '#a855f7', '#06b6d4', '#ef4444', '#eab308', '#ec4899', '#84cc16'];   // as main_plot.html
+        const prepTrackColour = (res) => {
+            if (res.discrete) {      // integer flags 0-9: one hard band each, missing on a grey band below
+                const scale = [];
+                [trackNoDataColour].concat(DISCRETE_09).forEach((c, k) => scale.push([k / 11, c], [(k + 1) / 11, c]));
+                return { ...res, palette: DISCRETE_09, cmin: 0, cmax: 9.5, plotMin: -1.5, scale };
+            }
+            const pal = paletteFor(res.cmap);
+            return { ...res, palette: pal, ...SK.colourScale(pal, res.cmin, res.cmax) };
+        };
+        const trackColourValues = (vals) => { const d = trackColourData; return vals.map(v => (v == null ? d.plotMin : Math.min(d.cmax, Math.max(d.cmin, v)))); };
+        const trackLineStyle = (vals, width) => (trackColourData
+            ? { width, color: trackColourValues(vals), colorscale: trackColourData.scale, cmin: trackColourData.plotMin, cmax: trackColourData.cmax }
+            : { width, color: trackColour });
+        const trackValueHex = (v) => {
+            const d = trackColourData; if (!d || v == null) return d ? trackNoDataColour : trackColour;
+            if (d.discrete) return d.palette[Math.round(v)] || trackNoDataColour;
+            const t = Math.max(0, Math.min(1, (v - d.cmin) / (d.cmax - d.cmin))) * (d.palette.length - 1), q = Math.min(d.palette.length - 2, Math.floor(t));
+            return d.palette.length < 2 ? d.palette[0] : lerpHex(d.palette[q], d.palette[q + 1], t - q);
+        };
+
+        const lerpHex = SK.lerpHex;
 
         const urlParams = new URLSearchParams(window.location.search);
         const fileId = urlParams.get('id') || urlParams.get('filename');
@@ -442,7 +434,7 @@
             let gliderTraceIdx = -1;
             let pastTraceIdx = -1, aheadTraceIdx = -1, tipTraceIdx = -1;
             let argoTraceIdx = -1;
-            let sceneryTraceIdx = -1;       // merged scenery mesh (only when fx.scenery and the seafloor is drawn)
+            let sceneryTraceIdx = -1;       // the moving scenery mesh, which the sway patches (only when fx.scenery and the seafloor is drawn)
             let buoyModels = null;         // { start: mesh, end: mesh } (green / red buoys), or null if not loaded
             let argoModel = null;           // merged mesh, metres, +z up, origin at hull mid
             let argoFloats = [];            // [{wmo, profs:[{lat,lon,ms}...] sorted}] inside the scene box + deployment window
@@ -450,51 +442,27 @@
             // Argo + scenery traces are ALWAYS in the plot (toggling never changes the trace list);
             // "off" is the same mesh collapsed onto one point.
             let hidePoint = [0, 0, 0];      // where collapsed meshes sit (a base corner of the scene box)
-            let sceneryBase = null;         // the scenery's real {x, y, z}, to restore it after a collapse
-            const collapsed = n => ({ x: new Array(n).fill(hidePoint[0]), y: new Array(n).fill(hidePoint[1]), z: new Array(n).fill(hidePoint[2]) });
+            let sceneryParts = [];          // scenery traces (still, moving): {idx, base: the real {x, y, z}, to restore after a collapse}
+            const collapsed = n => SK.collapsed(n, hidePoint);
             const argoPlaceholder = () => ({ ...collapsed(1), i: [0], j: [0], k: [0], intensity: [0] });
             let gliderModel = null;         // merged { x,y,z,i,j,k,cell,colorscale,length } in metres, +x nose, +z up
 
-            // Catmull-Rom upsample of the bathy grid to ~`target` points on its longer side (integer factor, max 4×).
-            const bathyUpsampleTo = 160;
-            const coastStepFrac = 0.012;   // land's minimum height as a fraction of the box depth (coast step)
-            function upsampleGrid(lon, lat, z, target) {
-                const nx = lon.length, ny = lat.length;
-                const f = Math.min(4, Math.max(1, Math.round(target / Math.max(nx, ny))));
-                if (f === 1 || nx < 2 || ny < 2) return { lon, lat, z };
-                const NX = (nx - 1) * f + 1, NY = (ny - 1) * f + 1;
-                const cr = (p0, p1, p2, p3, t) => 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
-                const at = (arr, i) => arr[Math.max(0, Math.min(arr.length - 1, i))];
-                const lin = (arr, N) => { const o = new Array(N); for (let X = 0; X < N; X++) { const i = Math.floor(X / f), t = (X % f) / f; o[X] = i + 1 < arr.length ? arr[i] + (arr[i + 1] - arr[i]) * t : arr[i]; } return o; };
-                const rows = z.map(row => { const o = new Array(NX); for (let X = 0; X < NX; X++) { const i = Math.floor(X / f), t = (X % f) / f; o[X] = t ? cr(at(row, i - 1), row[i], at(row, i + 1), at(row, i + 2), t) : row[i]; } return o; });
-                const Z = new Array(NY);
-                for (let Y = 0; Y < NY; Y++) {
-                    const j = Math.floor(Y / f), t = (Y % f) / f;
-                    if (!t) { Z[Y] = rows[j]; continue; }
-                    const r0 = at(rows, j - 1), r1 = rows[j], r2 = at(rows, j + 1), r3 = at(rows, j + 2), o = new Array(NX);
-                    for (let X = 0; X < NX; X++) o[X] = cr(r0[X], r1[X], r2[X], r3[X], t);
-                    Z[Y] = o;
-                }
-                return { lon: lin(lon, NX), lat: lin(lat, NY), z: Z };
-            }
+            let bathyGrid = null, coast = null;   // upsampled bathy grid + the basemap's coastline (SK.loadCoast), set once with the data
+            let seabed = null;                    // SK.buildSeabed result for the current box
+            // Scenery on: seabed darkens with depth; off: plain earth ramp.
+            const seabedStyle = () => ({ depthShade: fx.scenery, greenLand: fx.greenLand });
 
             // Build the full trace list + layout for the current `fx` settings.
             function buildScene(data) {
                 const traces = [];
 
-                const METERS_PER_DEGREE = 111111;
-                const avgLat = (data.bounds.max_lat + data.bounds.min_lat) / 2;
-                const cosLat = Math.cos(avgLat * Math.PI / 180);
-                const distY = (data.bounds.max_lat - data.bounds.min_lat) * METERS_PER_DEGREE;
-                const distX = (data.bounds.max_lon - data.bounds.min_lon) * METERS_PER_DEGREE * cosLat;
-                const maxHoriz = Math.max(distX, distY, 1);
+                const b = data.bounds, fp = SK.footprint(b.min_lon, b.max_lon, b.min_lat, b.max_lat), maxHoriz = fp.maxHoriz;
 
                 // The box always spans the full water column: down to the seabed or the deepest dive.
                 let gliderDeepest = 0;
                 for (const z of data.elevation) if (z < gliderDeepest) gliderDeepest = z;
                 const trueMinZ = Math.min(...data.bathy_z.flat());
                 const displayMinZ = Math.min(trueMinZ, gliderDeepest, -10);
-                const showSeafloor = true;
                 // Base slab thickness; at true scale it needs a visible thickness or the walls z-fight.
                 const baseZ = fx.trueHeight
                     ? displayMinZ - Math.max(Math.abs(displayMinZ) * 0.15, maxHoriz * 0.02)
@@ -507,182 +475,34 @@
                     verticalExaggeration,
                     targetTrackAspect * maxHoriz / Math.max(-gliderDeepest, 10),
                     maxBoxAspect * maxHoriz / distZ));
-                const lExag = Math.min(landExaggeration, vExag);
                 document.getElementById('scaleX').textContent = vExag > 1.05 ? `Vertical scale ×${vExag >= 10 ? Math.round(vExag) : vExag.toFixed(1)} · ` : '';
 
-                // The aspect ratio applies vExag to every z, so pre-scale land heights to end up at lExag.
-                const landScale = lExag / vExag;
-                // Smoothly upsample the bathy grid before meshing.
-                const grid = upsampleGrid(data.bathy_lon, data.bathy_lat, data.bathy_z, showSeafloor ? bathyUpsampleTo : 1);
-                const bLon = grid.lon, bLat = grid.lat;
-                // Land gets a small minimum height so the coast is a clean step above the water plane.
-                const coastStep = Math.abs(displayMinZ) * coastStepFrac;
-                const bathyZ = showSeafloor
-                    ? grid.z.map(row => row.map(z => (z > 0 ? Math.max(z * landScale, coastStep) : z)))
-                    : null;
-
-
-                const xLen = bLon.length;
-                const yLen = bLat.length;
-
-                const tiny = 0.00001;
-
-                const lon0 = bLon[0];
-                const lon1 = bLon[xLen - 1];
-                const lat0 = bLat[0];
-                const lat1 = bLat[yLen - 1];
-
-
-
-                if (showSeafloor) {
-                    const flat = bathyZ.flat();
-                    const bathyMax = Math.max(...flat);
-                    const bathyMin = Math.min(...flat);
-
-                    // Colour ramp as [[z, hex]] stops; `snow` (0..1) blends land colours towards white.
-                    const makeStops = (snow) => {
-                        const stops = [];
-                        if (bathyMin < 0) {
-                            // Scenery on: seabed darkens with depth; off: plain earth ramp.
-                            stops.push([bathyMin, fx.scenery ? earthDeepColour : earthColour]);
-                            stops.push([0, fx.scenery ? earthColour : earthGradientEnd]);
-                        }
-                        if (bathyMax > 0) {
-                            const lc  = fx.greenLand ? lerpHex(landColour, snowColour, snow) : earthColour;
-                            const lce = fx.greenLand ? lerpHex(landGradientEnd, snowGradientEnd, snow) : earthGradientEnd;
-                            stops.push([Math.max(0, bathyMin), lc]);
-                            stops.push([bathyMax, lce]);
-                        }
-                        if (stops.length === 1) stops.push([stops[0][0] + 1, stops[0][1]]);
-                        return stops;
-                    };
-                    // Snow fraction from latitude: 0 equatorward of the cutoff, 1 poleward, blended across snowBlendKm.
-                    const blendDeg = snowBlendKm / 111.111;
-                    const snowAt = (lat) => {
-                        if (!fx.greenLand || bathyMax <= 0) return 0;
-                        const t = (Math.abs(lat) - snowLatCutoff) / blendDeg + 0.5;
-                        const c = Math.max(0, Math.min(1, t));
-                        return c * c * (3 - 2 * c);
-                    };
-                    // Colour at height z / snow fraction, quantised and memoised; applied per VERTEX (`vertexcolor`).
-                    const colourCache = new Map();
-                    const span = Math.max(bathyMax - bathyMin, 1e-6);
-                    const facetColour = (z, snow) => {
-                        const zq = Math.round((z - bathyMin) / span * 128) / 128, sq = Math.round(snow * 8) / 8;
-                        const key = zq + ':' + sq;
-                        let col = colourCache.get(key);
-                        if (col) return col;
-                        const zz = bathyMin + zq * span, stops = makeStops(sq);
-                        col = stops[stops.length - 1][1];
-                        for (let q = 1; q < stops.length; q++) {
-                            if (zz <= stops[q][0]) { const [z0, c0] = stops[q - 1], [z1, c1] = stops[q]; col = z1 > z0 ? lerpHex(c0, c1, (zz - z0) / (z1 - z0)) : c1; break; }
-                        }
-                        colourCache.set(key, col);
-                        return col;
-                    };
-
-                    // One mesh for seabed + walls + base with shared rim positions (no z-fighting slivers).
-                    // Grid vertex (ix, iy) is index iy*xLen+ix.
-                    const G = { x: [], y: [], z: [], i: [], j: [], k: [], col: [] };
-                    for (let iy = 0; iy < yLen; iy++) {
-                        const snow = snowAt(bLat[iy]);
-                        for (let ix = 0; ix < xLen; ix++) { const z = bathyZ[iy][ix]; G.x.push(bLon[ix]); G.y.push(bLat[iy]); G.z.push(z); G.col.push(facetColour(z, snow)); }
-                    }
-                    const V = (ix, iy) => iy * xLen + ix;
-                    const face = (a, b, c) => { G.i.push(a); G.j.push(b); G.k.push(c); };
-                    for (let iy = 0; iy < yLen - 1; iy++) for (let ix = 0; ix < xLen - 1; ix++) {
-                        const v00 = V(ix, iy), v10 = V(ix + 1, iy), v01 = V(ix, iy + 1), v11 = V(ix + 1, iy + 1);
-                        // Split along alternating diagonals so ridges don't all lean one way.
-                        if ((ix + iy) % 2) { face(v00, v10, v11); face(v00, v11, v01); }
-                        else { face(v00, v10, v01); face(v10, v11, v01); }
-                    }
-                    // Rim (anticlockwise from the SW corner) and its copy at baseZ.
-                    const rim = [];
-                    for (let ix = 0; ix < xLen - 1; ix++) rim.push(V(ix, 0));
-                    for (let iy = 0; iy < yLen - 1; iy++) rim.push(V(xLen - 1, iy));
-                    for (let ix = xLen - 1; ix > 0; ix--) rim.push(V(ix, yLen - 1));
-                    for (let iy = yLen - 1; iy > 0; iy--) rim.push(V(0, iy));
-                    // Walls + base get their OWN copy of the rim so seabed colours don't blend down the wall.
-                    const rimTop = rim.map(v => { G.x.push(G.x[v]); G.y.push(G.y[v]); G.z.push(G.z[v]); G.col.push(earthColour); return G.x.length - 1; });
-                    const rimBase = rim.map(v => { G.x.push(G.x[v]); G.y.push(G.y[v]); G.z.push(baseZ); G.col.push(earthColour); return G.x.length - 1; });
-                    for (let q = 0; q < rim.length; q++) {
-                        const r = (q + 1) % rim.length;
-                        face(rimTop[q], rimBase[q], rimBase[r]); face(rimTop[q], rimBase[r], rimTop[r]);
-                    }
-                    // Base: fan from the SW base corner over the base ring.
-                    for (let q = 1; q < rimBase.length - 1; q++) face(rimBase[0], rimBase[q + 1], rimBase[q]);
-
-                    // Smooth shading (flat normals outlined every facet).
-                    traces.push({
-                        x: G.x, y: G.y, z: G.z, i: G.i, j: G.j, k: G.k, vertexcolor: G.col,
-                        type: 'mesh3d', showscale: false, flatshading: false, hoverinfo: 'skip',
-                        lighting: { ambient: 0.65, diffuse: 0.75, specular: 0.05, roughness: 0.8, fresnel: 0.05 },
-                        name: 'Seabed'
-                    });
+                // Seabed, land and coastline (SceneKit). The geometry only changes with True height, so style toggles reuse it.
+                const bLon = bathyGrid.lon, bLat = bathyGrid.lat, seabedKey = vExag + ':' + baseZ;
+                if (!seabed || seabed.key !== seabedKey) {
+                    seabed = SK.buildSeabed(bathyGrid, { landScale: SK.landScale(vExag), coastStep: Math.abs(displayMinZ) * SK.LOOK.coastStepFrac, baseZ, basemap: coast });
+                    seabed.key = seabedKey;
                 }
+                const bathyZ = seabed.bathyZ;
 
-                // Water: the sea surface plus four side panes, as ONE mesh3d with
-                // truly vertical walls. (These used to be `surface` traces faked
-                // vertical by slanting them across a 1e-5 degree strip; normals
-                // finite-differenced over that sliver are float32 noise, so the
-                // panes' shading flickered and whole panes dropped out.)
-                const W = { x: [], y: [], z: [], i: [], j: [], k: [] };
-                const wv = (x, y, z) => { W.x.push(x); W.y.push(y); W.z.push(z); return W.x.length - 1; };
-                const wquad = (a, b, c, d) => { W.i.push(a, a); W.j.push(b, c); W.k.push(c, d); };
-                // Pane bottoms follow the seabed, clamped to sea level so no water is drawn up a land edge.
-                const edgeZ = (ix, iy) => showSeafloor ? Math.min(bathyZ[iy][ix], 0) : baseZ;
-                const wx0 = bLon[0], wx1 = bLon[xLen - 1], wy0 = bLat[0], wy1 = bLat[yLen - 1];
-                wquad(wv(wx0, wy0, 0), wv(wx1, wy0, 0), wv(wx1, wy1, 0), wv(wx0, wy1, 0));   // sea surface
-                const wpane = (n, at) => {
-                    let pt = null, pb = null, pz = 0;
-                    for (let q = 0; q < n; q++) {
-                        const [x, y, z] = at(q), t = wv(x, y, 0), b = wv(x, y, z);
-                        if (q && (z < 0 || pz < 0)) wquad(pt, t, b, pb);   // skip dry (zero-height) cells
-                        pt = t; pb = b; pz = z;
-                    }
-                };
-                wpane(xLen, q => [bLon[q], wy0, edgeZ(q, 0)]);
-                wpane(xLen, q => [bLon[q], wy1, edgeZ(q, yLen - 1)]);
-                wpane(yLen, q => [wx0, bLat[q], edgeZ(0, q)]);
-                wpane(yLen, q => [wx1, bLat[q], edgeZ(xLen - 1, q)]);
-                traces.push({
-                    type: 'mesh3d', x: W.x, y: W.y, z: W.z, i: W.i, j: W.j, k: W.k,
-                    intensity: W.z, colorscale: [[0, waterBottomColour], [1, waterTopColour]], cmin: baseZ, cmax: 0,
-                    opacity: waterOpacity, showscale: false, hoverinfo: 'skip', flatshading: true,
-                    // Mostly flat tint: specular/fresnel on the panes reads as a reflective haze.
-                    lighting: { ambient: 0.9, diffuse: 0.35, specular: 0, roughness: 1, fresnel: 0 },
-                    name: 'Water'
-                });
+                const xLen = bLon.length, yLen = bLat.length;
+                const lon0 = bLon[0], lon1 = bLon[xLen - 1], lat0 = bLat[0], lat1 = bLat[yLen - 1];
+                const snowAt = lat => (fx.greenLand ? SK.snowAt(lat) : 0);
+                traces.push(...seabed.traces(seabedStyle()));
+                traces.push(SK.waterTrace(bLon, bLat, bathyZ, baseZ));
 
 
-
-                const aspectX = distX / maxHoriz;
-                const aspectY = distY / maxHoriz;
-                const aspectZ = (distZ / maxHoriz) * vExag;
-
+                // Scenery headroom is reserved even when off, so toggling doesn't rescale the scene.
+                const box = SK.sceneBox(fp, lon0, lon1, lat0, lat1, baseZ, vExag, Math.max(0, ...bathyZ.flat()), Math.max(gliderLength * 0.8, Scenery.maxHeight()));
+                const { zRange, aspectZ } = box;
                 boxAspectZ = aspectZ;
                 sceneVExag = vExag;
-                occGrid = showSeafloor ? { lon: bLon, lat: bLat, z: bathyZ } : null;
-
-                // Explicit axis ranges so data units convert to scene units exactly (see sceneScale).
-                const xRange = [lon0 - tiny, lon1 + tiny];
+                occGrid = { lon: bLon, lat: bLat, z: bathyZ };
                 hidePoint = [lon0, lat0, baseZ];
-                const yRange = [lat0 - tiny, lat1 + tiny];
-                // Headroom above the highest ground so the glider/scenery aren't clipped. Objects are sized in
-                // scene units and kz depends on the range, so solve top = zTop0 + h·(top − baseZ)/aspectZ.
-                const zTop0 = showSeafloor ? Math.max(0, ...bathyZ.flat()) : 0;
-                // Scenery headroom is reserved even when off, so toggling doesn't rescale the scene.
-                const hTop = Math.max(gliderLength * 0.8, Scenery.maxHeight());
-                const zRange = [baseZ, hTop < aspectZ * 0.5 ? (zTop0 - hTop * baseZ / aspectZ) / (1 - hTop / aspectZ) : zTop0 + hTop * (zTop0 - baseZ) / aspectZ];
-                // Data units per scene unit along each axis.
-                sceneScale = {
-                    kx: (xRange[1] - xRange[0]) / aspectX,
-                    ky: (yRange[1] - yRange[0]) / aspectY,
-                    kz: (zRange[1] - zRange[0]) / aspectZ,
-                };
+                sceneScale = box.scale;   // data units per scene unit along each axis
                 // Pivot at the dives' mid-depth, so a deep seabed sits below the view rather than in its middle.
                 const pivotZ = ((gliderDeepest / 2 - zRange[0]) / (zRange[1] - zRange[0]) - 0.5) * aspectZ;
-                sceneBox = { xRange, yRange, zRange, aspectX, aspectY, aspectZ, pivotZ };
+                sceneBox = { ...box, pivotZ };
                 // Keep the pivot on the glider (ranges/aspect may have changed on a style toggle).
                 { const c = centerFor(data, posIdx); currentEye = { x: currentEye.x + c.x - currentCenter.x, y: currentEye.y + c.y - currentCenter.y, z: currentEye.z + c.z - currentCenter.z }; currentCenter = c; }
 
@@ -692,18 +512,18 @@
                 const tk = trackGeometry(data, posIdx);
                 aheadTraceIdx = traces.length;
                 traces.push({
-                    ...tk.ahead, mode: 'lines', line: { color: trackAheadColour, width: 2 },
+                    x: tk.ahead.x, y: tk.ahead.y, z: tk.ahead.z, mode: 'lines', line: trackColourData ? trackLineStyle(tk.ahead.c || [], 3) : { color: trackAheadColour, width: 2 },
                     type: 'scatter3d', name: 'Track ahead', hoverinfo: 'skip'
                 });
                 pastTraceIdx = traces.length;
                 traces.push({
-                    ...tk.past, mode: 'lines', line: { color: trackColour, width: 5 },
-                    type: 'scatter3d', opacity: trackOpacity, name: 'Track so far', hoverinfo: 'skip'
+                    x: tk.past.x, y: tk.past.y, z: tk.past.z, mode: 'lines', line: trackLineStyle(tk.past.c || [], 5),
+                    type: 'scatter3d', opacity: trackColourData ? 1 : trackOpacity, name: 'Track so far', hoverinfo: 'skip'
                 });
                 tipTraceIdx = traces.length;
                 traces.push({
-                    ...tipGeometry(data, posIdx, posIdx), mode: 'lines', line: { color: trackColour, width: 5 },
-                    type: 'scatter3d', opacity: trackOpacity, name: 'Track tip', hoverinfo: 'skip', showlegend: false
+                    ...tipGeometry(data, posIdx, posIdx), mode: 'lines', line: { color: trackValueHex(trackColourData ? trackColourData.values[posIdx] : null), width: 5 },
+                    type: 'scatter3d', opacity: trackColourData ? 1 : trackOpacity, name: 'Track tip', hoverinfo: 'skip', showlegend: false
                 });
 
                 // Start / end buoys (green / red) as one static mesh; diamond markers if the models didn't load.
@@ -730,7 +550,7 @@
                     traces.push({
                         ...B, type: 'mesh3d', intensity: B.cell, intensitymode: 'cell',
                         cmin: 0, cmax, colorscale: colors.map((c, q) => [q / cmax, c]), showscale: false,
-                        flatshading: true, lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
+                        flatshading: true, lighting: SK.LIGHT.model,
                         name: 'Start/End', hoverinfo: 'skip'
                     });
                 } else if (n > 0) {
@@ -745,15 +565,7 @@
                 // The glider at the current slider position; its trace index is kept so playback updates it in place.
                 const body = gliderGeometry(data, posIdx);
                 gliderTraceIdx = traces.length;
-                traces.push({
-                    ...body, i: gliderModel.i, j: gliderModel.j, k: gliderModel.k,
-                    type: 'mesh3d', intensity: gliderModel.cell, intensitymode: 'cell',
-                    cmin: 0, cmax: gliderModel.cmax, colorscale: gliderModel.colorscale, showscale: false,
-                    flatshading: true,
-                    // Near-unlit: the track line is drawn at full colour, so a shaded hull would look dull beside it.
-                    lighting: { ambient: 0.92, diffuse: 0.3, specular: 0.05, roughness: 0.9 },
-                    name: 'Glider', hoverinfo: 'skip'
-                });
+                traces.push(SK.modelTrace(gliderModel, body, SK.LIGHT.model, 'Glider'));
 
                 // Argo floats currently at the surface (may be none → hidden).
                 if (argoModel) {
@@ -764,48 +576,34 @@
                     traces.push({
                         type: 'mesh3d', ...ap, intensitymode: 'cell',
                         cmin: 0, cmax: argoModel.cmax, colorscale: argoModel.colorscale, showscale: false,
-                        flatshading: true, lighting: { ambient: 0.55, diffuse: 0.7, specular: 0.1, roughness: 0.8 },
+                        flatshading: true, lighting: SK.LIGHT.model,
                         name: 'Argo floats', hoverinfo: 'skip'
                     });
                 }
 
                 // Decorative scenery: stands on the drawn seabed/land, or only floats when the seafloor is out of range.
-                sceneryTraceIdx = -1; sceneryBase = null;
+                sceneryTraceIdx = -1;
                 {
-                    // Same latitude→snow blend the land colouring uses (0 when land isn't coloured).
-                    const snowAt = lat => {
-                        if (!fx.greenLand) return 0;
-                        const c = Math.max(0, Math.min(1, (Math.abs(lat) - snowLatCutoff) / (snowBlendKm / 111.111) + 0.5));
-                        return c * c * (3 - 2 * c);
-                    };
-                    const sc = Scenery.build({ ...data, bathy_lon: bLon, bathy_lat: bLat }, showSeafloor ? bathyZ : null, sceneScale, fileId, snowAt, baseZ);
-                    if (sc) {
-                        sceneryBase = { x: sc.x, y: sc.y, z: sc.z };
-                        if (!fx.scenery) Object.assign(sc, collapsed(sc.x.length));
-                        sceneryTraceIdx = traces.length; traces.push(sc);
+                    const sc = Scenery.build({ ...data, bathy_lon: bLon, bathy_lat: bLat }, bathyZ, sceneScale, fileId, snowAt, baseZ);
+                    sceneryParts = [];
+                    for (const part of sc ? [sc.still, sc.moving] : []) {
+                        if (!part) continue;
+                        const p = { idx: traces.length, base: { x: part.x, y: part.y, z: part.z } };
+                        if (part === sc.moving) sceneryTraceIdx = p.idx;
+                        sceneryParts.push(p);
+                        if (!fx.scenery) Object.assign(part, collapsed(part.x.length));
+                        traces.push(part);
                     }
                 }
 
-                const noAxis = { showgrid: false, zeroline: false, showline: false, showticklabels: false, showbackground: false, title: '', visible: false };
-                const layout = {
-                    hovermode: false,
-                    margin: { l: 0, r: 0, b: 0, t: 0 },
-                    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-                    scene: {
-                        xaxis: { ...noAxis, range: xRange, autorange: false },
-                        yaxis: { ...noAxis, range: yRange, autorange: false },
-                        zaxis: { ...noAxis, range: zRange, autorange: false },
-                        aspectmode: 'manual', aspectratio: { x: aspectX, y: aspectY, z: aspectZ }, camera: { eye: { ...currentEye }, center: { ...currentCenter } }
-                    },
-                    showlegend: false
-                };
+                const layout = SK.layout(box, { eye: { ...currentEye }, center: { ...currentCenter } });
                 return { traces, layout };
             }
 
             // ── Glider marker geometry ───────────────────────────────────
             // Model meshes (static/3d_view/models/<kind>.json) are in metres, +x nose, y across the wings, +z up.
             // Placement is done in scene units (via sceneScale), then converted back to lon/lat/depth for Plotly.
-            const gliderLength = 0.03;     // scene units nose-to-tail (scene is ~1 unit across)
+            let gliderLength = SK.SIZES.slocum;     // scene units nose-to-tail (scene is ~1 unit across); set from the vehicle kind
 
             // Track split at index i; both halves share the current point. The line is every sample unless
             // trackLineMax caps it (then a decimated copy with the exact current sample spliced in).
@@ -817,6 +615,8 @@
                     if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
                     trackLine = { idx, x: idx.map(q => data.lon[q]), y: idx.map(q => data.lat[q]), z: idx.map(q => data.elevation[q]) };
                 }
+                const C = trackColourData && trackColourData.values.length === data.lon.length ? trackColourData.values : null;
+                if (C && !trackLine.c) trackLine.c = trackLine.idx.map(q => C[q]);
                 const L = trackLine;
                 // First decimated point strictly after i.
                 let lo = 0, hi = L.idx.length;
@@ -825,8 +625,10 @@
                 const from = lo > 0 ? L.idx[lo - 1] + 1 : 0, to = lo < L.idx.length ? L.idx[lo] : i + 1;
                 const seg = (arr, a, b) => arr.slice(a, b);
                 return {
-                    past:  { x: L.x.slice(0, lo).concat(seg(data.lon, from, i + 1)), y: L.y.slice(0, lo).concat(seg(data.lat, from, i + 1)), z: L.z.slice(0, lo).concat(seg(data.elevation, from, i + 1)) },
-                    ahead: { x: seg(data.lon, i, to).concat(L.x.slice(lo)), y: seg(data.lat, i, to).concat(L.y.slice(lo)), z: seg(data.elevation, i, to).concat(L.z.slice(lo)) },
+                    past:  { x: L.x.slice(0, lo).concat(seg(data.lon, from, i + 1)), y: L.y.slice(0, lo).concat(seg(data.lat, from, i + 1)), z: L.z.slice(0, lo).concat(seg(data.elevation, from, i + 1)),
+                             c: C ? L.c.slice(0, lo).concat(seg(C, from, i + 1)) : null },
+                    ahead: { x: seg(data.lon, i, to).concat(L.x.slice(lo)), y: seg(data.lat, i, to).concat(L.y.slice(lo)), z: seg(data.elevation, i, to).concat(L.z.slice(lo)),
+                             c: C ? seg(C, i, to).concat(L.c.slice(lo)) : null },
                 };
             }
 
@@ -925,34 +727,8 @@
                 while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (profs[mid].ms <= ms) lo = mid; else hi = mid; }
                 const a = profs[lo], b = profs[hi].ms > ms ? profs[hi] : null;
                 const since = (ms - a.ms) / H;
-                if (!b) {
-                    // Last known profile: surface stint, descend, park for good.
-                    let depth;
-                    if (since < ARGO.surfaceH) depth = 0;
-                    else if (since < ARGO.surfaceH + ARGO.descendH) depth = ARGO.parkM * (since - ARGO.surfaceH) / ARGO.descendH;
-                    else depth = ARGO.parkM;
-                    return { lon: a.lon, lat: a.lat, depth };
-                }
-                // One cycle a → b as piecewise-linear depth keyframes; cycles shorter than ~19 h compress every phase proportionally.
-                const T = (b.ms - a.ms) / H;
-                const need = ARGO.surfaceH + ARGO.descendH + ARGO.deepStartH;
-                const k = T < need ? T / need : 1;
-                const keys = [
-                    [0, 0],
-                    [ARGO.surfaceH * k, 0],
-                    [(ARGO.surfaceH + ARGO.descendH) * k, ARGO.parkM],
-                    [T - ARGO.deepStartH * k, ARGO.parkM],
-                    [T - ARGO.deepEndH * k, ARGO.profileM],
-                    [T, 0],
-                ];
-                let depth = 0;
-                for (let q = 1; q < keys.length; q++) {
-                    if (since <= keys[q][0]) {
-                        const [t0, d0] = keys[q - 1], [t1, d1] = keys[q];
-                        depth = t1 > t0 ? d0 + (d1 - d0) * (since - t0) / (t1 - t0) : d1;
-                        break;
-                    }
-                }
+                if (!b) return { lon: a.lon, lat: a.lat, depth: SK.argoParkDepth(since) };
+                const depth = SK.argoCycleDepth(since, (b.ms - a.ms) / H);
                 const u = Math.max(0, Math.min(1, (ms - a.ms) / (b.ms - a.ms)));   // drift fraction
                 return { lon: a.lon + (b.lon - a.lon) * u, lat: a.lat + (b.lat - a.lat) * u, depth };
             }
@@ -1057,7 +833,7 @@
                     up = [fw[1] * sd[2] - fw[2] * sd[1], fw[2] * sd[0] - fw[0] * sd[2], fw[0] * sd[1] - fw[1] * sd[0]];
                 }
 
-                const k = gliderLength / gliderModel.length;   // metres -> scene units
+                const k = gliderLength / gliderModel.extent;   // metres -> scene units
                 const M = gliderModel, m = M.x.length, xs = new Array(m), ys = new Array(m), zs = new Array(m);
                 for (let q = 0; q < m; q++) {
                     const mx = M.x[q] * k, my = M.y[q] * k, mz = M.z[q] * k;
@@ -1068,6 +844,7 @@
                 return { x: xs, y: ys, z: zs };
             }
 
+            const loadModel = SK.loadModel, mergeParts = SK.mergeParts;
             // Vehicle to draw: detected platform kind, then name heuristics; Slocum if unknown.
             const MODEL_KINDS = ['slocum', 'seaglider', 'alr'];
             function platformKindFor(kind, name) {
@@ -1083,7 +860,7 @@
                     const rec = (files || []).find(f => f.id === fileId) || {};
                     return platformKindFor(rec.platform_kind, rec.name) || 'slocum';
                 })
-                .then(kind => loadModel(kind));
+                .then(kind => { gliderLength = SK.SIZES[kind] || SK.SIZES.slocum; return loadModel(kind); });
             // Argo float model: optional, never blocks the scene.
             const argoModelPromise = loadModel('argo').catch(() => null);
             // Start/end buoys: loaded with the scene (tiny files); optional.
@@ -1093,33 +870,6 @@
             // Scenery models (one bundle) load with the scene so the first draw is complete; optional.
             const sceneryPromise = Scenery.load(mergeParts).catch(() => null);
 
-            // `name` is a model in static/3d_view/models, or a full URL (starts with '/').
-            function loadModel(name) {
-                const url = name.startsWith('/') ? name : `/static/3d_view/models/${name}.json`;
-                return fetch(url).then(r => { if (!r.ok) throw new Error(url); return r.json(); }).then(mergeParts);
-            }
-            function mergeParts(parts) {
-                {
-                    // Merge parts into one mesh; each triangle carries its part's colour index (intensitymode:'cell').
-                    const M = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [] };
-                    const colors = [];
-                    for (const p of Object.values(parts)) {
-                        if (!colors.includes(p.color)) colors.push(p.color);
-                        const ci = colors.indexOf(p.color), base = M.x.length;
-                        M.x.push(...p.x); M.y.push(...p.y); M.z.push(...p.z);
-                        M.i.push(...p.i.map(v => v + base)); M.j.push(...p.j.map(v => v + base)); M.k.push(...p.k.map(v => v + base));
-                        for (let q = 0; q < p.i.length; q++) M.cell.push(ci);
-                    }
-                    M.cmax = Math.max(colors.length - 1, 1);
-                    M.colorscale = colors.map((c, q) => [q / M.cmax, c]);
-                    if (colors.length === 1) M.colorscale.push([1, colors[0]]);
-                    // Nose-to-tail length: from the hull if present, else from every vertex.
-                    const hx = parts.hull ? parts.hull.x : M.x;
-                    M.length = Math.max(...hx) - Math.min(...hx);
-                    if (!parts.hull) M.length = Math.max(...M.z) - Math.min(...M.z);   // upright objects: height
-                    return M;
-                }
-            }
 
             // Playback clock value (epoch ms) at the current position, or null when the file has no times.
             let playClockMs = () => null;
@@ -1132,7 +882,13 @@
                 else if (m.type === 'clearPin') unpin();
             });
 
-            Promise.all([fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`).then(r => r.json()), modelPromise, buoyPromise, sceneryPromise])
+            const dataPromise = fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`).then(r => r.json()).then(async (data) => {
+                if (data.error) throw new Error(data.error);
+                bathyGrid = SK.upsampleGrid(data.bathy_lon, data.bathy_lat, data.bathy_z, SK.LOOK.bathyUpsampleTo);
+                coast = await SK.loadCoast(bathyGrid);
+                return data;
+            });
+            Promise.all([dataPromise, modelPromise, buoyPromise, sceneryPromise])
                 .then(([data, model, buoys]) => {
                     if (data.error) throw new Error(data.error);
                     gliderModel = model;
@@ -1190,6 +946,66 @@
                         Plotly.react('plot3d', scene.traces, scene.layout, config).then(tightenClipPlanes);
                     };
 
+                    // Track colour: the picker lists the presets this file has the variables for; the shell's
+                    // 'followColour' (the plot being viewed) can also set any variable. Responses are kept per variable.
+                    {
+                        const row = document.getElementById('trackColourRow'), sel = document.getElementById('trackColourSel'), bar = document.getElementById('trackColourBar');
+                        const fmt = SK.fmtValue;
+                        const cache = new Map();      // query string -> Promise(response)
+                        let options = [], wanted = 0;
+                        const show = (res) => {
+                            trackColourData = res && res.values ? prepTrackColour(res) : null;
+                            trackLine = null;
+                            bar.style.display = trackColourData ? 'block' : 'none';
+                            if (trackColourData) {
+                                const used = res.discrete ? [...new Set(res.values.filter(v => v != null))].sort((a, b) => a - b) : null;
+                                bar.querySelector('i').style.background = `linear-gradient(90deg, ${used
+                                    ? used.map((v, k) => `${DISCRETE_09[v]} ${100 * k / used.length}% ${100 * (k + 1) / used.length}%`).join(',')
+                                    : trackColourData.palette.join(',')})`;
+                                bar.querySelector('div').innerHTML = used ? used.map(v => `<span>${v}</span>`).join('') : `<span>${fmt(res.cmin)}</span><span>${res.units || ''}</span><span>${fmt(res.cmax)}</span>`;
+                            }
+                            rerender();
+                        };
+                        const load = (query) => {
+                            const mine = ++wanted;
+                            if (!query) { show(null); return; }
+                            if (!cache.has(query)) cache.set(query, fetch(`/api/3d_colour?id=${encodeURIComponent(fileId)}&${query}`).then(r => r.json()).catch(() => { cache.delete(query); return null; }));
+                            cache.get(query).then(res => { if (mine === wanted) show(res); });
+                        };
+                        const renderSel = (extra) => {
+                            sel.innerHTML = '<option value="">Plain</option>' + options.map(o => `<option value="${o.key}">${o.label}</option>`).join('')
+                                + (extra ? `<option value="var:${extra}">${extra}</option>` : '');
+                            row.style.display = (options.length || extra) ? 'block' : 'none';
+                        };
+                        const follow = (m) => {
+                            if (!m || !m.var) return;
+                            const opt = options.find(o => o.var === m.var && o.cmap === m.cmap) || options.find(o => o.var === m.var);
+                            renderSel(opt ? '' : m.var);
+                            sel.value = opt ? opt.key : `var:${m.var}`;
+                            load(`var=${encodeURIComponent(m.var)}&cmap=${encodeURIComponent(m.cmap || (opt && opt.cmap) || '')}`);
+                        };
+                        sel.addEventListener('change', () => {
+                            if (sel.value.startsWith('var:')) return;
+                            try { localStorage.setItem(TRACK_COLOUR_KEY, sel.value); } catch (_) {}
+                            load(sel.value ? `preset=${encodeURIComponent(sel.value)}` : '');
+                        });
+                        let followMsg = null, optionsReady = false;
+                        window.addEventListener('message', (e) => {
+                            if (!e.data || e.data.type !== 'followColour') return;
+                            followMsg = e.data;
+                            if (optionsReady) follow(followMsg);
+                        });
+                        fetch(`/api/3d_colours?id=${encodeURIComponent(fileId)}`).then(r => r.json()).catch(() => ({})).then((res) => {
+                            options = (res && res.options) || [];
+                            optionsReady = true;
+                            renderSel('');
+                            if (followMsg && followMsg.var) { follow(followMsg); return; }
+                            let saved = ''; try { saved = localStorage.getItem(TRACK_COLOUR_KEY) || ''; } catch (_) {}
+                            if (saved && options.some(o => o.key === saved)) { sel.value = saved; load(`preset=${encodeURIComponent(saved)}`); }
+                        });
+                        try { window.parent.postMessage({ type: 'view3dReady' }, '*'); } catch (_) {}
+                    }
+
                     Plotly.newPlot('plot3d', first.traces, first.layout, config).then(() => {
                         window.logRender('3D Map Frontend', performance.now() - startTime);
                         tightenClipPlanes();
@@ -1223,9 +1039,7 @@
                         };
                         // Camera fast path: call scene.setViewport directly (relayout re-runs supplyDefaults over every
                         // trace) and keep layout/_fullLayout in step so user drags and later replots agree.
-                        // gl-plot3d's own rAF loop draws once per frame when any object is dirty. Flag one rather than calling
-                        // glplot.redraw(), which renders synchronously (a second full draw on top of the loop's own).
-                        const markDirty = (scene) => { const o = scene.glplot.objects; if (o && o.length) o[0].dirty = true; else scene.glplot.redraw(); };
+                        const markDirty = SK.markDirty;
                         const pushCamera = () => {
                             try {
                                 const full = plotDiv._fullLayout.scene, scene = full._scene;
@@ -1240,27 +1054,7 @@
                         };
                         // mesh3d update() rebuilds the colour texture on every call; drop `colormap` on the way through.
                         // Scatter3d wrappers have no .mesh and take the plain update.
-                        const traceUpdate = (w, ft) => {
-                            const m = w.mesh;
-                            if (!m || typeof m.update !== 'function') { w.update(ft); return; }
-                            const own = Object.prototype.hasOwnProperty.call(m, 'update'), orig = m.update;
-                            m.update = p => { if (p) delete p.colormap; return orig.call(m, p); };
-                            try { w.update(ft); } finally { if (own) m.update = orig; else delete m.update; }
-                        };
-                        // Fast path: hand trace attributes straight to the WebGL wrapper (Plotly internals);
-                        // falls back to a normal restyle if the internals aren't where expected.
-                        const fastPatch = (ti, patch) => {
-                            try {
-                                const scene = plotDiv._fullLayout.scene._scene;
-                                const ft = plotDiv._fullData[ti], w = scene.traces[ft.uid];
-                                if (!w || typeof w.update !== 'function') throw new Error('no wrapper');
-                                Object.assign(plotDiv.data[ti], patch); Object.assign(ft, patch);
-                                traceUpdate(w, ft);
-                                markDirty(scene);
-                            } catch (_) {
-                                Plotly.restyle('plot3d', Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, [v]])), [ti]);
-                            }
-                        };
+                        const fastPatch = (ti, patch) => SK.fastPatch(plotDiv, ti, patch);
                         const fastXYZ = (indices, upd) => indices.forEach((ti, q) => fastPatch(ti, { x: upd.x[q], y: upd.y[q], z: upd.z[q] }));
                         const pushGlider = (f) => {
                             if (gliderTraceIdx < 0) return;
@@ -1277,6 +1071,12 @@
                             if (pastTraceIdx < 0 || posIdx === lastTrackIdx) return;   // re-uploads both halves of the track: skip when the split hasn't moved
                             lastTrackIdx = posIdx;
                             const t = trackGeometry(data, posIdx);
+                            if (trackColourData && t.past.c) {   // coloured: the travelled line's colour array is re-sliced with it
+                                fastPatch(pastTraceIdx, { x: t.past.x, y: t.past.y, z: t.past.z, line: { ...plotDiv._fullData[pastTraceIdx].line, color: trackColourValues(t.past.c) } });
+                                fastPatch(aheadTraceIdx, { x: t.ahead.x, y: t.ahead.y, z: t.ahead.z, line: { ...plotDiv._fullData[aheadTraceIdx].line, color: trackColourValues(t.ahead.c) } });
+                                if (tipTraceIdx >= 0) fastPatch(tipTraceIdx, { line: { ...plotDiv._fullData[tipTraceIdx].line, color: trackValueHex(trackColourData.values[posIdx]) } });
+                                return;
+                            }
                             fastXYZ([pastTraceIdx, aheadTraceIdx], { x: [t.past.x, t.ahead.x], y: [t.past.y, t.ahead.y], z: [t.past.z, t.ahead.z] });
                         };
                         // Argo floats always go through the fast path (collapsed placeholder when none/off).
@@ -1302,12 +1102,13 @@
                                     return true;
                                 }
                                 if (key === 'scenery') {
-                                    if (sceneryTraceIdx < 0 || !sceneryBase) return false;
-                                    const fresh = buildScene(data).traces;   // recolours the seabed for the new setting (JS only, nothing drawn)
-                                    const sb = fresh.findIndex(t => t.name === 'Seabed');
-                                    if (sb >= 0 && plotDiv.data[sb] && plotDiv.data[sb].name === 'Seabed') fastPatch(sb, { vertexcolor: fresh[sb].vertexcolor });
-                                    const on = fx.scenery && (Scenery.sway(performance.now() / 1000) || sceneryBase);
-                                    fastPatch(sceneryTraceIdx, on ? { x: on.x, y: on.y, z: on.z } : collapsed(sceneryBase.x.length));
+                                    if (!sceneryParts.length) return false;
+                                    const col = seabed.colours(seabedStyle());   // recolours the seabed for the new setting
+                                    plotDiv.data.forEach((t, ti) => { if (t.name === 'Seabed' || t.name === 'Land') fastPatch(ti, { vertexcolor: col }); });
+                                    for (const p of sceneryParts) {
+                                        const on = fx.scenery && ((p.idx === sceneryTraceIdx && Scenery.sway(performance.now() / 1000)) || p.base);
+                                        fastPatch(p.idx, on ? { x: on.x, y: on.y, z: on.z } : collapsed(p.base.x.length));
+                                    }
                                     return true;
                                 }
                             } catch (_) {}
@@ -1514,9 +1315,10 @@
                             // Clamp zoom-out: pull the eye back in if it drifted past the cap.
                             if (clampEye()) Plotly.relayout('plot3d', { 'scene.camera.eye': currentEye });
                         });
-                        // Swallow wheel events at either zoom cap so the view doesn't snap back.
+                        // Trackpad: a sideways two-finger swipe would spin the whole scene (gl-plot3d rotates on horizontal wheel),
+                        // so only vertical scroll (zoom) gets through; and swallow it at either zoom cap so the view doesn't snap back.
                         plotDiv.addEventListener('wheel', (e) => {
-                            if ((e.deltaY > 0 && eyeDist() >= eyeCap() - 1e-3) || (e.deltaY < 0 && eyeDist() <= minEyeDist + 1e-3)) {
+                            if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey || (e.deltaY > 0 && eyeDist() >= eyeCap() - 1e-3) || (e.deltaY < 0 && eyeDist() <= minEyeDist + 1e-3)) {
                                 e.preventDefault(); e.stopPropagation();
                             }
                         }, { capture: true, passive: false });

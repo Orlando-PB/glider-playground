@@ -23,6 +23,7 @@ import requests
 from netCDF4 import Dataset
 
 from . import plot_logic
+from . import presets_logic
 
 # Points per globe track — the same locally and on the server. Lower it here if
 # the Pi's globe ever feels heavy with many tracks loaded (bump CACHE_VERSION).
@@ -893,3 +894,98 @@ def generate_3d_data(filepath):
         **payload_bathy,
         "bounds": bounds,
     }
+
+
+# ---------- Track colour (3D view / missions) ----------
+
+TRACK_COLOUR_MAX_GAP = 40      # track points (of ~20k per file) a missing colour value may be interpolated across
+
+def _track_colour_presets(filepath):
+    """Presets usable as a 3D track colour for this file: time-section presets with a continuous palette whose
+    colour variable is present. -> [(preset key, preset, variable name)]"""
+    cfg = presets_logic.load()
+    names = set(plot_logic._get_var_names(filepath) or [])
+    time_axis = set(presets_logic._candidates(cfg, "time"))
+    out = []
+    for key, p in cfg.get("presets", {}).items():
+        if not set(presets_logic._candidates(cfg, p.get("x"))) & time_axis:
+            continue
+        for cand in presets_logic._candidates(cfg, p.get("c")):
+            var = f"{cand}_ADJUSTED" if f"{cand}_ADJUSTED" in names else cand
+            if var in names:
+                out.append((key, p, var))
+                break
+    return out
+
+
+def track_colour_options(filepath) -> list:
+    return [{"key": k, "label": p.get("label", k), "var": v, "cmap": p.get("cmap")} for k, p, v in _track_colour_presets(filepath)]
+
+
+_track_colour_cache = {}       # (path, size, mtime, var) -> result sans preset fields; small, newest kept
+_TRACK_COLOUR_CACHE_MAX = 24
+
+
+def track_colour(filepath, preset_key=None, var=None, cmap=None) -> dict:
+    """One value per 3D-track point for a colour variable (a preset's, or any numeric `var` so the 3D view can
+    follow a plot): the mean of the raw samples each track point stands for (sparse sensors would otherwise
+    mostly miss the sampled rows). Limits are the 2nd-98th percentiles."""
+    if preset_key:
+        hit = next(((p, v) for k, p, v in _track_colour_presets(filepath) if k == preset_key), None)
+        if not hit:
+            return {"error": "Not available for this file"}
+        preset, var = hit
+    else:
+        if not var or var not in set(plot_logic._get_var_names(filepath) or []):
+            return {"error": "Not available for this file"}
+        preset = {"label": var, "cmap": cmap}
+    head = {"preset": preset_key or "", "label": preset.get("label", var), "var": var, "cmap": cmap or preset.get("cmap")}
+    discrete = str(head["cmap"] or "").startswith("discrete")
+    try:
+        st = os.stat(filepath)
+        ckey = (str(filepath), st.st_size, st.st_mtime, var, discrete)
+    except OSError:
+        ckey = None
+    if ckey in _track_colour_cache:
+        return {**_track_colour_cache[ckey], **head}
+    body = _track_colour_values(filepath, var, discrete)
+    if ckey and "error" not in body:
+        while len(_track_colour_cache) >= _TRACK_COLOUR_CACHE_MAX:
+            _track_colour_cache.pop(next(iter(_track_colour_cache)))
+        _track_colour_cache[ckey] = body
+    return {**body, **head}
+
+
+def _track_colour_values(filepath, var, discrete=False) -> dict:
+    idx = get_core_spatial_index(filepath, MAX_POINTS_3D)
+    if idx is None or not len(idx):
+        return {"error": "Not available for this file"}
+    raw = _read_named_arrays(filepath, [var]).get(var)
+    if raw is None or raw.dtype.kind not in "fiu" or len(raw) <= int(idx.max()):
+        return {"error": "Not available for this file"}
+    idx = np.asarray(idx, dtype=np.int64)
+    if discrete:                   # integer flags (0-9): the point's own sample, never a mean
+        vals = raw[idx].astype(float)
+        vals[~((vals >= 0) & (vals <= 9))] = np.nan
+        return {"discrete": True, "units": "", "cmin": 0.0, "cmax": 9.0,
+                "values": [None if not np.isfinite(v) else int(round(v)) for v in vals]}
+    edges = np.concatenate(([0], (idx[:-1] + idx[1:]) // 2 + 1))          # each point owns the rows nearest to it
+    ok = np.isfinite(raw)
+    sums = np.add.reduceat(np.where(ok, raw, 0.0), edges)
+    counts = np.add.reduceat(ok.astype(np.int64), edges)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        vals = np.where(counts > 0, sums / counts, np.nan)
+    # Sparse sensors leave most track points empty; bridge gaps up to TRACK_COLOUR_MAX_GAP points (linear), so the
+    # line reads as one colour ramp rather than flickering to "no data" between every sample. Long gaps stay empty.
+    good = np.flatnonzero(np.isfinite(vals))
+    if 1 < good.size < vals.size:
+        pos = np.arange(vals.size)
+        nxt = np.searchsorted(good, pos, side="left").clip(0, good.size - 1)
+        prv = (np.searchsorted(good, pos, side="right") - 1).clip(0, good.size - 1)
+        bridge = ~np.isfinite(vals) & (good[nxt] - good[prv] <= TRACK_COLOUR_MAX_GAP) & (good[nxt] > pos) & (good[prv] < pos)
+        vals[bridge] = np.interp(pos[bridge], good, vals[good])
+    finite = vals[np.isfinite(vals)]
+    lo, hi = (np.percentile(finite, [2, 98]) if finite.size else (0.0, 1.0))
+    return {"units": (plot_logic._get_var_units(filepath) or {}).get(var, ""),
+            "cmin": float(lo), "cmax": float(hi if hi > lo else lo + 1e-9),
+            "values": [None if not np.isfinite(v) else float(f"{v:.5g}") for v in vals]}

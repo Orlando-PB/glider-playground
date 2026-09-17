@@ -37,6 +37,7 @@ from .server import update_logic
 from .maps import waypoint_logic
 from .server import server_config
 from .maps import ships_logic
+from . import missions
 
 server_config.configure_logging()
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ copernicus_prefetch.start()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+missions.attach(app)   # experimental, self-contained: see missions/README.md
 
 
 # ---------- SEO (server deployment only) ----------
@@ -560,6 +562,17 @@ def api_3d_data(id: str):
         if rec and rec.get("spatial_3d") is payload:
             cache_logic._save_payload_sidecar(rec)
     return payload
+
+
+@app.get("/api/3d_colours")
+def api_3d_colours(id: str):
+    """Presets this file's 3D track can be coloured by (see spatial_logic.track_colour)."""
+    return {"options": spatial_logic.track_colour_options(_resolve_path(id))}
+
+
+@app.get("/api/3d_colour")
+def api_3d_colour(id: str, preset: str = "", var: str = "", cmap: str = ""):
+    return spatial_logic.track_colour(_resolve_path(id), preset or None, var or None, cmap or None)
 
 
 @app.get("/api/location")

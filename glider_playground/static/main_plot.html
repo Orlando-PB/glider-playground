@@ -1191,7 +1191,8 @@
 
             // Returned so initPlot can await the actual draw. Warm reuse → Plotly.react (keeps the
             // WebGL context); first draw → newPlot.
-            const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false, showTips: false };
+            const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false, showTips: false,
+                               doubleClick: false };   // resetZoomToFull owns the reset; Plotly's would autorange the zoomed chunk first
             const drawDone = drawPlot('data', gd => gd._fullLayout
                 ? Plotly.react(gd, traces, layout, PLOT_CFG)
                 : Plotly.newPlot(gd, traces, layout, PLOT_CFG)

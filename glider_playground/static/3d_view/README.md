@@ -3,6 +3,11 @@
 Everything that belongs only to the 3D dive-track view (`../3d_view.html`)
 lives here, kept apart from the science-facing pages.
 
+- `scene_kit.js` — `window.SceneKit`: everything `3d_view.html` and the mission
+  view (`missions/static/mission_view.js`) draw the same way (palette, lighting,
+  bathy upsampling, seabed colours, walls + water meshes, box scaling, model
+  loading, Argo cycle, track colour scale, the Plotly-internals fast path).
+  Change the shared look here, not in either page.
 - `models/` — low-poly vehicle/object meshes (gliders, ALR, Argo float,
   buoys, ships, mooring). Loaded by `3d_view.html` as
   `/static/3d_view/models/<name>.json`. See `models/README.md` for the format.
