@@ -5,8 +5,9 @@ days, downloads them into `DATA_DIR`, and tracks ownership in a marker file
 so that deletes only ever touch files we wrote — never user-placed data.
 
 Designed to run on a small server (Raspberry Pi) shared between users:
-  * The ERDDAP scan result is cached in-process for `SCAN_CACHE_TTL` seconds
-    so concurrent clients share one upstream fetch.
+  * The ERDDAP scan result is cached in-process for `SCAN_CACHE_TTL` seconds;
+    scans are single-flight and run in the background — `list_live` never
+    waits on ERDDAP, it reports `scanning` and the client polls.
   * Downloads are serialised on a single background worker.
   * Auto-update of locally-managed files runs as a side-effect of `list_live`
     but is rate-limited and never blocks the response.
@@ -16,6 +17,7 @@ Designed to run on a small server (Raspberry Pi) shared between users:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -35,6 +37,8 @@ FILE_SUFFIX = "_R.nc"
 SCAN_CACHE_TTL = 120          # seconds — 2 min server-side cache for the listing
 AUTO_UPDATE_COOLDOWN = 300    # seconds — minimum gap between auto-update sweeps
 HTTP_TIMEOUT = 15
+LISTING_TIMEOUT = 6           # seconds per directory-listing attempt
+LISTING_ATTEMPTS = 3
 
 MARKER_FILE = cache_logic.DATA_DIR / ".glider_playground_managed.json"
 # Gliders the user "binned": never auto-download these again until they ask
@@ -42,8 +46,13 @@ MARKER_FILE = cache_logic.DATA_DIR / ".glider_playground_managed.json"
 SUPPRESS_FILE = cache_logic.DATA_DIR / ".glider_playground_suppressed.json"
 SCANNER_INTERVAL = 1800       # seconds — background re-scan to pick up new gliders
 
+log = logging.getLogger(__name__)
+
 _lock = threading.RLock()
-_scan_cache: dict = {"at": 0.0, "data": None}
+_scan_cache: dict = {"at": 0.0, "data": None, "tried": 0.0, "scanning": False, "error": False}
+_scan_lock = threading.Lock()  # held for the duration of a scan (single-flight)
+_kick_pending = False
+SCAN_RETRY = 30               # seconds — gap before retrying a failed scan
 _last_auto_update: float = 0.0
 _in_flight: set[str] = set()  # filenames currently downloading
 _scanner_started = False
@@ -127,37 +136,53 @@ def is_managed(path: str | Path) -> bool:
 
 # ---------- ERDDAP scan ----------
 
-def _erddap_listing(base_url: str) -> list:
+def _erddap_listing(base_url: str) -> Optional[list]:
+    """Directory rows, or None when the request failed (distinct from empty)."""
     json_url = base_url.rstrip("/") + "/.json"
-    try:
-        r = requests.get(json_url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        rows = r.json().get("table", {}).get("rows", []) or []
-        return [{"name": row[0], "last_modified": (row[1] or 0) / 1000.0} for row in rows]
-    except Exception:
-        return []
+    # BODC normally answers in <1s but occasionally stalls a request outright,
+    # so fail fast and retry rather than wait on one long timeout.
+    for attempt in range(LISTING_ATTEMPTS):
+        try:
+            r = requests.get(json_url, timeout=LISTING_TIMEOUT)
+            r.raise_for_status()
+            rows = r.json().get("table", {}).get("rows", []) or []
+            return [{"name": row[0], "last_modified": (row[1] or 0) / 1000.0} for row in rows]
+        except Exception as e:
+            log.warning("ERDDAP listing failed (%d/%d) %s: %s", attempt + 1, LISTING_ATTEMPTS, json_url, e)
+            time.sleep(0.5)
+    return None
 
 
-def _scan_active() -> list[dict]:
-    """Find recent _R.nc files across the ERDDAP server. Pure I/O, no caching."""
-    out: list[dict] = []
+def _scan_active(previous: Optional[list] = None) -> Optional[list[dict]]:
+    """Find recent _R.nc files across the ERDDAP server. None if the server is
+    unreachable; a single failed folder keeps its entries from `previous`
+    instead of silently dropping that glider."""
     cutoff = time.time() - DAYS_ACTIVE * 86400
     root = _erddap_listing(SERVER_FILES_URL)
-    for item in root:
-        if not item["name"].endswith("/"):
+    if root is None:
+        return None
+    folders = [
+        item["name"] for item in root
+        if item["name"].endswith("/")
+        and (item["last_modified"] >= cutoff or item["name"].strip("/").endswith("_R"))
+    ]
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="live-scan") as pool:
+        listings = list(pool.map(lambda n: _erddap_listing(urljoin(SERVER_FILES_URL, n)), folders))
+
+    out: list[dict] = []
+    for name, files in zip(folders, listings):
+        ds = name.strip("/")
+        if files is None:
+            out.extend(e for e in (previous or [])
+                       if e["dataset"] == ds and e["server_mtime"] >= cutoff)
             continue
-        ds = item["name"].strip("/")
-        if not (item["last_modified"] >= cutoff or ds.endswith("_R")):
-            continue
-        for f in _erddap_listing(urljoin(SERVER_FILES_URL, item["name"])):
-            if not f["name"].endswith(FILE_SUFFIX):
-                continue
-            if f["last_modified"] < cutoff:
+        for f in files:
+            if not f["name"].endswith(FILE_SUFFIX) or f["last_modified"] < cutoff:
                 continue
             out.append({
                 "dataset": ds,
                 "filename": f["name"],
-                "url": urljoin(SERVER_FILES_URL, item["name"]) + f["name"],
+                "url": urljoin(SERVER_FILES_URL, name) + f["name"],
                 "server_mtime": f["last_modified"],
             })
     out.sort(key=lambda x: x["server_mtime"], reverse=True)
@@ -165,16 +190,50 @@ def _scan_active() -> list[dict]:
 
 
 def scan_cached(force: bool = False) -> list[dict]:
-    """Return the active-glider listing, sharing a result across concurrent callers."""
-    now = time.time()
+    """Return the active-glider listing (blocking). Only one scan ever runs;
+    concurrent callers wait for it and share the result. A failed scan keeps
+    the previous listing."""
+    requested = time.time()
+    with _scan_lock:
+        with _lock:
+            at, data = _scan_cache["at"], _scan_cache["data"]
+        # Fresh enough, or someone else finished a scan while we waited.
+        if data is not None and (at >= requested or (not force and requested - at < SCAN_CACHE_TTL)):
+            return data
+        with _lock:
+            _scan_cache["scanning"] = True
+        new = None
+        try:
+            new = _scan_active(data)
+        finally:
+            with _lock:
+                _scan_cache["scanning"] = False
+                _scan_cache["tried"] = time.time()
+                _scan_cache["error"] = new is None
+                if new is not None:
+                    _scan_cache.update(at=time.time(), data=new)
+        return new if new is not None else (data or [])
+
+
+def _kick_scan(force: bool):
+    """Start a background scan unless one is already queued/running."""
+    global _kick_pending
     with _lock:
-        fresh = (now - _scan_cache["at"]) < SCAN_CACHE_TTL
-        if not force and fresh and _scan_cache["data"] is not None:
-            return _scan_cache["data"]
-    data = _scan_active()
-    with _lock:
-        _scan_cache.update(at=time.time(), data=data)
-    return data
+        if _kick_pending:
+            return
+        _kick_pending = True
+
+    def run():
+        global _kick_pending
+        try:
+            _maybe_auto_update(scan_cached(force=force))
+        except Exception:
+            pass
+        finally:
+            with _lock:
+                _kick_pending = False
+
+    threading.Thread(target=run, name="live-scan-kick", daemon=True).start()
 
 
 # ---------- download / update ----------
@@ -322,8 +381,17 @@ def _maybe_auto_update(listing: list[dict]):
 def list_live(force_scan: bool = False) -> dict:
     """Combined live feed: server-listed active gliders + uploaded files."""
     _ensure_background_scanner()
-    listing = scan_cached(force=force_scan)
-    _maybe_auto_update(listing)
+    # Never block on ERDDAP: answer from the cached listing and scan in the
+    # background; the client polls while `scanning` is true.
+    now = time.time()
+    with _lock:
+        data, at, tried = _scan_cache["data"], _scan_cache["at"], _scan_cache["tried"]
+    stale = data is None or (now - at) >= SCAN_CACHE_TTL
+    if force_scan or (stale and (now - tried) >= SCAN_RETRY):
+        _kick_scan(force_scan)
+    listing = data or []
+    if data is not None:
+        _maybe_auto_update(listing)
 
     marker = _load_marker()
     suppressed = _load_suppressed()
@@ -380,6 +448,8 @@ def list_live(force_scan: bool = False) -> dict:
 
     return {
         "scanned_at": _scan_cache.get("at", 0),
+        "scanning": _kick_pending or _scan_cache["scanning"],
+        "scan_error": _scan_cache["error"],
         "scan_ttl": SCAN_CACHE_TTL,
         "days_active": DAYS_ACTIVE,
         "active": active,

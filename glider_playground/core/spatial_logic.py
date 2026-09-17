@@ -11,6 +11,7 @@ Map *layers* (Copernicus, Argo, ships, waypoints) live in maps/ instead.
 
 import functools
 import io
+import json
 import os
 import time
 import zipfile
@@ -160,6 +161,49 @@ def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat:
               .reindex(index=lats, columns=lons)
 
     return lons.tolist(), lats.tolist(), pivot.values.tolist()
+
+
+def _bathy_for(bounds: dict, max_depth: float) -> dict:
+    """Bathymetry keys for the 3D payload. If the fetch fails: a flat floor just
+    below the deepest dive, flagged `bathy_fallback` so it gets retried later."""
+    try:
+        b_lon, b_lat, b_z = _fetch_bathy_cached(
+            round(bounds["min_lon"], 2), round(bounds["max_lon"], 2),
+            round(bounds["min_lat"], 2), round(bounds["max_lat"], 2),
+        )
+        return {"bathy_lon": b_lon, "bathy_lat": b_lat, "bathy_z": b_z}
+    except Exception:
+        floor = -abs(max_depth) * 1.2
+        return {
+            "bathy_lon": [bounds["min_lon"], bounds["max_lon"]],
+            "bathy_lat": [bounds["min_lat"], bounds["max_lat"]],
+            "bathy_z": [[floor, floor], [floor, floor]],
+            "bathy_fallback": True,
+        }
+
+
+_bathy_retry_at: dict = {}
+
+
+def retry_bathy(payload: dict) -> bool:
+    """Re-fetch bathymetry for a cached 3D payload stuck on the flat fallback.
+    Patches `payload` in place; True if it now has real bathymetry. At most one
+    attempt per 5 min per area."""
+    b_lon = payload.get("bathy_lon") or []
+    if not (payload.get("bathy_fallback") or len(b_lon) <= 2) or not payload.get("bounds"):
+        return False
+    key = json.dumps(payload["bounds"], sort_keys=True)
+    now = time.time()
+    if now - _bathy_retry_at.get(key, 0) < 300:
+        return False
+    _bathy_retry_at[key] = now
+    elev = [e for e in (payload.get("elevation") or []) if e is not None and e == e]
+    fresh = _bathy_for(payload["bounds"], -min(elev) if elev else 1000.0)
+    payload.update(fresh)
+    if fresh.get("bathy_fallback"):
+        return False
+    payload.pop("bathy_fallback", None)
+    return True
 
 
 # ---------- Core data path ----------
@@ -835,17 +879,7 @@ def generate_3d_data(filepath):
         "min_lat": min_lat - lat_pad, "max_lat": max_lat + lat_pad,
     }
 
-    try:
-        b_lon, b_lat, b_z = _fetch_bathy_cached(
-            round(bounds["min_lon"], 2), round(bounds["max_lon"], 2),
-            round(bounds["min_lat"], 2), round(bounds["max_lat"], 2),
-        )
-    except Exception:
-        # Network down or bathy unavailable — flat floor falls back to glider depth.
-        b_lon = [bounds["min_lon"], bounds["max_lon"]]
-        b_lat = [bounds["min_lat"], bounds["max_lat"]]
-        floor = float(np.nanmin(pres) * 1.2) if len(pres) > 0 else 1000.0
-        b_z = [[floor, floor], [floor, floor]]
+    payload_bathy = _bathy_for(bounds, float(np.nanmax(pres)) if len(pres) > 0 else 1000.0)
 
     return {
         "lon": lon.tolist(),
@@ -856,8 +890,6 @@ def generate_3d_data(filepath):
         "pitch": pitch,
         "roll": roll,
         "heading": heading,
-        "bathy_lon": b_lon,
-        "bathy_lat": b_lat,
-        "bathy_z": b_z,
+        **payload_bathy,
         "bounds": bounds,
     }

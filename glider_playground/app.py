@@ -553,7 +553,13 @@ def api_waypoints(glider: str | None = None):
 
 @app.get("/api/3d_data")
 def api_3d_data(id: str):
-    return _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
+    payload = _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
+    # A bathymetry fetch that failed during processing is cached as a flat floor; retry it here.
+    if spatial_logic.retry_bathy(payload):
+        rec = cache_logic.get_record(id)
+        if rec and rec.get("spatial_3d") is payload:
+            cache_logic._save_payload_sidecar(rec)
+    return payload
 
 
 @app.get("/api/location")

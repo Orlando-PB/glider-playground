@@ -534,6 +534,8 @@
         .live-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
         .live-btn.accent { color: var(--accent); border-color: var(--accent); }
         .live-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+        #liveList.is-scanning { opacity: 0.45; transition: opacity 0.15s; }
+        #liveRefreshBtn:disabled { cursor: progress; }
         .live-btn:disabled { opacity: 0.5; cursor: progress; }
         .live-spinner {
             width: 14px; height: 14px; border-radius: 50%;
@@ -1251,7 +1253,7 @@
                         <div class="files-section-header">
                             <div class="flex flex-col gap-0.5 min-w-0">
                                 <span class="files-section-title">Live BODC deployments</span>
-                                <span id="liveScannedAt" class="files-section-sub">Scanning…</span>
+                                <span id="liveScannedAt" class="files-section-sub" aria-live="polite">Checking BODC for live gliders…</span>
                             </div>
                             <button id="liveRefreshBtn" type="button" class="files-section-action" title="Re-scan server">
                                 <span id="liveRefreshIcon" class="material-symbols-outlined text-[14px]">refresh</span>
@@ -4256,6 +4258,8 @@
         // ---------- Live BODC section (inside files dropdown) ----------
         let _liveInFlight = false;
         let _liveData = null;
+        let _liveScanning = true;            // server is scanning BODC (true until the first scan lands)
+        let _liveScanError = false;
         let _liveRefreshTimer = null;
         const _liveOptimistic = new Set();   // filenames we've asked to download
         const _liveDeleting = new Set();     // filenames whose delete is in flight
@@ -4276,7 +4280,19 @@
             return `${days} day${days === 1 ? '' : 's'} ago`;
         }
 
+        // The single scan indicator: spinning icon + header text + dimmed list.
+        function setLiveScanUi() {
+            liveRefreshIcon.style.animation = _liveScanning ? 'spin 1s linear infinite' : '';
+            liveRefreshBtn.disabled = _liveScanning;
+            liveList.classList.toggle('is-scanning', _liveScanning);
+            if (_liveScanning) liveScannedAt.textContent = 'Checking BODC for live gliders…';
+            else if (_liveScanError && !_liveData) liveScannedAt.textContent = 'BODC didn’t respond, retrying shortly…';
+            else if (_liveData) liveScannedAt.textContent =
+                `${_liveScanError ? 'BODC didn’t respond. ' : ''}Last scan: ${relTimeAgo(_liveData.scanned_at)}`;
+        }
+
         function liveIsBusy() {
+            if (_liveScanning) return true;
             if (_liveOptimistic.size > 0 || _liveDeleting.size > 0 || _livePendingOpen) return true;
             if (!_liveData) return false;
             return (_liveData.active || []).some(e =>
@@ -4296,35 +4312,34 @@
         async function refreshLive({ force = false } = {}) {
             if (_liveInFlight) { scheduleLivePoll(); return; }
             _liveInFlight = true;
-            // The spinning refresh icon + "Scanning…" header are the scan indicator; clicks are delegated,
-            // so a mid-scan re-render is safe.
-            liveRefreshIcon.style.animation = 'spin 1s linear infinite';
-            if (!_liveData) liveScannedAt.textContent = 'Scanning…';
+            if (force) { _liveScanning = true; setLiveScanUi(); }
             try {
+                // Returns at once with the cached listing; the scan runs server-side and we poll on `scanning`.
                 const res = await fetch(`/api/live${force ? '?force=true' : ''}`);
-                _liveData = await res.json();
-                renderLive(_liveData);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                _liveScanning = !!data.scanning;
+                _liveScanError = !!data.scan_error;
+                // Before the first scan lands there is no listing: keep the placeholders.
+                if (data.scanned_at) { _liveData = data; renderLive(data); }
+                else renderLivePlaceholders();
+                setLiveScanUi();
                 renderFilesList();
                 await resolvePendingOpen();
                 // A share link may be waiting on a live glider; now the BODC list is in, open it.
                 await resolveSharedFile();
             } catch (e) {
                 console.error('Live fetch failed:', e);
-                liveList.innerHTML = `<div class="file-card-empty">Failed to reach server.</div>`;
+                _liveScanning = false;
+                setLiveScanUi();
+                liveScannedAt.textContent = 'Failed to reach server';
             } finally {
                 _liveInFlight = false;
-                liveRefreshIcon.style.animation = '';
                 scheduleLivePoll();
             }
         }
 
         function renderLive(data) {
-            const esc = escapeHtmlSafe;
-
-            liveScannedAt.textContent = data.scanned_at
-                ? `Last scan: ${relTimeAgo(data.scanned_at)}`
-                : 'Scanning…';
-
             const active = data.active || [];
             // Drop optimistic flags the server has confirmed.
             for (const e of active) {
@@ -4426,7 +4441,10 @@
                     status: f.status,
                     progress: f.progress,
                 }));
-            if (placeholders.length === 0) return;
+            if (placeholders.length === 0) {
+                liveList.innerHTML = `<div class="file-card-empty">${_liveScanning ? 'Checking BODC…' : 'No live deployments found.'}</div>`;
+                return;
+            }
             liveList.innerHTML = placeholders.map(liveCardHtml).join('');
         }
 

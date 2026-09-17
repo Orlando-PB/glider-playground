@@ -19,7 +19,7 @@ import time
 # --- Configurable Variables ---
 PORT = 8420
 APP_MODULE = "glider_playground.app:app"
-BROWSER_DELAY = 5
+BROWSER_DELAY = 15
 LOG_LEVEL = "warning"
 SERVER_HOSTNAMES = ["raspberrypi", "server", "server.local"]
 # ------------------------------
@@ -49,7 +49,14 @@ def _check_for_update():
 
 
 def open_browser(host, port=PORT):
-    time.sleep(BROWSER_DELAY)
+    # Open as soon as the server accepts connections; BROWSER_DELAY is the give-up-and-open-anyway cap.
+    deadline = time.time() + BROWSER_DELAY
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+            break
+        except OSError:
+            time.sleep(0.1)
     url = f"http://{host}:{port}"
     print(f"Opening browser at {url} ...")
     webbrowser.open(url)
