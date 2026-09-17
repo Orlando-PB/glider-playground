@@ -1070,4 +1070,8 @@ m = Mesh()
 b = m.part("leaves", "#5F8F45")
 cone(m, b, 0, 1.2, 0.9, seg=6)
 m.save("bush")
-print("wrote", len([f for f in os.listdir(OUT) if f.endswith(".json")]), "models")
+# One bundle for the view (a single request instead of one per model).
+names = sorted(f[:-5] for f in os.listdir(OUT) if f.endswith(".json") and not f.startswith("_"))
+with open(os.path.join(OUT, "_bundle.json"), "w") as f:
+    json.dump({n: json.load(open(os.path.join(OUT, n + ".json"))) for n in names}, f, separators=(",", ":"))
+print("wrote", len(names), "models + _bundle.json")

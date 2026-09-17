@@ -26,7 +26,7 @@
             --bg-globe: #121420;
             --bg-panel: #121420;
             --text-primary: #e4e7ef;
-            --text-muted: #6b7280;
+            --text-muted: #8b93a3;
             --accent: #FFD700;
             --atmosphere: #ffffff;
         }
@@ -34,7 +34,7 @@
             --bg-globe: #ffffff;
             --bg-panel: #ffffff;
             --text-primary: #171a22;
-            --text-muted: #7d8492;
+            --text-muted: #5f6673;
             --accent: #FFD700;
             --atmosphere: #5b9cff;
         }
@@ -270,7 +270,7 @@
 <body>
     <div id="overlay" class="flex flex-col items-center gap-2">
         <span class="material-symbols-outlined text-2xl animate-spin" id="loadingIcon" style="color:#5b9cff;">progress_activity</span>
-        <span class="text-[10px] font-medium" id="statusText">Loading map data...</span>
+        <span class="text-[10px] font-medium" id="statusText">Loading globe…</span>
     </div>
     
     <div id="globe-container"></div>
@@ -314,7 +314,7 @@
     <div id="attrib"></div>
 
     <!-- Hover tooltip for waypoint/glider markers, follows the cursor. -->
-    <div id="marker-tooltip"></div>
+    <div id="marker-tooltip" role="status" aria-live="polite"></div>
 
     <!-- Clicked-coordinate readout (top-centre) plus pinned measurements. -->
     <div id="coord-overlay-stack">
@@ -764,25 +764,12 @@
         const _trackMeshes = {};   // track id -> ribbon mesh
         let _dacMesh = null;       // the active track's DAC arrows, only while showDac
 
-        // Tracks/DAC/dots stay hidden until the globe is ready AND its 1200ms intro tween has finished,
-        // otherwise dots pop up mid-screen and slide into place.
-        let _sceneRevealed = false;
-        const GLOBE_INTRO_MS = 1300;   // globe.gl animateIn tween (1200ms) + slack
-
-        function revealGliderOverlays() {
-            _sceneRevealed = true;
-            for (const id in _trackMeshes) _trackMeshes[id].visible = true;
-            if (_dacMesh) _dacMesh.visible = true;
-            document.querySelectorAll('.gp-dot').forEach(el => { el.style.display = ''; });
-        }
-
         // (Re)build every track's ribbon from allTracks.
         function rebuildTrackMeshes() {
             if (!myGlobe) return;
             for (const id in _trackMeshes) { disposeMesh(_trackMeshes[id]); delete _trackMeshes[id]; }
             for (const t of allTracks) {
                 const mesh = ribbonMesh([thinPath(t.formattedPath)], LAYER_ORDER.track);
-                mesh.visible = _sceneRevealed;
                 myGlobe.scene().add(mesh);
                 _trackMeshes[t.id] = mesh;
             }
@@ -835,7 +822,6 @@
             setRGBA(u.uColorB.value, 0, 0, 0, 1);
             u.uWidthA.value = DAC_CONFIG.strokeMin;
             u.uWidthB.value = DAC_CONFIG.strokeMax;
-            _dacMesh.visible = _sceneRevealed;
             myGlobe.scene().add(_dacMesh);
         }
 
@@ -997,9 +983,8 @@
                 revealOverlayButtons();
                 pollOverlayStatus();
 
-                document.getElementById('statusText').textContent = 'Rendering 3D globe...';
                 const tc = readThemeColors();
-                myGlobe = Globe()
+                myGlobe = Globe({ animateIn: false })
                     (document.getElementById('globe-container'))
                     .globeTileEngineUrl((x, y, l) => `https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${l}/${y}/${x}`)
                     .backgroundColor(tc.bg)
@@ -1012,6 +997,9 @@
                     .htmlLng('lng')
                     .htmlAltitude(0)
                     .htmlElement(dotEl);
+
+                // Ocean-coloured base sphere, so the globe isn't black while basemap tiles stream in.
+                try { myGlobe.globeMaterial().color.set('#a8c8dc'); } catch (_) {}
 
                 updateSurfaceResolution();
                 rebuildTrackMeshes();
@@ -1040,8 +1028,6 @@
                     document.getElementById('globe-container').style.visibility = 'visible';
                     document.getElementById('overlay').style.display = 'none';
                     window.logRender('3D Globe Frontend', performance.now() - startTime);
-                    // Show the glider overlays only once the intro rotation lands.
-                    setTimeout(revealGliderOverlays, GLOBE_INTRO_MS);
                 });
 
                 recentreOnActive(true);
@@ -1133,9 +1119,7 @@
         // Position dot: red for a live deployment, grey for a historical one.
         function dotEl(d) {
             const el = document.createElement('div');
-            // globe.gl toggles `visibility` per frame, so the pre-reveal hide uses `display`.
             el.className = 'gp-dot';
-            if (!_sceneRevealed) el.style.display = 'none';
             // Blue pinned point: same look as the live dot, blue and a touch smaller.
             if (d.pin) {
                 el.style.cssText = 'width:11px;height:11px;border-radius:50%;background:#3b82f6;border:2px solid #fff;box-shadow:0 0 12px rgba(59,130,246,0.85);pointer-events:none;transform:translate(-50%,-50%);';
@@ -1284,7 +1268,7 @@
                 const pad = (typeof opts.padding === 'number' && opts.padding >= 0) ? opts.padding : 0.4;
                 alt = tight * (1 + pad);
             }
-            myGlobe.pointOfView({ lat: _trackView.centreLat, lng: _trackView.centreLng, altitude: alt }, 700);
+            myGlobe.pointOfView({ lat: _trackView.centreLat, lng: _trackView.centreLng, altitude: alt }, opts.instant ? 0 : 700);
         }
 
         // ── Surface overlays: buttons, fetch, render ───────────────────

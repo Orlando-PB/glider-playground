@@ -20,14 +20,14 @@
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
             --text-primary: #e4e7ef;
-            --text-muted: #6b7280;
+            --text-muted: #8b93a3;
             --accent: #5b9cff;
             --spinner-track: #1f2432;
         }
         :root[data-theme="light"] {
             --bg-panel: #ffffff;
             --text-primary: #171a22;
-            --text-muted: #7d8492;
+            --text-muted: #5f6673;
             --accent: #1a73e8;
             --spinner-track: #e2e5ec;
         }
@@ -1090,13 +1090,16 @@
             const buoyPromise = Promise.all([loadModel('buoy_green'), loadModel('buoy_red')])
                 .then(([start, end]) => ({ start, end })).catch(() => null);
 
-            // Scenery models are optional and never block the scene; redraw once they arrive.
-            Scenery.load(loadModel).then(() => { if (fx.scenery && rerender) rerender(); }).catch(() => {});
+            // Scenery models (one bundle) load with the scene so the first draw is complete; optional.
+            const sceneryPromise = Scenery.load(mergeParts).catch(() => null);
 
             // `name` is a model in static/3d_view/models, or a full URL (starts with '/').
             function loadModel(name) {
                 const url = name.startsWith('/') ? name : `/static/3d_view/models/${name}.json`;
-                return fetch(url).then(r => { if (!r.ok) throw new Error(url); return r.json(); }).then(parts => {
+                return fetch(url).then(r => { if (!r.ok) throw new Error(url); return r.json(); }).then(mergeParts);
+            }
+            function mergeParts(parts) {
+                {
                     // Merge parts into one mesh; each triangle carries its part's colour index (intensitymode:'cell').
                     const M = { x: [], y: [], z: [], i: [], j: [], k: [], cell: [] };
                     const colors = [];
@@ -1115,7 +1118,7 @@
                     M.length = Math.max(...hx) - Math.min(...hx);
                     if (!parts.hull) M.length = Math.max(...M.z) - Math.min(...M.z);   // upright objects: height
                     return M;
-                });
+                }
             }
 
             // Playback clock value (epoch ms) at the current position, or null when the file has no times.
@@ -1129,7 +1132,7 @@
                 else if (m.type === 'clearPin') unpin();
             });
 
-            Promise.all([fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`).then(r => r.json()), modelPromise, buoyPromise])
+            Promise.all([fetch(`/api/3d_data?id=${encodeURIComponent(fileId)}`).then(r => r.json()), modelPromise, buoyPromise, sceneryPromise])
                 .then(([data, model, buoys]) => {
                     if (data.error) throw new Error(data.error);
                     gliderModel = model;
@@ -1166,7 +1169,7 @@
                     }
 
                     const config = { displayModeBar: false, responsive: true };
-                    let first = buildScene(data);
+                    let first = buildScene(data);   // also sets the scene scale the camera placement below needs
                     // Open the view already behind the glider at follow distance.
                     {
                         const hd = travelHeading(data, posIdx);

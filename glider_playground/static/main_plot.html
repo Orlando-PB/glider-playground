@@ -13,7 +13,7 @@
             --bg-panel: #121420;
             --text-primary: #e4e7ef;
             --text-secondary: #a1a9b8;
-            --text-muted: #6b7280;
+            --text-muted: #8b93a3;
             --accent: #41658a;
             --border: #262b38;
             --spinner-track: #1f2432;
@@ -25,7 +25,7 @@
             --bg-panel: #ffffff;
             --text-primary: #171a22;
             --text-secondary: #4b525f;
-            --text-muted: #7d8492;
+            --text-muted: #5f6673;
             --accent: #41658a;
             --border: #e2e5ec;
             --spinner-track: #e2e5ec;
@@ -168,7 +168,7 @@
         <span>Reset zoom</span><span class="kbd">· double-click</span>
     </div>
 
-    <div id="plotDiv"></div>
+    <div id="plotDiv" role="img" aria-label="Plot" tabindex="0"></div>
     <div id="point-pin"></div>
 
     <div id="cbar" aria-hidden="true">
@@ -187,8 +187,8 @@
     <!-- Clicked-point readout (top-centre). Populated when a point is clicked. -->
     <div id="point-bubble">
         <span class="pin-dot"></span>
-        <div id="point-rows"></div>
-        <button id="point-close" type="button" title="Close">✕</button>
+        <div id="point-rows" role="status" aria-live="polite"></div>
+        <button id="point-close" type="button" title="Close" aria-label="Close point readout">✕</button>
     </div>
 
     <script>
@@ -892,6 +892,20 @@
             };
             const xLabel = isXDate ? '' : axisLabel(plotData.x_var, plotData.x_units);
             const yLabel = axisLabel(plotData.y_var, plotData.y_units);
+            // Screen-reader summary of the plot (axes, colour variable, extents).
+            try {
+                const ext = (arr, isDt) => {
+                    if (isDt) { const e = xDataExtent(arr, true); return [e.min, e.max].map(v => typeof v === 'number' ? new Date(v).toISOString().slice(0, 10) : String(v).slice(0, 10)); }
+                    return [getSafeMin(arr), getSafeMax(arr)].map(v => Number(v).toPrecision(4));
+                };
+                const xr = ext(plotData.x, isXDate), yr = ext(plotData.y, false);
+                const cLabel = axisLabel(plotData.c_var, plotData.c_units);
+                document.getElementById('plotDiv').setAttribute('aria-label',
+                    `Scatter plot. X axis: ${isXDate ? 'time' : xLabel}, from ${xr[0]} to ${xr[1]}. ` +
+                    `Y axis: ${yLabel}, from ${yr[0]} to ${yr[1]}${isInverted ? ', inverted' : ''}.` +
+                    (cLabel ? ` Coloured by ${cLabel}.` : '') +
+                    ` ${(plotData.x || []).length} points. Click a point to read its values.`);
+            } catch (_) {}
             const TC = readThemeColors();
             const AXIS_COLOR = TC.axis;
             const AXIS_LABEL_COLOR = TC.label;

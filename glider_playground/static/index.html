@@ -48,7 +48,7 @@
             --border-strong: transparent;
             --text-primary: #e4e7ef;
             --text-secondary: #a1a9b8;
-            --text-muted: #6b7280;
+            --text-muted: #8b93a3;
             --accent: #41658a;
             --accent-hover: #527ba3;
             --accent-soft: rgba(65,101,138,0.18);
@@ -80,7 +80,7 @@
             --border-strong: transparent;
             --text-primary: #171a22;
             --text-secondary: #4b525f;
-            --text-muted: #7d8492;
+            --text-muted: #5f6673;
             --accent: #41658a;
             --accent-hover: #2e4a68;
             --accent-soft: rgba(65,101,138,0.12);
@@ -490,7 +490,7 @@
             display: inline-flex; align-items: center; gap: 3px;
             padding: 1px 5px; margin-left: 6px;
             font-size: 8.5px; font-weight: 700; letter-spacing: 0.04em;
-            color: #fff; background: #ef4444; border-radius: 4px;
+            color: #fff; background: #dc2626; border-radius: 4px;
             vertical-align: middle;
         }
         .nrt-badge::before {
@@ -709,6 +709,9 @@
         .gp-panel.active.idle::after { opacity: 0; }
         .gp-panel.active.idle .gp-add.show { display: none; }
         .gp-panel.active.idle .gp-panel-header { opacity: 0; }
+        /* Keyboard focus inside a panel keeps its controls reachable. */
+        .gp-panel:focus-within .gp-panel-header { opacity: 1 !important; }
+        .gp-panel:focus-within .gp-add.show { display: flex !important; }
         .gp-panel-body { position: absolute; inset: 0; overflow: hidden; border-radius: 3px; }
         /* While the active file is processing, hide EVERY panel's content so nothing peeks around the overlay. */
         #panelHost.gp-processing .gp-panel-body { visibility: hidden; }
@@ -926,7 +929,8 @@
             padding: 2px 7px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
         }
         .summary-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-        .summary-status.is-live { color: #0a8a3e; background: rgba(16, 185, 129, 0.14); }
+        .summary-status.is-live { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+        :root[data-theme="light"] .summary-status.is-live { color: #116a32; }
         .summary-status.is-live .dot { animation: summaryPulse 1.6s ease-in-out infinite; }
         .summary-status.is-recovered { color: var(--text-secondary); background: var(--bg-panel-3); }
         @keyframes summaryPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -1213,7 +1217,7 @@
                 <!-- Logo -->
                 <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
                      title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
-                    <img src="/static/icons/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
+                    <img src="/static/icons/logo_with_text.webp" width="178" height="30" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
                          style="height:30px;width:auto;">
                 </div>
 
@@ -1303,7 +1307,7 @@
                 <!-- Jelly: notification icon, hidden until there's something to show. -->
                 <div id="jellyBubble" class="hidden">
                     <button id="jellyToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Update available" aria-label="Update available">
-                        <img id="jelly-icon" src="/static/icons/jelly-icon.png" width="18" height="18" alt="Jelly">
+                        <img id="jelly-icon" src="/static/icons/jelly-icon.webp" width="18" height="18" alt="Jelly">
                     </button>
                     <div id="jellyPanel" class="w-72 max-w-[95vw] flex-col hidden">
                         <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--border);">
@@ -1401,7 +1405,7 @@
                 </div>
                 <!-- Colour palette picker -->
                 <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-blue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-blue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false" aria-label="Colour palette" title="Colour palette"></button>
                     <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
                 </div>
                 <input type="hidden" id="cmap" value="thermal">
@@ -1520,10 +1524,10 @@
                 <div id="plotStatsContainer" class="hidden flex-col gap-1 px-3 py-2 text-[10px] text-gray-700"></div>
             </div>
             <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
-            <iframe id="gliderMap" src="" class="w-full h-full border-none"></iframe>
+            <iframe id="gliderMap" title="Map" src="" class="w-full h-full border-none"></iframe>
             <!-- Second globe, used only by the Duo view. -->
-            <iframe id="gliderMap2" src="" class="w-full h-full border-none"></iframe>
-            <iframe id="iframe3D" src="/static/3d_view.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
+            <iframe id="gliderMap2" title="Second map" src="" class="w-full h-full border-none"></iframe>
+            <iframe id="iframe3D" title="3D view" src="" style="width:100%;height:100%;border:none;display:block;"></iframe>
             <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
                 <div class="ds-search-wrap">
                     <span class="material-symbols-outlined ds-search-icon">search</span>
@@ -1778,6 +1782,7 @@
                 b.className = btnClass;
                 b.dataset.val = val;
                 b.title = title;
+                b.setAttribute('aria-label', title + ' palette');
                 b.style.background = bg;
                 menu.appendChild(b);
             };
@@ -2316,6 +2321,7 @@
             if (type === 'plot' || useFreshFrame) {
                 iframe = document.createElement('iframe');
                 iframe.className = 'gp-frame' + (type === 'plot' ? ' hidden' : '');
+                iframe.title = def.label;
                 iframe.src = '';
                 body.appendChild(iframe);
             }
@@ -2337,8 +2343,9 @@
             header.appendChild(label);
             const closeBtn = document.createElement('button');
             closeBtn.className = 'gp-panel-close';
-            closeBtn.title = 'Close panel';
-            closeBtn.innerHTML = '<span class="material-symbols-outlined">close</span>';
+            closeBtn.title = `Close ${def.label} panel`;
+            closeBtn.setAttribute('aria-label', closeBtn.title);
+            closeBtn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">close</span>';
             closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closePanel(id); });
             header.appendChild(closeBtn);
             el.appendChild(header);
@@ -2349,7 +2356,8 @@
                 add.className = 'gp-add';
                 add.dataset.side = side;
                 add.title = `Add a panel to the ${side}`;
-                add.innerHTML = '<span class="material-symbols-outlined">add</span>';
+                add.setAttribute('aria-label', `${add.title} of ${def.label}`);
+                add.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">add</span>';
                 add.addEventListener('click', (e) => { e.stopPropagation(); showAddMenu(add, id, side); });
                 el.appendChild(add);
             });
@@ -3009,6 +3017,14 @@
                     createPanel(pd.type, pd.state || {}, id);
                 });
                 layoutTree = snap.tree;
+                // A restored Duo view gets its Copernicus overlays back (applied on each globe's mapReady).
+                if (_viewKind === 'duo') {
+                    _duoOverlays = {};
+                    Object.values(panels).forEach(p => {
+                        if (p.type === 'map') _duoOverlays[p.id] = 'chla';
+                        else if (p.type === 'map2') _duoOverlays[p.id] = 'currents';
+                    });
+                }
                 const firstPlot = (Object.values(panels).find(p => p.type === 'plot') || {}).id || null;
                 activePlotPanelId = (snap.activePlotPanelId && panels[snap.activePlotPanelId]) ? snap.activePlotPanelId : firstPlot;
                 if (activePlotPanelId) plotIframe = panels[activePlotPanelId].iframe;
@@ -3215,7 +3231,7 @@
             // Globe (re)loaded. If we just built the Map preset, ask it to fit the whole track.
             if (msg.type === 'mapReady') {
                 if (_pendingGlobeFit && event.source === gliderMap.contentWindow) {
-                    gliderMap.contentWindow.postMessage({ type: 'fitView', whole: true }, '*');
+                    gliderMap.contentWindow.postMessage({ type: 'fitView', whole: true, instant: true }, '*');
                     _pendingGlobeFit = false;
                 }
                 // Duo globe just (re)loaded → (re)apply its Copernicus overlay.
@@ -3894,17 +3910,18 @@
         function applyDuo() {
             _pendingGlobeFit = false;
 
-            // Keep the primary globe in place (avoids a reload); drop everything else.
+            // Keep both globes in place (avoids a reload); drop everything else.
             const keepMap = primaryMapPanel();
+            const keepMap2 = Object.values(panels).find(p => p.type === 'map2') || null;
             Object.values(panels).forEach(p => {
-                if (p === keepMap) return;
+                if (p === keepMap || p === keepMap2) return;
                 if (p.hostedEl) unmountHosted(p);
                 p.el.remove();
                 delete panels[p.id];
             });
 
             const topMap    = keepMap || createPanel('map',  { datasetId: datasetSelect.value || '' });
-            const bottomMap = createPanel('map2', { datasetId: datasetSelect.value || '' });
+            const bottomMap = keepMap2 || createPanel('map2', { datasetId: datasetSelect.value || '' });
             // The two plots come from views.duo in plot_presets.json (top, bottom).
             const [duoTop, duoBottom] = viewSpecs('duo').map(s => s.key);
             const bbp = createPanel('plot', stateFromPreset(duoTop || DEFAULT_PRESET));
@@ -3921,14 +3938,16 @@
             renderPanel(bbp);
             renderPanel(sal);
             if (!keepMap) renderPanel(topMap);   // fresh top globe loads its map_view
-            renderPanel(bottomMap);              // second globe is always fresh
+            if (!keepMap2) renderPanel(bottomMap);
             refitReusedGlobe(keepMap, false);
+            refitReusedGlobe(keepMap2, false);
             setActive(bbp.id);
             markViewApplied();
 
             // A fresh globe gets its overlay on mapReady; a reused one never reloads, so push it now.
             _duoOverlays = { [topMap.id]: 'chla', [bottomMap.id]: 'currents' };
             if (keepMap) applyDuoOverlay(topMap, 'chla');
+            if (keepMap2) applyDuoOverlay(bottomMap, 'currents');
 
             _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
@@ -4172,6 +4191,7 @@
             const match = cmapOptions.find(b => b.dataset.val === cmapVal);
             if (match) {
                 cmapTrigger.style.background = match.style.background;
+                cmapTrigger.setAttribute('aria-label', 'Colour palette: ' + match.title);
                 const bg = match.style.background.replace('to right', 'to top');
                 
                 const gradEl = document.getElementById('cTrimGradient');
@@ -5583,8 +5603,9 @@
             await CycleProfile.loadFile(fileId);
             loadLocation(fileId);
 
+            // Only load the 3D view while its panel is open; renderPanel loads it on open.
             const iframe3D = document.getElementById('iframe3D');
-            if (iframe3D) {
+            if (iframe3D && Object.values(panels).some(p => p.type === '3d')) {
                 iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             }
 

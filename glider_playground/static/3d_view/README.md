@@ -18,6 +18,8 @@ lives here, kept apart from the science-facing pages.
   - `*.json` — the meshes (same format as `models/`; origin at ground level for things that stand, at body centre for things that swim). Species (whales, dolphins, sharks, schooling fish, jellyfish, rays, turtles, eels, octopuses, squid, crabs, lobsters, shells, starfish, urchins, anemones, kelps, corals…) are built by small parametric functions in the generator, one file each; a part named `hull` sets the length the view sizes the animal by.
   - `make_models.py` — regenerates those JSON files; edit shapes here, run
     `python make_models.py`.
+  - `_bundle.json` — every model in one file, written by `make_models.py`; this is what the view
+    actually fetches (one request). Re-run the generator after editing or adding a model.
 
 Hooks in `3d_view.html` are minimal: the script tag, the `scenery` entry in
 `EFFECTS`, the `Scenery.load(...)` call, the `Scenery.build(...)` block at

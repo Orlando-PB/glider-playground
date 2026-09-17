@@ -2,7 +2,7 @@
 // same scene), merged into ONE mesh3d. Cosmetic only; behind the "Scenery" toggle in 3d_view.html.
 // Models: ./<name>.json from ./make_models.py (metres, +z up; origin at ground level or body centre).
 window.Scenery = (() => {
-    const MODEL_URL = name => `/static/3d_view/scenery/${name}.json`;
+    const BUNDLE_URL = '/static/3d_view/scenery/_bundle.json';
 
     // Rule fields. Exactly one of: depth [min,max] seabed depth (m, positive down) | land: true |
     //   float [min,max] depth (m) in the water column (+ surface: true rides at the surface).
@@ -226,10 +226,13 @@ window.Scenery = (() => {
     }
 
     // Load every model once via the view's own loader; missing files just skip that kind.
-    function load(loadModel) {
-        const names = [...new Set(RULES.map(r => r.model))];
-        return Promise.all(names.map(n => loadModel(MODEL_URL(n)).catch(() => null)))
-            .then(ms => { models = {}; names.forEach((n, q) => { if (ms[q]) models[n] = ms[q]; }); return models; });
+    // One request for every model (_bundle.json, written by make_models.py); `merge` is the view's part-merger.
+    function load(merge) {
+        return fetch(BUNDLE_URL).then(r => { if (!r.ok) throw new Error(BUNDLE_URL); return r.json(); }).then(all => {
+            models = {};
+            for (const r of RULES) if (all[r.model] && !models[r.model]) models[r.model] = merge(all[r.model]);
+            return models;
+        });
     }
 
     // Bilinear seabed/land height (display units) at lon/lat from the grid.
