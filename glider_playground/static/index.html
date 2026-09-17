@@ -6,6 +6,10 @@
     <link rel="icon" href="/static/icons/noc_logo_square.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Start the panel iframes' big libraries downloading now, not after the file list + iframe HTML arrive. -->
+    <link rel="prefetch" as="script" href="/static/vendor/plotly-gl2d-2.32.0.min.js">
+    <link rel="prefetch" as="script" href="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js">
+    <link rel="prefetch" as="script" href="https://unpkg.com/three@0.160.0/build/three.min.js">
     <script src="/static/js/console_log.js"></script>
     <script src="/api/plot_presets.js"></script>
     <!-- Prebuilt Tailwind; regenerate with the Tailwind CLI when classes change. -->
@@ -4631,6 +4635,9 @@
         }
 
         async function init() {
+            // Request the file list alongside the config rather than after it.
+            const filesReq = fetch('/api/files');
+            filesReq.catch(() => {});
             try {
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
@@ -4647,7 +4654,7 @@
                 addFromPromptBtn.style.display = 'none';
             }
 
-            await refreshFiles({ activate: true });
+            await refreshFiles({ activate: true, request: filesReq });
 
             // Start the live scan right away so the list is populated when Files first opens.
             refreshLive({ force: false });
@@ -5372,9 +5379,9 @@
             panelHost.classList.remove('gp-processing');
         }
 
-        async function refreshFiles({ activate = false } = {}) {
+        async function refreshFiles({ activate = false, request = null } = {}) {
             try {
-                const res = await fetch('/api/files');
+                const res = await (request || fetch('/api/files'));
                 // On the Pi a saturated server returns a 502 HTML body; bail quietly instead of res.json() throwing.
                 if (!res.ok) return;
                 const data = await res.json();
@@ -5597,10 +5604,9 @@
             CycleProfile.fullReset(fileId);
             if (!fileId) return;
 
-            await loadDatasetInfo(fileId);
+            // Globe first (it only sets the iframe src), then the three independent metadata loads together.
             await loadMapImage();
-            await loadVariables();
-            await CycleProfile.loadFile(fileId);
+            await Promise.all([loadDatasetInfo(fileId), loadVariables(), CycleProfile.loadFile(fileId)]);
             loadLocation(fileId);
 
             // Only load the 3D view while its panel is open; renderPanel loads it on open.
