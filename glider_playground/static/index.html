@@ -477,7 +477,7 @@
         .file-card-icon.error { background: rgba(248,113,113,0.18); color: var(--danger); }
         .file-card-icon .material-symbols-outlined { font-size: 14px; }
         .file-card-icon.processing .material-symbols-outlined { animation: spin 1s linear infinite; }
-        /* Platform icon (MARS map icons, static/icons/) replaces the tick once a file is ready. */
+        /* Platform icon (static/icons/*-mapicon.svg) replaces the tick once a file is ready. */
         .file-card-icon.platform { background: transparent; width: 30px; }
         .file-card-icon.platform img { width: 28px; height: 12px; object-fit: contain;
             filter: drop-shadow(0 0 1px rgba(255,255,255,0.9)); }
@@ -3175,6 +3175,13 @@
                 }
             });
         }
+        function post3d(msg) {
+            Object.values(panels).forEach(p => {
+                if (p.type === '3d' && p.iframe && p.iframe.contentWindow) {
+                    try { p.iframe.contentWindow.postMessage(msg, '*'); } catch (_) {}
+                }
+            });
+        }
         function forEachPlotFrame(cb, exceptId) {
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
@@ -3263,6 +3270,8 @@
                     }
                 });
                 const dsId = (srcPanel && srcPanel.state && srcPanel.state.datasetId) || datasetSelect.value || '';
+                if (typeof msg.timeMs === 'number' && dsId === (datasetSelect.value || '')) post3d({ type: 'pinTime', timeMs: msg.timeMs });
+                else post3d({ type: 'clearPin' });
                 if (typeof msg.timeMs === 'number' && dsId) {
                     fetch(`/api/nearest_fix?id=${encodeURIComponent(dsId)}&time=${msg.timeMs}`)
                         .then(r => r.json())
@@ -3291,11 +3300,13 @@
                             if (d && typeof d.time === 'number') {
                                 forEachMapFrame(w => w.postMessage({ type: 'pinTime', timeMs: d.time }, '*'));
                                 forEachPlotFrame(w => w.postMessage({ type: 'selectPointByTime', timeMs: d.time }, '*'));
+                                post3d({ type: 'pinTime', timeMs: d.time });
                             }
                         })
                         .catch(() => {});
                 } else {
                     forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                    post3d({ type: 'clearPin' });
                 }
                 return;
             }
@@ -3304,6 +3315,7 @@
             if (msg.type === 'coordCleared' || msg.type === 'plotPointClear' || msg.type === 'clearAllPicks') {
                 forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
                 forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                post3d({ type: 'clearPin' });
                 return;
             }
 
@@ -5120,7 +5132,7 @@
         function setTriggerPlatform(kind) {
             if (!datasetTriggerPlatform) return;
             if (kind) {
-                datasetTriggerPlatform.src = `/static/icons/${kind}-mapicon.png`;
+                datasetTriggerPlatform.src = `/static/icons/${kind}-mapicon.svg`;
                 datasetTriggerPlatform.title = kind;
                 datasetTriggerPlatform.hidden = false;
                 datasetTriggerIcon.hidden = true;
@@ -5182,7 +5194,7 @@
             return '';
         }
         function platformIconHtml(kind, title) {
-            return `<img src="/static/icons/${kind}-mapicon.png" alt="${kind}" title="${escapeHtmlSafe(title || kind)}" onerror="var p=this.parentNode;p.classList.remove('platform');p.innerHTML='<span class=&quot;material-symbols-outlined&quot;>check</span>'">`;
+            return `<img src="/static/icons/${kind}-mapicon.svg" alt="${kind}" title="${escapeHtmlSafe(title || kind)}" onerror="var p=this.parentNode;p.classList.remove('platform');p.innerHTML='<span class=&quot;material-symbols-outlined&quot;>check</span>'">`;
         }
 
         function renderFilesList() {
@@ -5809,6 +5821,7 @@
                 && !e.target.closest('input, textarea, select, [contenteditable="true"]')) {
                 forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
                 forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
+                post3d({ type: 'clearPin' });
             }
 
             if (e.key === 'Escape') {

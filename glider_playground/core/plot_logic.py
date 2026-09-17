@@ -267,6 +267,10 @@ def stream_preload_to_disk(filepath: str, is_removed_fn=None):
     import gc
     d = _preload_dir(filepath)
     d.mkdir(parents=True, exist_ok=True)
+    # A fresh preload makes anything computed from the previous one stale.
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
+        f.unlink(missing_ok=True)
     names = []
     # cache=False: by default xarray keeps every array it has read inside the open
     # dataset, which quietly accumulated the whole file in RAM here.
@@ -460,19 +464,26 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
     if not (interpolate or apply_ctd_qc):
         return None
     cache_path = _ctd_cache_path(filepath, interpolate, apply_ctd_qc)
-    if cache_path.exists():
-        try:
-            with np.load(str(cache_path)) as f:
-                return dict(f)
-        except Exception:
-            pass
-
     pre = _get_preloaded(filepath)
     if pre is None:
         return None
     var_map = _resolve_ctd_var_map(filepath)
     if not var_map:
         return None
+
+    if cache_path.exists():
+        try:
+            with np.load(str(cache_path)) as f:
+                cached = dict(f)
+            # The overlay replaces the raw arrays row-for-row, so it must match their
+            # current length. A mismatch means it was computed from an older copy of
+            # the file (e.g. a live glider that has since grown) — recompute it.
+            n_raw = next((len(pre[actual]) for actual in var_map.values() if actual in pre), None)
+            if n_raw is not None and all(len(v) == n_raw for v in cached.values()):
+                return cached
+            cache_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
     data_dict = _build_ctd_canonical_dict(pre, var_map, time_var)

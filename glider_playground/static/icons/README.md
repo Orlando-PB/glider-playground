@@ -1,3 +1,4 @@
-Platform map icons from NOC's MARS fleet finder (https://mars.noc.ac.uk/<name>-mapicon.png),
-vendored because MARS only serves them to its own origin. 56x24 (alr 44x24) RGBA PNGs.
-`ship-mapicon.png` is MARS's generic ship icon, used for RRS Sir David Attenborough (no specific icon exists).
+Platform map icons (`<kind>-mapicon.svg`): coloured side views generated from the 3D view's
+low-poly models by `make_icons.py` (needs shapely; re-run it after editing a model). ~1-4 kB each.
+`ship-mapicon.svg` is RRS Sir David Attenborough, also the fallback for any other ship.
+`argo-mapicon.svg` is used in the Argo layer's sidebar row and float card (fleet dots stay GL points).

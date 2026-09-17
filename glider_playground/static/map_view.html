@@ -1015,6 +1015,14 @@
                     const controls = myGlobe.controls();
                     controls.minDistance = radius * (1 + CONFIG.minAltitude);
                     controls.maxDistance = radius * (1 + CONFIG.maxAltitude);
+                    // Platform icons shrink as the camera pulls back (full size below altitude 0.5).
+                    const iconScale = () => {
+                        const alt = myGlobe.pointOfView().altitude;
+                        const k = Math.max(0.5, Math.min(1, 1 - (alt - 0.5) * 0.35));
+                        document.documentElement.style.setProperty('--iconScale', k.toFixed(2));
+                    };
+                    controls.addEventListener('change', iconScale);
+                    iconScale();
                 } catch (_) {}
 
                 attachCoordPicker();
@@ -1146,13 +1154,13 @@
                 // Live / ships / selected: icon as-is. Everything else: faded and greyed.
                 const look = strong
                     ? 'filter:drop-shadow(0 0 1.5px #fff);opacity:1;'
-                    : 'filter:drop-shadow(0 0 1px #fff) grayscale(1);opacity:0.4;';
+                    : 'filter:drop-shadow(0 0 1px #fff) grayscale(1);opacity:0.7;';
                 el.style.cssText = `width:${w}px;height:${Math.round(w * 24 / 56)}px;pointer-events:none;transform:translate(-50%,-50%);`;
                 const img = document.createElement('img');
-                img.src = `/static/icons/${d.kind}-mapicon.png`;
+                img.src = `/static/icons/${d.kind}-mapicon.svg`;
                 img.alt = '';
                 // Icons face east by default; mirror when the last leg heads west.
-                const flip = d.west === true ? 'transform:scaleX(-1);' : '';
+                const flip = `transform:scale(var(--iconScale,1))${d.west === true ? ' scaleX(-1)' : ''};`;
                 img.style.cssText = `width:100%;height:100%;object-fit:contain;display:block;${look}${flip}`;
                 img.onerror = () => {
                     const glow2 = strong ? `0 0 12px rgba(${glowRgb},0.8)` : `0 0 8px rgba(${glowRgb},0.7)`;

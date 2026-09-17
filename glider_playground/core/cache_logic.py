@@ -263,6 +263,65 @@ def _persist_locked():
         pass
 
 
+def _known_hashes() -> set:
+    """Every 16-hex name a registered file's on-disk caches can be stored under:
+    its id (resolved path) and the hash of its path as recorded."""
+    with _lock:
+        recs = list(_registry.items())
+    known = set()
+    for rid, rec in recs:
+        known.add(rid)
+        if rec.get("path"):
+            known.add(hashlib.sha256(rec["path"].encode()).hexdigest()[:16])
+    return known
+
+
+def _sweep_orphans():
+    """Delete on-disk caches belonging to files that are no longer registered.
+
+    Per-file cleanup only runs when a file is removed or changes while the app is
+    up; a moved/renamed file (new path → new hash), a reset registry, or an old
+    install's leftovers would otherwise sit in preload/, derived/, ctd_cache/,
+    payloads/ and plotcache/ forever. Everything there is regenerable. Only called
+    after the registry has loaded successfully — never on a missing/corrupt one —
+    and runs in the background since it can be many GB.
+    """
+    known = _known_hashes()
+    orphans = []
+    for d in (plot_logic._PRELOAD_CACHE_DIR, plot_logic._DERIVED_CACHE_DIR,
+              plot_logic._CTD_CACHE_DIR, PAYLOADS_DIR, PLOTCACHE_DIR):
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for e in entries:
+            h = e.name[:16]
+            # Only ever touch names that look like ours: <16 hex>[_...|.ext]
+            if len(h) == 16 and all(c in "0123456789abcdef" for c in h) and h not in known:
+                orphans.append((e, h))
+    if not orphans:
+        return
+
+    def _run():
+        freed = 0
+        for e, h in orphans:
+            if h in _known_hashes():   # registered while we were sweeping
+                continue
+            try:
+                if e.is_dir():
+                    freed += sum(f.stat().st_size for f in e.rglob("*") if f.is_file())
+                    shutil.rmtree(e, ignore_errors=True)
+                else:
+                    freed += e.stat().st_size
+                    e.unlink(missing_ok=True)
+            except OSError:
+                pass
+        logger.warning("Cache sweep: removed %d orphaned cache entries (%.1f GB) for files "
+                       "no longer registered", len(orphans), freed / 1e9)
+
+    threading.Thread(target=_run, name="cache-sweep", daemon=True).start()
+
+
 def _load_once():
     global _loaded
     with _lock:
@@ -332,6 +391,7 @@ def _load_once():
                 rec["error"] = ""
             _registry[rid] = rec
         _persist_locked()
+    _sweep_orphans()
 
 
 def _is_nrt(last_time_iso: Optional[str]) -> bool:

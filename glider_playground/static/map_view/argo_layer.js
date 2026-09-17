@@ -131,7 +131,7 @@
         row.id = 'argoRow';
         row.innerHTML = `
             <button id="argoToggle" class="ovBtn" title="Show Argo float positions">
-                <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">scatter_plot</span>
+                <img class="ovSwatch" src="/static/icons/argo-mapicon.svg" alt="" style="width:14px;height:14px;object-fit:contain;filter:drop-shadow(0 0 1px #fff);">
                 <span class="ovLabel">Argo floats</span>
             </button>
             <div id="argoSlider">
@@ -353,7 +353,7 @@
 
     function cardHeader(wmo, status) {
         const cls = status === 'Active' ? 'on' : 'off';
-        return `<h3 id="argoHead"><span class="material-symbols-outlined chev">expand_more</span><span>Argo ${esc(wmo)}</span>` +
+        return `<h3 id="argoHead"><span class="material-symbols-outlined chev">expand_more</span><img src="/static/icons/argo-mapicon.svg" alt="" style="height:20px;filter:drop-shadow(0 0 1px #fff);"><span>Argo ${esc(wmo)}</span>` +
             (status ? `<span class="st ${cls}">${esc(status)}</span>` : '') +
             `<span class="sp"></span><button id="argoClose" title="Close"><span class="material-symbols-outlined" style="font-size:16px;">close</span></button></h3>`;
     }

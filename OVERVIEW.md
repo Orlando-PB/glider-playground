@@ -112,7 +112,10 @@ file changes on disk or `CACHE_VERSION` bumps).
       `plot_presets.json`) pre-computed into the binary plot cache so the first click is fast.
 3. Everything downstream (`core/plot_logic.py`'s `/api/plot_data`, map/3D endpoints) reads from this
    cache instead of re-opening NetCDF files.
-4. Persistence: registry at `~/.glider_playground/registry.json`, per-file payload sidecars at
+4. Orphan sweep: once the registry has loaded at startup, any entry in `preload/`, `derived/`,
+   `ctd_cache/`, `payloads/` or `plotcache/` whose hash belongs to no registered file is deleted in
+   the background (moved/renamed files and reset registries used to leave these behind forever).
+5. Persistence: registry at `~/.glider_playground/registry.json`, per-file payload sidecars at
    `~/.glider_playground/payloads/<file_id>.json`, plot cache blobs at
    `~/.glider_playground/plotcache/`.
 
