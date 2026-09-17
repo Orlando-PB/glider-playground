@@ -73,6 +73,12 @@ _DS_CHL_MY = "cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D"
 # Surface currents: eastward (uo) + northward (vo) velocity, analysis/forecast.
 _DS_CUR = "cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m"
 
+# The analysis/forecast model products only reach back to 2021-22; older
+# deployments fall through to the multi-year reanalysis (1993 on, same grids).
+# The BGC reanalysis has o2 but no ph / phyc, so those two have no fallback.
+_DS_PHY_MY = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
+_DS_BGC_MY = "cmems_mod_glo_bgc_my_0.25deg_P1D-m"
+
 # Sea level anomaly (DUACS L4 altimetry): higher-res near-real-time first, then
 # the coarser near-real-time and reprocessed multi-year products as fallbacks for
 # older dates the 0.125deg NRT product doesn't cover.
@@ -86,18 +92,18 @@ _DS_SLA_MY = "cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.25deg_P1D"
 # top depth level we extract. Order here is the order shown in the map legend.
 OVERLAYS: dict[str, dict] = {
     "chla":     {"datasets": [_DS_CHL_NRT, _DS_CHL_MY], "variable": "CHL",    "surface": False},
-    "temp":     {"datasets": ["cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m"], "variable": "thetao", "surface": True},
-    "salinity": {"datasets": ["cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m"],     "variable": "so",     "surface": True},
-    "o2":       {"datasets": ["cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m"],     "variable": "o2",     "surface": True},
-    "ph":       {"datasets": ["cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m"],     "variable": "ph",     "surface": True},
-    "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"],     "variable": "phyc",   "surface": True},
+    "temp":     {"datasets": ["cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m", _DS_PHY_MY], "variable": "thetao", "surface": True},
+    "salinity": {"datasets": ["cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m", _DS_PHY_MY], "variable": "so",     "surface": True},
+    "o2":       {"datasets": ["cmems_mod_glo_bgc-bio_anfc_0.25deg_P1D-m", _DS_BGC_MY], "variable": "o2",     "surface": True},
+    "ph":       {"datasets": ["cmems_mod_glo_bgc-car_anfc_0.25deg_P1D-m"], "variable": "ph",     "surface": True},
+    "biomass":  {"datasets": ["cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m"], "variable": "phyc",   "surface": True},
     "ssh":      {"datasets": [_DS_SLA_NRT_HI, _DS_SLA_NRT, _DS_SLA_MY], "variable": "sla", "surface": False, "demean": True},
 }
 
 # Currents is a vector field (uo, vo) rather than a single scalar, so it gets its
 # own spec and fetch path. The frontend draws a speed colour mesh plus an animated
 # particle flow advected through the u/v grid.
-CURRENTS: dict = {"dataset": _DS_CUR, "variables": ["uo", "vo"]}
+CURRENTS: dict = {"datasets": [_DS_CUR, _DS_PHY_MY], "variables": ["uo", "vo"]}
 
 # Session-level LRU dict: key → result; avoids re-fetching on repeat toggle.
 _CACHE: dict = {}
@@ -139,6 +145,12 @@ _MAX_CELLS_PER_SIDE = 800
 # components per cell, and the frontend interpolates a continuous flow from it —
 # so a coarser grid is plenty and keeps the particle advection cheap.
 _MAX_CURRENT_CELLS_PER_SIDE = 160
+
+
+def live_date() -> str:
+    """Day requested for a live glider: two days back, when every product has
+    a settled field (datasets that lag further are capped to their last day)."""
+    return (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
 
 
 def _cache_key(var, lat_min, lat_max, lon_min, lon_max, date_str):
@@ -233,10 +245,7 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
     min_lon = max(-180.0, lon_c - half_lon)
     max_lon = min(180.0, lon_c + half_lon)
 
-    if target_date:
-        date_str = target_date[:10]
-    else:
-        date_str = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
+    date_str = target_date[:10] if target_date else live_date()
 
     prep = time.time() - t_prep
 
@@ -319,7 +328,7 @@ def _fetch(cm, spec, min_lat, max_lat, min_lon, max_lon, date_str, timing):
 def _fetch_currents(cm, min_lat, max_lat, min_lon, max_lon, date_str, timing):
     """Fetch the uo/vo current grid, with the same auth/bounds handling."""
     return _try_datasets(
-        [CURRENTS["dataset"]],
+        CURRENTS["datasets"],
         lambda dataset_id, d: _open_and_extract_vec(
             cm, dataset_id, min_lat, max_lat, min_lon, max_lon, d, timing),
         date_str,
@@ -331,12 +340,14 @@ def _try_datasets(dataset_ids, open_fn, date_str):
     auth failures. A date beyond a dataset's last day is capped inside _subset;
     one before its first day moves on to the next candidate (e.g. NRT → MY)."""
     last_err = None
+    too_old = None
     for dataset_id in dataset_ids:
         try:
             return open_fn(dataset_id, date_str)
         except _DateOutOfRange as exc:
             logger.debug("%s", exc)
             last_err = str(exc)
+            too_old = exc
         except Exception as exc:
             msg = str(exc)
             logger.debug("Overlay fetch error (dataset=%s): %s", dataset_id, msg)
@@ -347,7 +358,12 @@ def _try_datasets(dataset_ids, open_fn, date_str):
                     "setup": "login",
                 }
             last_err = msg
+            too_old = None
 
+    if too_old is not None:
+        # Not a sign-in problem: Copernicus simply has no field this far back.
+        return {"error": f"No Copernicus data before {too_old.tmin} for this layer "
+                         f"(deployment date {date_str})", "hint": ""}
     return {
         "error": f"Could not retrieve data: {last_err}",
         "hint": "If this is a sign-in problem, enter your Copernicus Marine details below.",
@@ -470,7 +486,7 @@ def latest_available_date(var: str) -> str | None:
         return None
     try:
         if var == "currents":
-            ds = _open_full(cm, CURRENTS["dataset"], CURRENTS["variables"], True)
+            ds = _open_full(cm, CURRENTS["datasets"][0], CURRENTS["variables"], True)
         else:
             spec = OVERLAYS[var]
             ds = _open_full(cm, spec["datasets"][0], [spec["variable"]], spec.get("surface", False))

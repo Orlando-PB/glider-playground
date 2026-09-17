@@ -71,7 +71,8 @@
         #layer-header .material-symbols-outlined { font-size: 16px; }
         #layer-title { letter-spacing: 0.04em; }
         #layer-header .chev { margin-left: auto; transition: transform 0.2s; }
-        #layer-panel.collapsed { max-width: none; }
+        /* Collapsed: same 32px height as #posBar so the two sit level. */
+        #layer-panel.collapsed { max-width: none; height: 32px; justify-content: center; }
         #layer-panel.collapsed #layer-title,
         #layer-panel.collapsed .chev,
         #layer-panel.collapsed #layer-body { display: none; }
@@ -97,11 +98,11 @@
         #scaleNote a { color: inherit; text-decoration: underline; }
         #scaleNote a:hover { color: var(--text-primary); }
 
-        /* ── Glider position bar (bottom-centre); hidden until the scene has rendered ── */
+        /* ── Glider position bar (bottom-left, like the map's overlay bar); hidden until the scene has rendered ── */
         #posBar {
-            display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-            z-index: 60; align-items: center; gap: 8px; padding: 6px 10px;
-            width: clamp(180px, 50%, 460px); box-sizing: border-box;
+            display: none; position: absolute; bottom: 10px; left: 10px;
+            z-index: 60; align-items: center; gap: 8px; padding: 0 10px;
+            width: clamp(180px, 50%, 460px); max-width: calc(100% - 66px); height: 32px; box-sizing: border-box;
             border-radius: 10px; background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
             box-shadow: 0 1px 8px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
         }
@@ -141,7 +142,7 @@
 
         /* Narrow panels: compact bar filling the row between the left edge and the Style button. */
         @media (max-width: 560px) {
-            #posBar { left: 8px; right: 56px; width: auto; transform: none; bottom: 8px; gap: 6px; padding: 4px 6px; }
+            #posBar { left: 8px; right: 56px; width: auto; max-width: none; bottom: 8px; gap: 6px; padding: 0 6px; }
             #posSlider { min-width: 30px; }
             #posSpeed { min-width: 28px; padding: 0 4px; }
             #posReadout { font-size: 9px; }
@@ -277,7 +278,7 @@
         const trackEveryMs = 500;    // past/ahead track split cadence during playback
         const sceneryEveryMs = 50;   // scenery sway/swim cadence during playback (~20 fps: the motion is slow, and every update re-meshes ~15k vertices)
         const trackLineMax = Infinity;   // cap on points in the drawn track line. Uncapped: a decimated line visibly differs from the full-resolution tip, so the path "changed" once the glider had passed
-        const followDist = 1.0;      // scene units: the camera eases in to this if it's further out during playback (never pushes out)
+        const followDist = 0.64;      // scene units: the camera eases in to this if it's further out during playback (never pushes out)
         const leadFrac = 0.3;        // the pivot sits this fraction of the camera distance ahead of the glider, so the glider is off-centre with the water ahead filling the frame
         const cooldownMs = 1500;     // resume delay after a manual rotate/zoom
         // Argo floats: the index only gives surfacings, so between them the float follows a synthetic
@@ -357,7 +358,7 @@
             document.getElementById('statusText').textContent = "Rendering Ocean...";
             const startTime = performance.now();
 
-            let currentEye = { x: 1.25, y: -1.25, z: 0.6 };
+            let currentEye = { x: 0.8, y: -0.8, z: 0.38 };
             // The camera orbits the glider. Plotly's camera.center / eye are absolute, in normalised
             // scene units (data box centred on the origin, spanning aspectratio).
             let currentCenter = { x: 0, y: 0, z: 0 };

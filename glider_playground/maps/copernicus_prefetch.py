@@ -7,11 +7,13 @@ on disk and a click is a local read rather than a ~3s Copernicus round-trip.
 
 Storage reuses cache_logic's per-file binary cache (get/put_plot_binary): the
 key folds in the file signature + CACHE_VERSION, so a changed or re-downloaded
-file, a version bump, or a delete invalidates the stored fields for free. A
-finished deployment's overlay is a fixed point in time and is fetched exactly
-once in its lifetime. A live glider (last fix inside the live window) uses the
-most recent available field; a refresh loop re-checks those against the
-dataset's latest day and only re-downloads a layer when a newer day exists.
+file, a version bump, or a delete invalidates the stored fields for free.
+
+Every file gets the same rule: a snapshot dated at the glider's last fix,
+fetched once per processing run. A live glider's snapshot moves forward only
+because its file is re-downloaded and reprocessed. Separately, the map's
+"Latest" toggle asks for current conditions for any file: fetched on demand,
+stored under its own key, and re-fetched only once Copernicus has a newer day.
 
 One worker thread serialises the fetches (kind to the Pi and to Copernicus);
 files the user is actually looking at jump the queue via ensure(front=True).
@@ -25,7 +27,6 @@ import struct
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
 
 from ..core import cache_logic
 from . import copernicus_fetch
@@ -36,12 +37,6 @@ logger = logging.getLogger(__name__)
 
 LAYERS: list[str] = list(copernicus_fetch.OVERLAYS.keys()) + ["currents"]
 
-# A glider whose last fix is within this many days is treated as "live": its
-# overlay uses the most recent available Copernicus field rather than the exact
-# last-fix date, so an active deployment always sees the freshest ocean state.
-LIVE_WINDOW_DAYS = 7
-
-REFRESH_INTERVAL = 300.0          # live-file staleness check cadence (s)
 _LAYER_PAUSE_SERVER = 0.5         # breather between layers on the Pi
 
 _lock = threading.Lock()
@@ -49,7 +44,7 @@ _queue: deque[str] = deque()
 _cv = threading.Condition(_lock)
 _started = False
 # file_id -> {"layers": {key: {"state": pending|ready|error, "date": str|None,
-#             "error": str|None, "setup": str|None}}, "live": bool, "done": bool}
+#             "error": str|None, "setup": str|None}}, "done": bool}
 _status: dict[str, dict] = {}
 # Distinct failure messages already reported: without credentials every layer
 # of every file fails the same way, so warn once per message, not 8×N times.
@@ -59,33 +54,40 @@ _warned: set[str] = set()
 # ---------- date rule ----------
 
 def target_date(rec) -> str | None:
-    """Overlay date for a file: the glider's last data point for a past
-    deployment, or None (→ most recent available) when the glider is still live."""
+    """Snapshot date for a file: the glider's last data point (a date past a
+    dataset's last day is capped to it in copernicus_fetch._subset)."""
     if not rec or not rec.get("last_time"):
         return None
-    last_str = str(rec["last_time"])[:10]
-    try:
-        last = datetime.strptime(last_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return last_str
-    age_days = (datetime.now(timezone.utc) - last).days
-    return None if age_days <= LIVE_WINDOW_DAYS else last_str
-
-
-def is_live(rec) -> bool:
-    return bool(rec) and target_date(rec) is None
+    return str(rec["last_time"])[:10]
 
 
 # ---------- store ----------
 
-def _store_key(key: str) -> str:
-    return f"overlay:{key}"
+def _store_key(key: str, latest: bool = False) -> str:
+    return f"overlay_latest:{key}" if latest else f"overlay:{key}"
 
 
 def get_layer_bytes(file_id: str, key: str) -> bytes | None:
-    """Stored payload for a layer (packed binary for scalars, JSON for
-    currents), or None if not fetched yet / file not ready."""
+    """Stored snapshot payload for a layer (packed binary for scalars, JSON
+    for currents), or None if not fetched yet / file not ready."""
     return cache_logic.get_plot_binary(file_id, _store_key(key))
+
+
+def latest_date(key: str) -> str | None:
+    """Day a "Latest" fetch of this layer resolves to right now."""
+    avail = copernicus_fetch.latest_available_date(key)
+    return min(avail, copernicus_fetch.live_date()) if avail else None
+
+
+def get_latest_bytes(file_id: str, key: str) -> bytes | None:
+    """Stored "Latest" payload, unless Copernicus now has a newer day."""
+    data = cache_logic.get_plot_binary(file_id, _store_key(key, latest=True))
+    if data is None:
+        return None
+    have, want = _stored_date(data, key), latest_date(key)
+    if have and want and want > have:
+        return None
+    return data
 
 
 def _stored_date(data: bytes, key: str) -> str | None:
@@ -113,15 +115,16 @@ def _location(file_id: str) -> dict | None:
     return loc
 
 
-def fetch_layer(file_id: str, key: str) -> tuple[bytes | None, dict | None]:
+def fetch_layer(file_id: str, key: str, latest: bool = False) -> tuple[bytes | None, dict | None]:
     """Fetch one layer for a file from Copernicus and persist it. Returns
     (bytes, None) on success or (None, error_dict) on failure. Shared by the
-    background worker and the on-demand API fallback."""
+    background worker and the on-demand API paths; `latest` fetches current
+    conditions instead of the file's snapshot date."""
     loc = _location(file_id)
     if loc is None:
         return None, {"error": "No spatial data for this file", "hint": ""}
     rec = cache_logic.get_record(file_id)
-    date = target_date(rec)
+    date = None if latest else target_date(rec)
     bbox = dict(lat_min=loc["lat_min"], lat_max=loc["lat_max"],
                 lon_min=loc["lon_min"], lon_max=loc["lon_max"])
     if key == "currents":
@@ -135,7 +138,9 @@ def fetch_layer(file_id: str, key: str) -> tuple[bytes | None, dict | None]:
         data = json.dumps(result).encode("utf-8")
     else:
         data = copernicus_fetch.pack_overlay_response(result)
-    cache_logic.put_plot_binary(file_id, _store_key(key), data)
+    cache_logic.put_plot_binary(file_id, _store_key(key, latest), data)
+    if latest:
+        return data, None
     # An on-demand fetch (user clicked before the worker reached this layer)
     # is just as final as a prefetched one — reflect it in the status so the
     # button un-greys on the next poll instead of waiting for the worker.
@@ -149,11 +154,10 @@ def fetch_layer(file_id: str, key: str) -> tuple[bytes | None, dict | None]:
 
 # ---------- status ----------
 
-def _blank(rec) -> dict:
+def _blank() -> dict:
     return {
         "layers": {k: {"state": "pending", "date": None, "error": None, "setup": None}
                    for k in LAYERS},
-        "live": is_live(rec),
         "done": False,
     }
 
@@ -176,12 +180,12 @@ def get_status(file_id: str) -> dict:
     rec = cache_logic.get_record(file_id)
     if not rec or rec.get("status") != cache_logic.STATUS_READY:
         return {"layers": {k: {"state": "pending"} for k in LAYERS},
-                "live": is_live(rec), "done": False, "file_ready": False}
+                "done": False, "file_ready": False}
     ensure(file_id, front=True)
     with _lock:
-        st = _status.get(file_id) or _blank(rec)
+        st = _status.get(file_id) or _blank()
         out = {"layers": {k: dict(v) for k, v in st["layers"].items()},
-               "live": st["live"], "done": st["done"], "file_ready": True}
+               "done": st["done"], "file_ready": True}
     return out
 
 
@@ -193,7 +197,7 @@ def ensure(file_id: str, front: bool = False) -> None:
     with _cv:
         st = _status.get(file_id)
         if st is None:
-            st = _blank(rec)
+            st = _blank()
             _sync_from_disk(file_id, st)
             _status[file_id] = st
         if st["done"]:
@@ -291,54 +295,8 @@ def _worker_loop() -> None:
             logger.exception("Overlay prefetch failed for %s", file_id)
 
 
-def _refresh_loop() -> None:
-    """Every REFRESH_INTERVAL, re-check live files' stored layers against the
-    dataset's latest available day and re-queue only the layers that are stale.
-    Nothing is re-downloaded when Copernicus hasn't published a newer day."""
-    while True:
-        time.sleep(REFRESH_INTERVAL)
-        try:
-            _refresh_live()
-        except Exception:
-            logger.exception("Overlay refresh pass failed")
-
-
-def _refresh_live() -> None:
-    with _lock:
-        live_ids = [fid for fid, st in _status.items() if st["live"] and st["done"]]
-    if not live_ids:
-        return
-    latest = {k: copernicus_fetch.latest_available_date(k) for k in LAYERS}
-    # Look records up before taking our lock: cache_logic calls forget() while
-    # holding its own lock, so never nest theirs inside ours.
-    recs = {fid: cache_logic.get_record(fid) for fid in live_ids}
-    with _cv:
-        for fid in live_ids:
-            st = _status.get(fid)
-            rec = recs.get(fid)
-            if st is None or not rec:
-                continue
-            if not is_live(rec):
-                st["live"] = False   # aged out of the live window: now fixed
-                continue
-            stale = False
-            for k, layer in st["layers"].items():
-                if layer["state"] != "ready":
-                    continue
-                new = latest.get(k)
-                if new and layer["date"] and new > layer["date"]:
-                    layer.update(state="pending")
-                    stale = True
-            if stale:
-                st["done"] = False
-                if fid not in _queue:
-                    _queue.append(fid)
-                logger.debug("Live overlays for %s stale — refreshing", rec.get("name", fid))
-        _cv.notify()
-
-
 def start() -> None:
-    """Start the worker + live-refresh threads and queue every ready file.
+    """Start the worker thread and queue every ready file.
     Idempotent; safe to call from app import time."""
     global _started
     with _lock:
@@ -346,5 +304,4 @@ def start() -> None:
             return
         _started = True
     threading.Thread(target=_worker_loop, name="overlay-prefetch", daemon=True).start()
-    threading.Thread(target=_refresh_loop, name="overlay-refresh", daemon=True).start()
     threading.Thread(target=ensure_all, name="overlay-prefetch-seed", daemon=True).start()

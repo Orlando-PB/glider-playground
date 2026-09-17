@@ -4280,6 +4280,7 @@
                 const res = await fetch(`/api/live${force ? '?force=true' : ''}`);
                 _liveData = await res.json();
                 renderLive(_liveData);
+                renderFilesList();
                 await resolvePendingOpen();
                 // A share link may be waiting on a live glider; now the BODC list is in, open it.
                 await resolveSharedFile();
@@ -5199,8 +5200,10 @@
 
         function renderFilesList() {
             filesList.innerHTML = '';
-            // Auto-downloaded files show in the Live list while live; once is_nrt is false they appear here.
-            const userFiles = fileRecords.filter(f => !f.is_managed || !f.is_nrt);
+            // Auto-downloaded files belong to the Live list for as long as the feed lists them
+            // (is_nrt is false while processing / when the newest data is old, so don't key on it).
+            const liveNames = new Set(((_liveData && _liveData.active) || []).map(e => e.filename));
+            const userFiles = fileRecords.filter(f => !f.is_managed || (_liveData && !liveNames.has(f.name)));
             if (userFiles.length === 0) {
                 filesList.style.display = 'none';
                 filesEmpty.style.display = 'flex';

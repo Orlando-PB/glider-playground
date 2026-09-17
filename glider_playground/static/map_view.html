@@ -60,7 +60,8 @@
         #layer-header .material-symbols-outlined { font-size: 16px; }
         #layer-title { letter-spacing: 0.04em; }
         #layer-header .chev { margin-left: auto; transition: transform 0.2s; }
-        #layer-panel.collapsed { max-width: none; }
+        /* Collapsed: same 32px height as #chla-bar so the two sit level. */
+        #layer-panel.collapsed { max-width: none; height: 32px; justify-content: center; }
         #layer-panel.collapsed #layer-title,
         #layer-panel.collapsed .chev,
         #layer-panel.collapsed #layer-body { display: none; }
@@ -70,13 +71,13 @@
         }
 
         /* Toggle rows inside the sidebar */
-        #dacToggle, #smoothToggle, .ovBtn {
+        #dacToggle, #smoothToggle, #latestToggle, .ovBtn {
             display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
             padding: 5px 8px; border: none; cursor: pointer; border-radius: 6px;
             font-size: 11px; font-weight: 600; color: var(--text-primary); background: transparent;
         }
-        #dacToggle:hover, #smoothToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
-        #dacToggle.on, #smoothToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+        #dacToggle:hover, #smoothToggle:hover, #latestToggle:hover, .ovBtn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
+        #dacToggle.on, #smoothToggle.on, #latestToggle.on, .ovBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
         .ovBtn.loading { cursor: progress; }
         /* Layer not yet prefetched for this glider: greyed until it lands. */
         .ovBtn.pending { opacity: 0.4; cursor: default; }
@@ -89,7 +90,7 @@
         /* CHL-a colourbar — bottom-left, only while a layer is on. */
         #chla-bar {
             display: none; position: absolute; bottom: 10px; left: 10px; z-index: 60;
-            align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
+            align-items: center; gap: 6px; padding: 0 10px; height: 32px; border-radius: 10px;
             font-size: 10px; font-weight: 500; color: var(--text-primary);
             background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
             box-shadow: 0 1px 6px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
@@ -97,14 +98,13 @@
             max-width: calc(100vw - 140px); overflow: hidden; box-sizing: border-box;
         }
         #chla-bar.visible { display: flex; }
-        body.hasAttrib #chla-bar { bottom: 30px; }
 
-        /* Data-source attribution — bottom-left, one line per active source. */
+        /* Data-source attribution — top-left (same spot as the 3D view's note), one line per active source. */
         #attrib {
-            display: none; position: absolute; bottom: 8px; left: 10px; z-index: 60;
+            display: none; position: absolute; top: 8px; left: 10px; z-index: 60;
             flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 5px;
             font-size: 9px; line-height: 1.3; white-space: nowrap;
-            max-width: calc(100vw - 140px); overflow: hidden; text-overflow: ellipsis;
+            max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis;
             /* White text + difference blending stays legible over dark ocean and bright overlays. */
             color: #fff; mix-blend-mode: difference; opacity: 0.9;
             user-select: none; pointer-events: none;
@@ -287,6 +287,11 @@
             <button id="smoothToggle" class="on" title="Toggle overlay smoothing">
                 <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">blur_on</span>
                 Smooth
+            </button>
+            <!-- Off: Copernicus layers dated at the glider's last fix. On: current conditions. -->
+            <button id="latestToggle" title="Show the latest Copernicus data instead of the deployment's own date">
+                <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">update</span>
+                Latest
             </button>
             <!-- Depth-averaged current (DAC) toggle. Hidden until a file with DAC loads. -->
             <button id="dacToggle" title="Toggle depth-averaged currents">
@@ -515,6 +520,7 @@
         let layerStatusSeq = 0;
 
         function layerPending(key) {
+            if (overlayLatest) return false;   // Latest is fetched on demand, never prefetched
             const st = layerState[key];
             return !!st && st.state === 'pending';
         }
@@ -527,7 +533,7 @@
             icon.classList.toggle('spin', anyPending);
         }
 
-        // Poll /api/overlay_status: fast while pending, 1 min for a live glider, stopped otherwise.
+        // Poll /api/overlay_status while the file's snapshot layers are still being prefetched.
         async function pollOverlayStatus() {
             clearTimeout(layerStatusTimer);
             const fileId = activeId;
@@ -545,7 +551,7 @@
                 for (const k in layerState) {
                     const was = prev[k] && prev[k].date;
                     const now = layerState[k].date;
-                    if (was && now && was !== now) {
+                    if (!overlayLatest && was && now && was !== now) {
                         if (k === 'currents') {
                             currentsData = null;
                             if (currentsActive) loadCurrents();
@@ -555,9 +561,7 @@
                         }
                     }
                 }
-                if (!st.done) next = 1500;
-                else if (st.live) next = 60000;
-                else next = 0;
+                next = st.done ? 0 : 1500;
             } catch (_) {
                 next = 5000;
             }
@@ -571,6 +575,9 @@
         let overlayLoading = null; // key currently being fetched, or null
         let overlayReqSeq = 0;     // ticket counter — only the latest loadOverlay() call may apply
         let overlaySmooth = true;  // Smooth toggle in the layer panel; rebuilds the active mesh
+        let overlayLatest = false; // Latest toggle: current Copernicus conditions, not the file's snapshot
+        const LATEST_CHECK_MS = 5 * 60 * 1000;
+        const latestParam = () => overlayLatest ? '&latest=1' : '';
 
         // Each overlay: ramp colour stops (0–1 → [r,g,b]), log/linear scaling, legend label and units.
         const OVERLAYS = [
@@ -1234,6 +1241,36 @@
             applyOverlay();   // rebuilds the active scalar overlay mesh, if any
             applyCurrents();  // rebuilds the currents mesh, if active
         });
+
+        // Latest toggle: the two modes share overlayCache/currentsData, so drop them and reload what's showing.
+        document.getElementById('latestToggle').addEventListener('click', () => {
+            if (overlayLoading || currentsLoading) return;
+            overlayLatest = !overlayLatest;
+            document.getElementById('latestToggle').classList.toggle('on', overlayLatest);
+            const key = activeOverlay, cur = currentsActive;
+            for (const k in overlayCache) delete overlayCache[k];
+            currentsData = null;
+            if (key) { activeOverlay = null; applyOverlay(); loadOverlay(key); }
+            else if (cur) { deactivateCurrents(); loadCurrents(); }
+            updateOverlayButtons();
+            updateCurrentsButton();
+        });
+
+        // While Latest is on, ask (metadata only) whether Copernicus has a newer day than the layer on screen.
+        setInterval(async () => {
+            if (!overlayLatest || overlayLoading || currentsLoading) return;
+            const key = currentsActive ? 'currents' : activeOverlay;
+            const shown = currentsActive ? currentsData : overlayCache[activeOverlay];
+            if (!key || !shown || !shown.date) return;
+            try {
+                if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
+                const res = await fetch(`/api/overlay_latest_date?var=${key}`);
+                const { date } = await res.json();
+                if (!date || date <= shown.date || !overlayLatest) return;
+                if (key === 'currents') { if (currentsActive) loadCurrents(); }
+                else if (activeOverlay === key) loadOverlay(key);
+            } catch (_) {}
+        }, LATEST_CHECK_MS);
 
         // Re-centre on the track: opts.whole frames the whole globe, else a tight fit plus opts.padding.
         function fitView(opts) {
@@ -2335,7 +2372,7 @@
             try {
                 // Skip the generic API one-liner; the full breakdown is logged below.
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
-                const res = await fetch(`/api/overlay?id=${encodeURIComponent(fileId)}&var=${key}`);
+                const res = await fetch(`/api/overlay?id=${encodeURIComponent(fileId)}&var=${key}${latestParam()}`);
                 T.fetched = performance.now();
                 const hdr = res.headers && res.headers.get('X-Process-Time');
                 T.serverTime = hdr ? parseFloat(hdr) * 1000 : 0;   // server wall time (ms)
@@ -2688,7 +2725,7 @@
             const T = { start: performance.now(), cells: 0 };
             try {
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
-                const res = await fetch(`/api/currents?id=${encodeURIComponent(fileId)}`);
+                const res = await fetch(`/api/currents?id=${encodeURIComponent(fileId)}${latestParam()}`);
                 T.fetched = performance.now();
                 const hdr = res.headers && res.headers.get('X-Process-Time');
                 T.serverTime = hdr ? parseFloat(hdr) * 1000 : 0;

@@ -736,21 +736,21 @@ def api_overlay_status(id: str):
 
 
 @app.get("/api/overlay")
-def api_overlay(id: str, var: str):
+def api_overlay(id: str, var: str, latest: bool = False):
     """Surface overlay (chla/temp/salinity/o2/ph/biomass/sla) for a file's bbox.
 
-    Normally a read of the prefetched, on-disk field (see copernicus_prefetch). If
-    it isn't stored yet (file still processing, or the user clicked before the
-    prefetch reached it) the layer is fetched now and stored for next time. For
-    a past deployment the date is tied to the glider's last GPS fix so the field
-    is contemporaneous with the track; for a still-live glider it uses the most
-    recent available field — see copernicus_prefetch.target_date.
+    Normally a read of the prefetched, on-disk snapshot dated at the glider's
+    last fix (see copernicus_prefetch). If it isn't stored yet (file still
+    processing, or the user clicked before the prefetch reached it) the layer
+    is fetched now and stored for next time. `latest` is the map's "Latest"
+    toggle: current conditions for any file, fetched on demand and re-fetched
+    only once Copernicus has a newer day.
     """
     if var not in copernicus_fetch.OVERLAYS:
         raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
-    data = copernicus_prefetch.get_layer_bytes(id, var)
+    data = (copernicus_prefetch.get_latest_bytes if latest else copernicus_prefetch.get_layer_bytes)(id, var)
     if data is None:
-        data, err = copernicus_prefetch.fetch_layer(id, var)
+        data, err = copernicus_prefetch.fetch_layer(id, var, latest=latest)
         if err is not None:
             return err   # plain JSON error (the rare fallback path)
     # Packed binary (uint32 header len + JSON header + raw LE float32
@@ -759,15 +759,24 @@ def api_overlay(id: str, var: str):
 
 
 @app.get("/api/currents")
-def api_currents(id: str):
+def api_currents(id: str, latest: bool = False):
     """Surface current (uo/vo) grid for a file's bbox, for the animated flow
-    layer. Same prefetched-store-first behaviour and date rule as /api/overlay."""
-    data = copernicus_prefetch.get_layer_bytes(id, "currents")
+    layer. Same store-first behaviour and date rules as /api/overlay."""
+    data = (copernicus_prefetch.get_latest_bytes if latest else copernicus_prefetch.get_layer_bytes)(id, "currents")
     if data is None:
-        data, err = copernicus_prefetch.fetch_layer(id, "currents")
+        data, err = copernicus_prefetch.fetch_layer(id, "currents", latest=latest)
         if err is not None:
             return err
     return Response(content=data, media_type="application/json")
+
+
+@app.get("/api/overlay_latest_date")
+def api_overlay_latest_date(var: str):
+    """Day a "Latest" fetch of this layer resolves to now — a metadata-only
+    check the map polls to know when to reload the layer it is showing."""
+    if var != "currents" and var not in copernicus_fetch.OVERLAYS:
+        raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
+    return {"date": copernicus_prefetch.latest_date(var)}
 
 
 # ---------- server-only plugins ----------
