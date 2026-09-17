@@ -1,13 +1,13 @@
-"""Single source of truth for server-mode / low-memory-mode/diagnostics
+"""Single source of truth for server-mode / diagnostics
 detection, and for backend logging setup.
 
-`cli.py` is the only place that *decides* and *sets* IS_SERVER / LOW_MEMORY_MODE
+`cli.py` is the only place that *decides* and *sets* IS_SERVER
 (today: hostname sniffing for the author's Raspberry Pi, or an explicit env var
 override — see SERVER_HOSTNAMES in cli.py). It must set them before the rest of
 the app is imported (uvicorn.run() does that import), since the flags below are
 resolved once at import time here.
 
-Everything else should read IS_SERVER / LOW_MEMORY / DIAGNOSTICS from here
+Everything else should read IS_SERVER / DIAGNOSTICS from here
 rather than re-parsing the env vars directly, so a future deployment target
 (e.g. Docker, where "server mode" would come from an explicit env var rather
 than a hostname guess) only has to change cli.py's detection logic in one
@@ -23,7 +23,6 @@ def _bool_env(name: str) -> bool:
 
 
 IS_SERVER: bool = os.getenv("IS_SERVER") == "True"
-LOW_MEMORY: bool = _bool_env("LOW_MEMORY_MODE")
 
 # Off by default: the terminal only sees warnings/errors, not per-request
 # timing/progress detail. Set DIAGNOSTICS_MODE=true for the verbose logs used
@@ -45,7 +44,7 @@ def configure_logging() -> None:
     our root handler and prints twice, in two different formats. That's
     re-pinned here every time (dictConfig re-applies its "propagate" default
     on each import, so this must run after copernicusmarine has been
-    imported — see overlay_logic._tame_copernicus_logging, called right after
+    imported — see copernicus_fetch._tame_copernicus_logging, called right after
     each `import copernicusmarine`).
     """
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -63,7 +62,7 @@ def tame_copernicus_logging() -> None:
     # subset merely clips the dataset's edges (our 0–1 m surface slice vs. a
     # 0.49 m top level; the 23:59:59 end of the newest day) — harmless and
     # unactionable noise. Real out-of-range dates come back as exceptions and
-    # are logged by overlay_logic.
+    # are logged by copernicus_fetch.
     cm_logger = logging.getLogger("copernicusmarine")
     cm_logger.propagate = False
     cm_logger.setLevel(logging.INFO if DIAGNOSTICS else logging.ERROR)

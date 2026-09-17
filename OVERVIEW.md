@@ -7,11 +7,13 @@ app is made of, how it processes data, how it ships, and how the server deployme
 
 - [What this is](#what-this-is)
 - [Running it / CLI](#running-it--cli)
+- [Where things live](#where-things-live)
 - [Plotting & rendering libraries](#plotting--rendering-libraries)
 - [Data preprocessing pipeline](#data-preprocessing-pipeline)
+- [Cache version history](#cache-version-history)
 - [Binary wire format](#binary-wire-format)
 - [Server mode (`IS_SERVER`)](#server-mode-is_server)
-- [Admin page & analytics plugin](#admin-page--analytics-plugin)
+- [Server-only plugins](#server-only-plugins)
 - [Fetching OG1 files from ERDDAP/BODC](#fetching-og1-files-from-erddapbodc)
 - [Copernicus Marine overlays](#copernicus-marine-overlays)
 - [Share button](#share-button)
@@ -48,21 +50,43 @@ glider-playground --version
 | `IS_SERVER` | Force server mode (see below). Auto-detected on hostnames `raspberrypi`/`server`/`server.local`. |
 | `GP_DATA_DIR` | Directory scanned/used for `.nc` files. |
 | `GP_PLUGINS_DIR` | Directory of server-only plugin `.py` files (default `~/.glider_playground/plugins`); only loaded when `IS_SERVER`. |
-| `LOW_MEMORY_MODE` | Reduce in-RAM preload / point budgets. Currently auto-set `true` when `IS_SERVER`. |
 | `DIAGNOSTICS_MODE` |  `DEBUG` logging. |
 
 On startup, `cli.py` also pings PyPI in a background thread and prints a one-line nudge if a newer
 version is installable (`cli.py:_check_for_update`).
 
+## Where things live
+
+```
+glider_playground/
+  plot_presets.json   ← start here: plot presets, dashboard views, colour palettes (edit + restart)
+  app.py              FastAPI app — every /api/* route
+  cli.py              `glider-playground` entry point
+  core/               data pipeline: cache_logic, plot_logic, derive_logic, spatial_logic,
+                      cycle_profile_logic, presets_logic
+  maps/               map & globe layers: copernicus_fetch, copernicus_prefetch, argo_logic,
+                      ships_logic, waypoint_logic
+  server/             running as a service: erddap_fetch (BODC), server_config, update_logic
+  static/             frontend, no build step
+    index.html  main_plot.html  map_view.html  3d_view.html     the four pages
+    js/               shared helpers (cycle_profile.js, console_log.js)
+    map_view/         map-only layers (argo_layer.js, ships_layer.js)
+    3d_view/          3D-only assets (vehicle models, scenery)
+    icons/            app logos + platform/ship map icons
+    readme_images/    screenshots used by README.md (dashboard.webp doubles as the social-share image)
+    vendor/           Plotly builds + generated tailwind.css — don't edit
+tailwind/             config/input used to regenerate static/vendor/tailwind.css
+```
+
 ## Plotting & rendering libraries
 
 - **Plotly** is used for plotting, and it's **vendored**, 
-  sitting directly in `glider_playground/static/`:
+  sitting in `glider_playground/static/vendor/`:
   - `plotly-gl2d-2.32.0.min.js` — 2D/WebGL build, used by `main_plot.html`.
   - `plotly-gl3d-2.32.0.min.js` — 3D/WebGL build, used by `3d_view.html`.
 - The globe in `map_view.html` and the bathymetry/dive-track view in `3d_view.html` are custom
   implementations.
-- Shared JS helpers used across the panel pages: `cycle_profile.js`, `console_log.js`.
+- Shared JS helpers used across the panel pages live in `static/js/`: `cycle_profile.js`, `console_log.js`.
 
 ## Data preprocessing pipeline
 
@@ -71,29 +95,59 @@ file changes on disk or `CACHE_VERSION` bumps).
 
 1. A file's identity is `sha256(absolute_path)[:16]`; its content signature is `(size, mtime_ns)`
    — changing the file on disk invalidates its cache automatically.
-2. First time a file is seen, `cache_logic.py` runs it through a pipeline of resumable steps
+2. First time a file is seen, `core/cache_logic.py` runs it through a pipeline of resumable steps
    (tracked so a crash mid-processing resumes rather than restarts):
-   1. **Preload** — variable arrays loaded into RAM (or disk-backed in low-memory mode).
-   2. **Derive** (`derive_logic.py`) — TEOS-10 salinity/density/conservative temperature via
+   1. **Preload** — variable arrays streamed to `~/.glider_playground/preload/` as `.npy`
+      (memory-mapped per request; never held in RAM, locally or on the server).
+   2. **Derive** (`core/derive_logic.py`) — TEOS-10 salinity/density/conservative temperature via
       `gsw`, plus scientific dive phases and profile numbers from PRES, and QC flags.
    3. **Dataset info** — variable/metadata listing.
-   4. **Profiles** (`cycle_profile_logic.py`) — cycle number / `SCI_PHASE` / direction, for the
+   4. **Profiles** (`core/cycle_profile_logic.py`) — cycle number / `SCI_PHASE` / direction, for the
       profile navigator.
-   5. **Spatial** (`spatial_logic.py`) — shared QC'd lat/lon/pres/temp arrays backing both the map
+   5. **Spatial** (`core/spatial_logic.py`) — shared QC'd lat/lon/pres/temp arrays backing both the map
       and 3D view. Falls back through position variable names: `LATITUDE`/`LONGITUDE` →
       BODC `ALATPT01`/`ALONPT01` → `LATITUDE_GPS`/`LONGITUDE_GPS`.
    6. **3D** — dive-track payload.
-   7. **Plot prewarm** — default plot payloads pre-computed into the binary plot
-      cache so the first click is fast.
-3. Everything downstream (`plot_logic.py`'s `/api/plot_data`, map/3D endpoints) reads from this
+   7. **Plot prewarm** — default plot payloads (every preset with `prewarm: true` in
+      `plot_presets.json`) pre-computed into the binary plot cache so the first click is fast.
+3. Everything downstream (`core/plot_logic.py`'s `/api/plot_data`, map/3D endpoints) reads from this
    cache instead of re-opening NetCDF files.
 4. Persistence: registry at `~/.glider_playground/registry.json`, per-file payload sidecars at
    `~/.glider_playground/payloads/<file_id>.json`, plot cache blobs at
    `~/.glider_playground/plotcache/`.
 
-**`CACHE_VERSION`** (top of `cache_logic.py`) is folded into every cache key. **Bump it whenever a
+**`CACHE_VERSION`** (top of `core/cache_logic.py`) is folded into every cache key. **Bump it whenever a
 processing change alters cached output**. this forces full reprocessing of every registered file on next startup and
 wipes the stale plot cache, instead of silently serving old results.
+
+## Cache version history
+
+`CACHE_VERSION` (top of `core/cache_logic.py`) is part of every cache key — bump it when a processing
+change alters cached output, and add a line here.
+
+| Version | Change |
+|---|---|
+| v30 | map track and 3D track point caps are now the same locally and on the server (5000 / 20000; the server was 1000 / 4000) — LOW_MEMORY mode removed |
+| v29 | 3D view compass heading bridged across gaps and smoothed |
+| v28 | 3D view attitude interpolated onto track rows (was all-missing when logged sparsely), radians mislabelled as "deg" detected, compass heading added |
+| v27 | 3D view track cap raised (MAX_POINTS_3D) now it carries no temperature colouring |
+| v26 | 3D view payload gains per-point pitch/roll (degrees) for the vehicle model |
+| v25 | 3D view payload gains per-point epoch-ms times (position slider) |
+| v24 | CTD derivation now drops samples whose CNDC/TEMP/PRES are physically impossible by orders of magnitude (corrupt single samples, e.g. CNDC 5.3e6 mS/cm) - they overflowed inside GSW and poisoned the derived salinity/density outputs; raw values are untouched |
+| v23 | derived TIME QC's "is this timestamp in the future" cutoff now uses UTC now() instead of naive LOCAL now() - TIME is naive UTC, so on a server whose local timezone is behind UTC, live data from the last few hours could be wrongly flagged QC=4 (bad) and hard-excluded |
+| v22 | profile classifier now excludes NaT/non-monotonic/duplicate TIME samples before classifying (previously only sort_values()'d them) - a clock reset/backward jump was silently sending np.gradient's velocity computation to NaN/inf via a near-zero post-sort time delta, sweeping a large stretch of genuine dives into one long propelled/parking blob |
+| v21 | restored ALR-vs-non-ALR detection for long flat non-surface "unknown" stretches (filename-based, as before the pelagos_py port): ALR platforms still get propelled (6), everything else now gets parking (4) instead of always propelled |
+| v20 | dataset_info now flags the TIME variable's row with a "time_warning" (dropped NaT/non-monotonic counts) when the hard TIME drop is actually removing samples for this file |
+| v19 | Interpolate/Clean/Filter Time are no longer separate toggles - CTD gap-fill (now capped at 5 min, flag 8 not 5) and zero-fill flagging (flag 9) always run; new derived TIME QC (flag 4 bad / 9 missing) lets TIME be filtered by the QC chips; NaT/non-monotonic TIME is now an unconditional hard drop instead of a filter_time-gated one |
+| v18 | "Clean" no longer auto-scales/range-filters CNDC (removed median-based S/m->mS/cm heuristic + [20,50] mS/cm cross-flagging); the salinity/ density derivation now converts CNDC units->mS/cm itself, keyed off the file's actual CNDC units string rather than a value-based guess |
+| v17 | new profile classifier (pelagos_py port) - per-sample run-length phase detection instead of binned/peak-based; no more platform-specific (ALR) transect-phase hack, phase 4 (parking) never emitted |
+| v16 | derive BBP per beta channel (BBP700 + BBP532 + ...), not just the first |
+| v15 | fix profile classifier crash on all-NaN PRES inflection bins (pandas>=3); SCI_PHASE/PROFILE_NUMBER now derive on multi-sensor NaN-heavy-PRES files |
+| v14 | LATITUDE_GPS/LONGITUDE_GPS position fallback (re-derive CTD on GPS-only files) |
+| v12 | lower render cap 200k -> 100k (invalidate old 200k-decimated plot payloads) |
+| v11 | revert datetime x to string format (epoch-ms caused timezone display bugs) |
+| v10 | binary plot payloads + on-demand plot-payload cache |
+| v9 | Backscatter |
 
 ## Binary wire format
 
@@ -107,7 +161,7 @@ arrays and roughly halves payload size.
   of `{dtype, len}` per array, dtypes `f64`/`f32`/`u8`) → each array's raw little-endian bytes
   concatenated in the declared order. NaN is preserved as NaN (not `null`) since Plotly's
   `scattergl` treats NaN as a legitimate gap in a line.
-- Server-side packer: `plot_logic.py`'s `_pack_plot_binary` (also used by `overlay_logic.py` for
+- Server-side packer: `core/plot_logic.py`'s `_pack_plot_binary` (also used by `maps/copernicus_fetch.py` for
   Copernicus overlay data).
 - Client-side unpacker: `parsePlotBinary()` in `main_plot.html` — reads the header length via
   `DataView.getUint32`, JSON-parses the header, then slices `Float64Array`/`Float32Array`/
@@ -116,8 +170,7 @@ arrays and roughly halves payload size.
   format.
 - The plot fetch requests this path explicitly with `?binary=1` and branches on
   `Content-Type: application/octet-stream` vs JSON (JSON responses are the error/fallback case).
-- Separately, `plot_logic.py` also uses `.npy` files for **on-disk** array persistence when
-  low-memory mode is active — this is a different thing from the binary-over-HTTP format above;
+- Separately, `core/plot_logic.py` also uses `.npy` files for **on-disk** array persistence (always, locally and on the server) — this is a different thing from the binary-over-HTTP format above;
   it's the disk-backed cache tier, not the wire format.
 - Non-binary JSON responses still get a size-reduction pass: floats are trimmed to 7 significant
   figures before serializing.
@@ -126,48 +179,34 @@ arrays and roughly halves payload size.
 
 Single source of truth: `server_config.IS_SERVER`, read from the `IS_SERVER` env var, set once by
 `cli.py` at startup (either because the env var was already `"True"`, or because the hostname
-matches `raspberrypi`/`server`/`server.local`). Setting it also forces `LOW_MEMORY_MODE=true` and
+matches `raspberrypi`/`server`/`server.local`). Setting it also
 binds `0.0.0.0` instead of `127.0.0.1`.
 
 What changes when it's on:
 
 - Background processing (cache building) is deprioritized: worker thread reniced, throttling
-  sleeps inserted between pipeline steps, and lower point budgets (60k prewarm points vs 100k,
-  1000 map/3D points vs 5000) — so heavy numpy work doesn't starve `uvicorn` serving other users.
+  sleeps inserted between pipeline steps, and a lower plot point budget (60k vs 100k; map/3D track
+  point caps are the same in both modes) — so heavy numpy work doesn't starve `uvicorn` serving other users.
 - **Multi-user safety**: file deletion (`DELETE /api/files/{file_id}`), the native file/folder
   picker, and the Copernicus Marine login endpoint are all **disabled** server-side — none of
   these make sense when multiple people share one instance.
 - **Server-only plugins** are loaded from `~/.glider_playground/plugins/*.py` (or
-  `GP_PLUGINS_DIR`) — this is how the admin/analytics page gets added; see below. Pip/local
+  `GP_PLUGINS_DIR`) — see below. Pip/local
   installs never load this directory.
 
-## Admin page & analytics plugin
+## Server-only plugins
 
-This was a temporary fix to access some analystics and change files remotely on my Pi server.
-
-**`/admin/stats` is not defined in `app.py`.** It's added entirely by a server-only plugin,
-`deploy/analytics.py`, loaded by `app.py`'s `_load_server_plugins()` only when `IS_SERVER` is true.
-That loader execs every `.py` file in the plugins directory and calls its `register(app)` function.
-
-- The plugin's source lives in this repo's `deploy/` directory, which is **gitignored — "never
-  publish"** per its own header comment. On the Pi, the mirrored copy sits at
-  `~/.glider_playground/plugins/analytics.py`. It is not included in the PyPI package (package
-  data only covers `glider_playground/static/*`).
-- Routes it adds: `POST /api/track` (fire-and-forget beacon; a background thread writes to SQLite
-  off the request path), `GET /api/admin/stats` (JSON), `GET /admin/stats` (HTML dashboard).
-- **Auth**: HTTP Basic, gated by `GP_STATS_USER`/`GP_STATS_PASS` env vars (set on the Pi via
-  systemd, not in the repo). No `GP_STATS_PASS` set → dashboard returns 503 (disabled by default
-  until configured). I'm aware this is not very secure at all.
-- **Data**: pageviews, unique/returning visitors, device/browser/OS/country, top events,
-  time-on-page — from `~/.glider_playground/analytics.db` (SQLite, WAL mode). No IP storage, no
-  cookies — visitor id is a random first-party id in browser `localStorage`.
-- Two sibling plugins share the same auth: `deploy/waypoints_admin.py`, `deploy/file_admin.py`.
+`app.py`'s `_load_server_plugins()` runs only when `IS_SERVER` is true: it loads every `.py` file
+in `$GP_PLUGINS_DIR` (default `~/.glider_playground/plugins`) and calls its `register(app)`.
+That is the hook a deployment uses to add private extras (the public instance's admin/usage pages
+live there) without any of that code being in this repo or the PyPI package. With no plugins
+directory it does nothing.
 
 ## Fetching OG1 files from ERDDAP/BODC
 
 This can be fully overhauled.
 
-`live_logic.py` scans BODC's ERDDAP files index at `https://linkedsystems.uk/erddap/files/` for
+`server/erddap_fetch.py` scans BODC's ERDDAP files index at `https://linkedsystems.uk/erddap/files/` for
 NetCDF files updated in the last `DAYS_ACTIVE` (7) days, matching suffix `_R.nc` ("real-time" OG1
 files), and downloads them into `DATA_DIR`.
 
@@ -178,7 +217,7 @@ files), and downloads them into `DATA_DIR`.
   are serialized through a single-worker thread pool (one at a time) to avoid hammering ERDDAP or
   disk I/O.
 - **Ownership tracking**: a marker file (`.glider_playground_managed.json` in `DATA_DIR`) records
-  every file `live_logic` itself downloaded, with its server mtime and download time. Auto-prune
+  every file `erddap_fetch` itself downloaded, with its server mtime and download time. Auto-prune
   and auto-update **only ever touch files present in this marker** — manually uploaded/placed
   files are never deleted or overwritten by the live-fetch system.
 - **Suppression**: a separate marker (`.glider_playground_suppressed.json`) tracks gliders a user
@@ -194,7 +233,7 @@ files), and downloads them into `DATA_DIR`.
 
 I'm not sure how licensing for this works. Initially I built it just for personal use.
 
-`overlay_logic.py` fetches satellite/model fields from Copernicus Marine (via the
+`maps/copernicus_fetch.py` fetches satellite/model fields from Copernicus Marine (via the
 `copernicusmarine` Python toolbox) and draws them as coloured cells/particles on the
 `map_view.html` globe — chlorophyll, temperature, salinity, oxygen, pH, phytoplankton
 biomass, sea-level anomaly, and surface currents.
@@ -202,7 +241,7 @@ biomass, sea-level anomaly, and surface currents.
 - **Auth**: the toolbox stores credentials in a single file, `~/.copernicusmarine/.copernicusmarine-credentials`,
   independent of the Python env or process — a login done anywhere is visible everywhere.
   `POST /api/copernicus/login` (`app.py`) validates username/password online and persists them via
-  `overlay_logic.login()`; no restart needed since `open_dataset` reads the file per call.
+  `copernicus_fetch.login()`; no restart needed since `open_dataset` reads the file per call.
   `GET /api/copernicus/status` just checks the file exists. The login endpoint is **disabled in
   server mode** — doesn't make sense for a shared multi-user Pi instance.
 - **Registry** (`OVERLAYS` dict): each overlay maps a key (`chla`, `temp`, `salinity`, `o2`, `ph`,

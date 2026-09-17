@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Glider Plot</title>
-    <script src="/static/console_log.js"></script>
+    <script src="/static/js/console_log.js"></script>
     <script src="/api/plot_presets.js"></script>
-    <link rel="stylesheet" href="/static/tailwind.css">
-    <!-- Self-hosted partial Plotly: gl2d bundle (scatter + scattergl) instead of
-         the full ~1MB-gzip build. Cuts parse time and drops a third-party fetch. -->
-    <script src="/static/plotly-gl2d-2.32.0.min.js"></script>
+    <link rel="stylesheet" href="/static/vendor/tailwind.css">
+    <!-- Self-hosted partial Plotly (gl2d bundle), not the full build. -->
+    <script src="/static/vendor/plotly-gl2d-2.32.0.min.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-panel: #121420;
@@ -36,15 +35,10 @@
         }
         body { margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: var(--text-primary); }
         #plotDiv { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        /* Depth-profile marginal: an SVG (no WebGL) value-vs-depth mini-plot on the
-           far left. Hidden until the Profile sidebar is enabled; the main plot is
-           shifted right to make room (see layoutPlotArea). */
+        /* Depth-profile marginal (SVG) on the far left; the main plot shifts right (see layoutPlotArea). */
         #profileDiv { position: absolute; top: 0; left: 0; height: 100%; display: none; }
 
-        /* Compact, non-interactive colour bar shown only in multiview (>1 plot).
-           Sits in a thin strip on the far right, flush against the panel edge and
-           running its full height so it reads as an integrated part of the panel
-           rather than a floating card; the plot is shifted left to make room. */
+        /* Compact, non-interactive colour bar strip on the right, multiview only. */
         #cbar {
             position: absolute; top: 0; bottom: 0; right: 0; z-index: 6; display: none;
             flex-direction: row; align-items: stretch; gap: 3px;
@@ -90,9 +84,7 @@
         }
         #bgSpinner.active { opacity: 1; }
 
-        /* Zoom hint / reset pill — replaces Plotly's stock "Double-click to zoom
-           back out" notifier (disabled via showTips:false). Shown while a zoom is
-           active; clicking it resets, or the user can still double-click. */
+        /* Zoom hint / reset pill — replaces Plotly's stock notifier (showTips:false). */
         #zoomHint {
             position: absolute; top: 4px; right: 56px;
             display: flex; align-items: center; gap: 6px;
@@ -113,9 +105,7 @@
 
         .js-plotly-plot .plotly text { fill: var(--text-secondary) !important; }
 
-        /* Clicked-point readout — top-centre, mirrors the globe's coord bubble.
-           Shows the point's axes (time / depth / colour value) with a close (✕)
-           that also clears the matching blue pin on every open globe. */
+        /* Clicked-point readout; its close button also clears the pin on every open globe. */
         #point-bubble {
             display: none; position: absolute; top: 8px; left: 50%;
             transform: translateX(-50%); z-index: 30;
@@ -127,11 +117,8 @@
             max-width: calc(100% - 16px); box-sizing: border-box;
         }
         #point-bubble.visible { display: flex; }
-        /* Clicked-point marker. A DOM overlay (not a Plotly layout shape): updating
-           layout.shapes on every click forced a relayout that re-created the
-           scattergl WebGL context each time, leaking contexts until the browser
-           reclaimed them and the points' canvas went blank. This div is repositioned
-           from the axis pixel scale on every redraw instead — no Plotly calls. */
+        /* Clicked-point marker: a DOM overlay, NOT a layout shape — a relayout per click
+           re-creates the scattergl WebGL context and leaks it. */
         #point-pin {
             display: none; position: absolute; z-index: 25; pointer-events: none;
             width: 10px; height: 10px; border-radius: 50%;
@@ -194,8 +181,7 @@
         <div id="cbarTitle"></div>
     </div>
 
-    <!-- Optional depth-profile marginal (value vs depth), an SVG mini-plot pinned to
-         the left. Toggled by the Advanced "Profile" control (profile_sidebar param). -->
+    <!-- Depth-profile marginal (profile_sidebar param). -->
     <div id="profileDiv"></div>
 
     <!-- Clicked-point readout (top-centre). Populated when a point is clicked. -->
@@ -206,28 +192,18 @@
     </div>
 
     <script>
-        // --- Render timing ---------------------------------------------------
-        // Absolute (shared epoch-ms) timestamp for when this script began running.
-        // The gap from the parent's src-set time (_gpt1) to here is browser
-        // navigation + HTML/Plotly parse — the biggest cost the old RENDER log hid.
-        // `let`, not `const`: a warm reuse ('replot' message) re-seeds these so the
-        // PLOT log still measures click→painted without a fresh navigation.
+        // --- Render timing (absolute epoch-ms). `let`: a warm 'replot' re-seeds these. ---
         let _gpScriptStart = performance.timeOrigin + performance.now();
         const _gpParams = new URLSearchParams(window.location.search);
-        // Click time and src-set time handed down by the parent (index.html). Absent
-        // when the iframe is opened directly — then we just start the clock here.
+        // Click / src-set times from the parent; absent when the iframe is opened directly.
         let _gpClick = parseFloat(_gpParams.get('_gpt0')) || _gpScriptStart;
         let _gpSrcSet = parseFloat(_gpParams.get('_gpt1')) || _gpScriptStart;
-        // True once this iframe has been re-driven in place (no navigation), so the
-        // timing log skips the stale Navigation/Resource entries from the first load.
+        // True once re-driven in place, so timing skips stale Navigation/Resource entries.
         let _reused = false;
-        // Plotly event handlers are attached once and persist across Plotly.react
-        // reuses; guard so a warm replot doesn't stack duplicate listeners.
+        // Plotly handlers attach once; guard so a warm replot doesn't stack listeners.
         let _handlersAttached = false;
 
-        // Parse a Server-Timing header ("read;dur=120.5, filter;dur=8.2") into the
-        // child rows under the "server" phase. The "other" remainder the logger adds
-        // captures whatever the backend didn't instrument (response encoding etc.).
+        // Parse a Server-Timing header ("read;dur=120.5, filter;dur=8.2") into child rows.
         function parseServerTiming(header) {
             if (!header) return null;
             const out = [];
@@ -238,10 +214,7 @@
             return out.length ? out : null;
         }
 
-        // Break the "load + parse" gap (parent src-set -> this script running) into
-        // browser dispatch, HTML fetch, blocking-asset download, and script eval,
-        // using the iframe's own Navigation + Resource Timing. Best-effort: missing
-        // entries just collapse into the logger's "other" remainder.
+        // Split the load+parse gap into dispatch / html / scripts / eval (best-effort).
         function loadParseChildren() {
             try {
                 const nav = performance.getEntriesByType('navigation')[0];
@@ -265,15 +238,12 @@
         const bgSpinner = document.getElementById('bgSpinner');
         const zoomHint = document.getElementById('zoomHint');
         zoomHint.addEventListener('click', () => resetZoomToFull());
-        // Pill is only shown on the toolbar's active plot panel (parent tells us
-        // via 'panelActive'); a lone/unsynced plot with no parent defaults to active.
+        // Pill only shows on the active panel (parent sends 'panelActive'); no parent → active.
         let _zoomHintOn = false;
         let _isActivePanel = true;
         function setZoomHint(on) { _zoomHintOn = !!on; zoomHint.classList.toggle('active', _zoomHintOn && _isActivePanel); }
 
-        // Notify the dashboard parent when this panel is interacted with (click,
-        // zoom-drag, touch) so it becomes the active panel. Capture phase so it
-        // fires even though Plotly stops propagation on the plot surface.
+        // Tell the parent this panel was interacted with. Capture phase: Plotly stops propagation.
         ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
             document.addEventListener(evt, () => {
                 try { window.parent.postMessage({ type: 'panelActivate' }, '*'); } catch (_) {}
@@ -281,10 +251,7 @@
         });
 
         let _bgFetchController = null;
-        // Aborts a previous in-flight main-plot fetch when a warm 'replot' starts a new
-        // one. A src navigation used to cancel this implicitly by destroying the
-        // document; reuse keeps the document, so we cancel explicitly to stop a slow
-        // earlier fetch from drawing stale data over a newer plot.
+        // Aborts the previous main fetch on a warm 'replot' so stale data can't draw over a newer plot.
         let _mainFetchController = null;
         let _pendingBounds = null;
         let _originalPlotData = null;
@@ -292,38 +259,14 @@
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
         let _suppressRelayout = false;  // true while the draw gate is running a programmatic draw
 
-        // ---- The draw gate ---------------------------------------------------
-        // EVERY Plotly draw on plotDiv (react / restyle / relayout / resize) goes
-        // through drawPlot(). It is the single owner of four invariants that used
-        // to be enforced by separate ad-hoc guards, each of which missed cases:
-        //   1. Never draw while a zoom drag is live. A react/restyle mid-drag tears
-        //      down the drag layer and the scattergl scene under the pointer, so
-        //      every point vanishes until the drag ends. Plotly sets gd._dragging
-        //      for the drag's duration and a zoom box leaves a .zoombox node; we
-        //      poll both and hold the draw until they clear.
-        //   2. Never run two draws concurrently. Two reacts racing on one div
-        //      corrupt Plotly's axis autorange (empty-plot [-1, 6] default → blank
-        //      plot). Draws are serialised: the next starts when the previous
-        //      promise settles.
-        //   3. A programmatic draw's own plotly_relayout is not a user zoom.
-        //      _suppressRelayout is raised for exactly the lifetime of each job.
-        //   4. Deferred draws coalesce per `key`: a newer job with the same key
-        //      replaces a still-queued one (the replaced job resolves undefined so
-        //      callers awaiting it never hang). Keys: 'data' (trace rebuild),
-        //      'colour' (cmin/cmax restyle), 'axes' (range relayout), 'margin',
-        //      'resize'.
-        // Jobs always start from a macrotask (setTimeout 0), never on the caller's
-        // stack — Plotly emits plotly_doubleclick / plotly_relayout in the middle
-        // of its own relayout, so a draw issued synchronously from those handlers
-        // would race Plotly's in-progress redraw on the same div.
-        // `skipIf` is re-checked at run time so a job made stale while it waited
-        // (e.g. its fetch was aborted by a newer zoom) is dropped, not drawn.
+        // ---- The draw gate: EVERY Plotly draw on plotDiv goes through drawPlot() ----
+        // Never draws mid zoom-drag, serialises draws (concurrent reacts corrupt autorange), suppresses its own
+        // plotly_relayout, coalesces queued jobs per `key`, and always starts from a macrotask (never inside a Plotly handler).
         const _draw = { busy: false, queue: [], timer: null };
         function drawPlot(key, fn, opts) {
             const o = opts || {};
             return new Promise((resolve, reject) => {
-                // Already stale (e.g. its fetch was aborted before it got here): don't
-                // let it supersede a live job of the same key only to be dropped.
+                // Already stale: don't let it supersede a live job of the same key.
                 if (o.skipIf && o.skipIf()) { resolve(undefined); return; }
                 _draw.queue = _draw.queue.filter(j => {
                     if (j.key !== key) return true;
@@ -347,10 +290,7 @@
             const job = _draw.queue.shift();
             if (job.skipIf && job.skipIf()) { job.resolve(undefined); _drawPump(); return; }
             _draw.busy = true;
-            // Any data rebuild starting here runs after Plotly's own post-double-click
-            // relayout has passed (jobs start from a later macrotask), so the flag
-            // that ignores that relayout can be cleared even if the reset job itself
-            // was superseded by a newer 'data' job.
+            // A 'data' job runs after Plotly's post-double-click relayout, so the ignore flag can clear.
             if (job.key === 'data') _dblClickPending = false;
             if (job.suppress) _suppressRelayout = true;
             let p;
@@ -362,34 +302,24 @@
                  _drawPump();
              });
         }
-        // Drop every queued draw (a replot re-drives this iframe with new data, so
-        // anything queued against the old plotData must not run).
+        // Drop every queued draw (a replot brings new data).
         function drawPlotClear() {
             clearTimeout(_draw.timer); _draw.timer = null;
             _draw.queue.splice(0).forEach(j => j.resolve(undefined));
         }
-        // Side padding (fraction of the x-span) added beyond the data on each edge.
-        // Must match the parent's union-range padding in index.html
-        // (unionTimeRange's `pad = span * 0.015`) so a plot that's already aligned
-        // doesn't visibly shift when the parent drives the synced union range on load.
+        // Side padding per x edge. Must match index.html unionTimeRange's pad (span * 0.015).
         const SIDE_PAD_FRAC = 0.015;
 
-        // ---- Compact multiview colour bar -------------------------------------
-        // In multiview (more than one plot panel) each plot shows its own small,
-        // non-interactive colour bar on the left. The big interactive colour rail
-        // in the parent is unchanged; this just mirrors the active colour range.
+        // ---- Compact multiview colour bar (mirrors the active colour range) ----
         const CBAR_W = 58;   // px reserved on the right for the colour bar strip
         let _multiview = false;   // set from the URL once urlParams is initialised
         let _cbarMin = null, _cbarMax = null;   // current colour range shown on the bar
 
-        // Depth-profile marginal (left side). SIDEBAR_W is the reserved strip width;
-        // the marginal matches the main plot's top/bottom margins so their depth axes
-        // line up, and puts its value ticks on the bottom (no title).
+        // Depth-profile marginal (left); margins match the main plot so the depth axes line up.
         const SIDEBAR_W = 158;
         let _profileSidebar = false;   // set from the URL once urlParams is initialised
 
-        // The CSS gradient stops (low→high) for the current colour map, or null when
-        // there's no data-driven colour bar to show (solid colour, discrete, no c).
+        // CSS gradient stops (low→high) for the current cmap, or null when there's no colour bar.
         function cbarStops() {
             if (!plotData || !plotData.c || !plotData.c.length) return null;
             if ((urlParams.get('cmap') || 'thermal') === 'discrete_09') return null;
@@ -404,9 +334,7 @@
 
         function cbarActive() { return _multiview && !!cbarStops(); }
 
-        // Index of the coloured scatter trace (the one the colour slider/auto-colour
-        // restyle targets). Always the first trace — QC filtering happens server-side
-        // now, so there's no separate grey/failed-QC backdrop trace to skip.
+        // Index of the coloured scatter trace (always the first).
         function colouredTraceIdx() {
             return 0;
         }
@@ -419,8 +347,7 @@
             return Number(v.toFixed(decimals)).toString();
         }
 
-        // Show/hide + rebuild the colour bar and shift the plot to make room. Cheap
-        // and idempotent; safe to call after any render, relayout or state change.
+        // Show/hide + rebuild the colour bar; idempotent.
         function applyCbar() {
             const cbar = document.getElementById('cbar');
             const plotDiv = document.getElementById('plotDiv');
@@ -450,17 +377,12 @@
             document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
         }
 
-        // Size the main plot to leave room for the left profile sidebar and/or the
-        // right colour bar, then resize Plotly into the new box.
+        // Size the main plot around the left sidebar / right colour bar, then resize Plotly.
         function layoutPlotArea() {
             const plotDiv = document.getElementById('plotDiv');
             if (!plotDiv) return;
             const left = _profileSidebar ? SIDEBAR_W : 0;
-            // Reserve the colour-bar gutter for EVERY multiview plot, not just the
-            // ones currently showing a bar. A plot with no colour data (solid/black/
-            // discrete cmap, or no c var) would otherwise keep its full width and run
-            // ~43px further right than its colour'd siblings, so stacked synced plots
-            // wouldn't line up. The gutter just sits empty when there's no bar.
+            // Reserve the gutter for EVERY multiview plot (bar or not) so stacked synced plots line up.
             const right = _multiview ? CBAR_W : 0;
             const wantLeft = left + 'px';
             const wantWidth = `calc(100% - ${left + right}px)`;
@@ -481,8 +403,7 @@
                 colorscale: (c && c.length && pdata.c && pdata.c.length) ? scale : undefined,
                 cmin: pdata.c_min, cmax: pdata.c_max, cauto: false
             });
-            // Grey the full column, colour the selected profile/cycle/direction on
-            // top, when a filter is active; otherwise a single coloured gradient.
+            // With a filter active: grey full column, coloured selection on top.
             if (pdata.profile_highlight && pdata.in_selection && pdata.in_selection.length === pdata.x.length) {
                 const sx=[], sy=[], sc=[], gx=[], gy=[];
                 for (let i = 0; i < pdata.x.length; i++) {
@@ -507,9 +428,7 @@
                 margin: { l: 44, r: 6, t: m.t, b: m.b },
                 font: { color: TC.axis, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
-                    // Ticks on the bottom (aligned with the main plot's x-axis) and no
-                    // title — the variable is obvious from the connected main plot, and
-                    // dropping it lets the profile run the full height of the plot.
+                    // Ticks on the bottom, no title (obvious from the main plot).
                     side: 'bottom', showgrid: true, zeroline: false, nticks: 4,
                     gridcolor: TC.grid, linecolor: TC.line, tickcolor: TC.line, tickfont: { color: TC.axis, size: 9 },
                 },
@@ -521,14 +440,8 @@
             };
         }
 
-        // The marginal is value-vs-depth: horizontal position AND colour are both the
-        // colour variable, depth is y — every one of those is already in the main
-        // payload we hold (_originalPlotData). So in the common case we build it here
-        // with zero extra server round trips. The one exception is an active
-        // sub-selection (profile / cycle / phase / direction): the main payload is then
-        // FILTERED to that selection, but the marginal wants the whole greyed column
-        // with the selection coloured on top — data we don't have. Only that case
-        // falls back to a fetch (see _profileNeedsFetch / _renderProfileSidebarFetch).
+        // Marginal is built locally from _originalPlotData; only an active sub-selection
+        // (payload filtered) needs a fetch — see _profileNeedsFetch.
         let _profileFetchSeq = 0;
 
         async function renderProfileSidebar() {
@@ -549,20 +462,14 @@
                                         : _renderProfileSidebarLocal();
         }
 
-        // A filter that prunes the main payload to a sub-selection — so the marginal's
-        // greyed context isn't present in the data we hold and must be fetched.
+        // True when a filter prunes the main payload, so the greyed context must be fetched.
         function _profileNeedsFetch() {
             return ['profile_num', 'cycle_num', 'sci_phases', 'direction_filter']
                 .some(k => { const v = urlParams.get(k); return v !== null && v !== ''; });
         }
 
-        // Convert an x-axis value (a Plotly date string from a relayout event, or a
-        // number) to epoch-ms in the SAME space as the plotted data. We use Plotly's
-        // own range→linear conversion (xaxis.r2l) rather than parsing the string
-        // ourselves: Plotly emits these date strings in its own timezone convention,
-        // and assuming UTC (appending 'Z') was an hour off whenever the build formats
-        // them in browser-local time — which made zoom bg-fetches request a window an
-        // hour away from what's on screen (so a sub-hour zoom showed no points).
+        // Axis x value (Plotly date string or number) → epoch-ms. Uses Plotly's own xaxis.r2l:
+        // Plotly's emitted date strings follow its own tz convention, so never re-parse them by hand.
         function axisXToMs(v) {
             if (typeof v === 'number') return v;
             if (v === null || v === undefined) return NaN;
@@ -576,9 +483,7 @@
             return isNaN(t) ? Date.parse(v) : t;
         }
 
-        // Per-point "is inside the current zoom window" flag, in the main plot's
-        // (x_var, depth) space, or null when there's no zoom (→ no greying). Mirrors
-        // the server's zoom_mask so the local marginal greys exactly as the fetch did.
+        // Per-point in-zoom flag (null = no zoom); mirrors the server's zoom_mask.
         function _zoomSelectionMask(src) {
             const z = _currentZoom;
             if (!z || z.xMin === undefined || z.xMax === undefined
@@ -595,8 +500,7 @@
             const sel = new Array(n);
             let any = false;
             if (isXDate) {
-                // x values are 'YYYY-MM-DD HH:MM:SS' strings; ISO format sorts
-                // lexicographically, so convert the epoch-ms bounds to the same format.
+                // x are 'YYYY-MM-DD HH:MM:SS' strings (sort lexicographically) — compare as strings.
                 const pad = n => String(n).padStart(2, '0');
                 const toStr = ms => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; };
                 const xMinS = toStr(xMin), xMaxS = toStr(xMax);
@@ -613,9 +517,7 @@
             return any ? sel : null;   // nothing in view → treat as no greying
         }
 
-        // Indices to keep when thinning n points to `budget`, mirroring the server:
-        // with a selection mask, keep the selected points dense and stride only the
-        // grey context; otherwise a plain uniform stride. null = keep everything.
+        // Indices to keep when thinning to `budget` (mirrors the server): selection stays dense. null = keep all.
         function _marginalKeepIdx(n, sel, budget) {
             if (n <= budget) return null;
             const thin = (idx, cap) => {
@@ -665,13 +567,11 @@
             return { points: pdata.x.length, fetchMs: 0, drawMs: t1 - t0 };
         }
 
-        // Fetch the value-vs-depth data (all points + selection flag, light point
-        // budget) and draw the SVG marginal. Only used when a sub-selection is active.
+        // Fetch value-vs-depth data + selection flag and draw the marginal (sub-selection only).
         async function _renderProfileSidebarFetch() {
             const profileDiv = document.getElementById('profileDiv');
             const cVar = urlParams.get('c_var');
-            // Value on X, depth on Y, with the selection highlighted; capped to a
-            // light point budget since SVG (not WebGL) draws these.
+            // Value on X, depth on Y; light point budget because SVG draws these.
             const p = new URLSearchParams(window.location.search);
             const mainXVar = p.get('x_var');   // colour var becomes this fetch's x_var below
             p.set('x_var', cVar);
@@ -679,12 +579,8 @@
             p.set('max_points', '2500');
             ['multiview', 'theme', 'profile_sidebar', 'zXmin', 'zXmax', 'zYmin', 'zYmax'].forEach(k => p.delete(k));
 
-            // When the main plot is zoomed, grey the marginal points that fall
-            // outside the current view — the same treatment as a single-profile
-            // selection, but driven by the zoom window. The window lives in the
-            // main plot's x_var / depth space, so pass the main x_var name plus
-            // numeric (epoch-ms for dates) bounds and let the server flag in-view
-            // points via `in_selection`.
+            // When zoomed, pass the main x_var + numeric bounds (epoch-ms for dates) so the
+            // server flags in-view points via `in_selection`.
             const z = _currentZoom;
             if (z && mainXVar && z.xMin !== undefined && z.xMax !== undefined
                     && z.yMin !== undefined && z.yMax !== undefined) {
@@ -704,9 +600,7 @@
 
             const seq = ++_profileFetchSeq;
             try {
-                // This sidebar fetch is an internal sub-request of the plot — fold it
-                // into the parent's PLOT timing log (see initPlot) rather than letting
-                // it print a standalone "API /api/plot_data" line.
+                // Internal sub-request: folded into the parent's PLOT timing log.
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
                 const t0 = performance.timeOrigin + performance.now();
                 const resp = await fetch('/api/plot_data?' + p.toString());
@@ -742,7 +636,7 @@
             };
         }
 
-        // Palettes live in static/plot_presets.json (served as /api/plot_presets.js).
+        // Palettes live in glider_playground/plot_presets.json (served as /api/plot_presets.js).
         const cmoceanPalettes = (window.GP_PLOT_PRESETS || {}).palettes || {};
 
         const customColorscales = (() => {
@@ -776,8 +670,7 @@
         };
 
         let urlParams = new URLSearchParams(window.location.search);
-        // Marker opacity for the main data traces. Opaque (1.0) is the faster WebGL
-        // path; override with &marker_opacity=0.8 to A/B test draw timing on your GPU.
+        // Marker opacity; 1.0 is the faster WebGL path (override with &marker_opacity=).
         const MARKER_OPACITY = (() => { const v = parseFloat(urlParams.get('marker_opacity')); return (v >= 0 && v <= 1) ? v : 1.0; })();
         _multiview = (urlParams.get('multiview') === '1');
         _profileSidebar = (urlParams.get('profile_sidebar') === 'true');
@@ -801,13 +694,8 @@
             return max;
         }
 
-        // Numeric x extent of the plotted data — epoch-ms for a date axis (whose x
-        // values are 'YYYY-MM-DD HH:MM:SS' naive-UTC strings, which getSafeMin/Max
-        // can't compare), raw numbers for a value axis. Uses the first/last non-null
-        // points; min/max covers a reversed (descending) array. Returns {min,max},
-        // which may be non-finite if every point is null. Shared by buildLayout (to
-        // pre-pad the initial range to the union) and the post-render extent report,
-        // so the two can't drift — a past divergence left date axes un-padded.
+        // Numeric x extent: epoch-ms for a date axis (x are naive-UTC strings), raw numbers otherwise.
+        // Shared by buildLayout and the post-render extent report so they can't drift.
         function xDataExtent(xs, isDt) {
             if (!isDt) return { min: getSafeMin(xs), max: getSafeMax(xs) };
             if (!xs) return { min: Infinity, max: -Infinity };
@@ -820,13 +708,8 @@
             return { min: Math.min(a, b), max: Math.max(a, b) };
         }
 
-        // Decode the binary plot container (see _pack_plot_binary on the server):
-        // a uint32 LE header length, a JSON header (scalars + an `arrays` layout
-        // descriptor), then each array's raw LE bytes in declared order. The arrays
-        // become TypedArrays — Plotly's scattergl consumes those directly and treats
-        // NaN as a gap, exactly as it did the old JSON nulls. Absent optional arrays
-        // (c with no colour var, in_selection outside highlight-profile mode) default
-        // to [] so the rest of the code sees the same shape as the JSON path.
+        // Binary container (see _pack_plot_binary): uint32 LE header length, JSON header with an `arrays`
+        // descriptor, then each array's raw LE bytes in declared order. NaN = gap; absent optional arrays → [].
         function parsePlotBinary(buf) {
             const dv = new DataView(buf);
             const headerLen = dv.getUint32(0, true);
@@ -837,15 +720,12 @@
             let off = 4 + headerLen;
             for (const name of Object.keys(layout)) {
                 const { dtype, len } = layout[name];
-                // slice() copies into a fresh (aligned) ArrayBuffer, so a typed view is
-                // valid regardless of the header's byte length — and it's a memcpy, not
-                // a parse, so still ~free next to JSON.parse.
+                // slice() copies into a fresh aligned buffer, so the typed view is always valid.
                 if (dtype === 'f64') { meta[name] = new Float64Array(buf.slice(off, off + len * 8)); off += len * 8; }
                 else if (dtype === 'f32') { meta[name] = new Float32Array(buf.slice(off, off + len * 4)); off += len * 4; }
                 else if (dtype === 'u8') { meta[name] = new Uint8Array(buf.slice(off, off + len)); off += len; }
             }
-            // Datetime x was packed as epoch-ms f64; convert to 'YYYY-MM-DD HH:MM:SS'
-            // strings so Plotly receives the same naive-UTC format as the JSON path.
+            // Datetime x is packed as epoch-ms f64; convert to naive-UTC 'YYYY-MM-DD HH:MM:SS' strings.
             if (meta.is_x_dt && meta.x instanceof Float64Array) {
                 const fa = meta.x;
                 const pad = n => String(n).padStart(2, '0');
@@ -862,20 +742,16 @@
         }
 
         async function initPlot() {
-            // urlParams is the live param set: the URL query on first load, or the
-            // 'replot' message's params on a warm reuse.
+            // urlParams: the URL query on first load, or the 'replot' message's params.
             if (!urlParams.toString()) return;
 
             const now = () => performance.timeOrigin + performance.now();
             try {
-                // Strip our timing params before forwarding to the API (they're noise
-                // to the server and would bloat the cache key if it ever keyed on them).
+                // Strip our timing params before forwarding to the API.
                 const apiParams = new URLSearchParams(urlParams.toString());
                 apiParams.delete('_gpt0'); apiParams.delete('_gpt1');
 
-                // Ask for the binary payload: the browser maps the bulk arrays
-                // straight into TypedArrays instead of JSON.parse-ing ~500k numbers,
-                // which was the dominant client cost as plots stacked up in multiview.
+                // Binary payload: arrays map straight into TypedArrays (no big JSON.parse).
                 apiParams.set('binary', '1');
 
                 const tFetchSent = now();
@@ -885,8 +761,7 @@
                 const mainController = new AbortController();
                 _mainFetchController = mainController;
                 const response = await fetch(fetchUrl, { signal: mainController.signal });
-                // Superseded after the response resolved (abort is a no-op by then) —
-                // bail rather than racing the newer load's render on the same div.
+                // Superseded after the response resolved — bail rather than race the newer render.
                 if (mainController.signal.aborted) return;
                 const tFetchResolved = now();
                 // Server compute time (seconds) + per-step breakdown from the backend.
@@ -894,8 +769,7 @@
                 const serverMs = serverHdr ? parseFloat(serverHdr) * 1000 : 0;
                 const serverChildren = parseServerTiming(response.headers && response.headers.get('Server-Timing'));
 
-                // Binary on success; JSON when the server returned an error dict (or, as
-                // a safety net, if binary was somehow disabled).
+                // Binary on success; JSON when the server returned an error dict.
                 const ctype = (response.headers && response.headers.get('Content-Type')) || '';
                 if (ctype.indexOf('application/octet-stream') !== -1) {
                     plotData = parsePlotBinary(await response.arrayBuffer());
@@ -905,42 +779,29 @@
                 const tJsonParsed = now();
 
                 if (plotData.error) {
-                    // Server-reported empty/filtered result, not a bug — logged as a
-                    // clean note below instead of console.error's stack trace.
+                    // Expected (empty/filtered result) — logged as a note, not console.error.
                     const e = new Error(plotData.error);
                     e.expected = true;
                     throw e;
                 }
 
-                // build + draw is split into trace-building / Plotly draw / paint via
-                // the marks renderPlot records into this object.
+                // renderPlot records trace-build / draw / paint marks into this object.
                 const renderMarks = {};
                 const tRenderStart = now();
                 await renderPlot(renderMarks);
                 const tDrawn = now();
-                // Wait one frame so the timestamp reflects pixels actually painted,
-                // not just Plotly's draw call returning.
+                // Wait one frame so the timestamp reflects painted pixels.
                 await new Promise(r => requestAnimationFrame(r));
                 const tMainPainted = now();
-                // Fold the profile-sidebar sub-plot into THIS plot's timing. It was
-                // kicked off (concurrently) during renderPlot, so wait for it here and
-                // count whatever time it adds beyond the main paint. Its own API log is
-                // suppressed in renderProfileSidebar so it never prints a separate line.
+                // Fold the concurrently-started profile-sidebar sub-plot into this plot's timing.
                 const profileInfo = renderMarks.profilePromise ? await renderMarks.profilePromise : null;
                 const tPainted = now();
 
-                // Timing/logging is purely diagnostic — it must NEVER throw out of the
-                // render path (e.g. a stale cached console_log.js without logPlotTiming
-                // would otherwise abort the overlay fade + zoom-reload below).
+                // Timing/logging is diagnostic only — it must NEVER throw out of the render path.
                 try {
                     const fetchRoundTrip = tFetchResolved - tFetchSent;
-                    // Resource Timing for THIS fetch splits the body download from the
-                    // pure JSON.parse (same-origin, so full detail is exposed).
-                    // fetch() resolves at the response headers (responseStart); the
-                    // body then streams until responseEnd, after which JSON.parse runs.
-                    // Match THIS exact URL — the profile sidebar also hits
-                    // /api/plot_data (different params), so a bare path match could
-                    // grab its entry instead.
+                    // Resource Timing splits body download from parse. Match THIS exact URL — the
+                    // profile sidebar also hits /api/plot_data with different params.
                     const res = performance.getEntriesByType('resource')
                         .filter(e => e.name.indexOf(fetchUrl) !== -1)
                         .pop();
@@ -952,17 +813,14 @@
                         { name: 'parse',    ms: Math.max(0, tJsonParsed - absResponseEnd),    color: '#7ec8f7' },
                     ] : null;
 
-                    // On a warm reuse there's no navigation, so the Navigation/Resource
-                    // entries are stale (they describe the first load) — drop the
-                    // breakdown; the load+parse phase itself is ~0 (script-start re-seeded).
+                    // Warm reuse: Navigation/Resource entries are stale, so drop the breakdown.
                     const loadParse = _reused ? null : loadParseChildren();
                     const buildDraw = [
                         { name: 'traces', ms: (renderMarks.tBuilt || tRenderStart) - tRenderStart, color: '#86efac' },
                         { name: 'draw',   ms: tDrawn - (renderMarks.tBuilt || tRenderStart),       color: '#86efac' },
                         { name: 'paint',  ms: tMainPainted - tDrawn,                                color: '#86efac' },
                     ];
-                    // Phases with sub-steps are rendered as header-only labels (no
-                    // parent bar/total) so the detail rows don't read as a double count.
+                    // Phases with sub-steps render as header-only labels (no double count).
                     const phases = [
                         { name: 'parent dispatch', ms: _gpSrcSet - _gpClick,       color: '#9aa6b8' },
                         { name: 'load + parse',    ms: _gpScriptStart - _gpSrcSet,  color: '#c4a8f5',
@@ -976,17 +834,13 @@
                         { name: 'build + draw',    ms: tMainPainted - tRenderStart, color: '#86efac',
                           header: true, children: buildDraw },
                     ];
-                    // Profile sidebar paints concurrently with the main plot, so charge
-                    // only the extra wall-clock time it added beyond the main paint
-                    // (often ~0 when it finished while the main plot was still painting).
+                    // Profile sidebar paints concurrently: charge only the time beyond the main paint.
                     if (profileInfo) {
                         phases.push({ name: 'profile', ms: Math.max(0, tPainted - tMainPainted), color: '#c4a8f5' });
                     }
                     let ptNote = ((plotData.x && plotData.x.length) || 0).toLocaleString() + ' pts';
                     if (profileInfo && profileInfo.points) ptNote += '  +  ' + profileInfo.points.toLocaleString() + ' prof';
-                    // Surface the request's data-affecting params so a "too few points"
-                    // plot shows WHY (a stale profile/cycle/QC filter, a zoom param, etc.)
-                    // right in the log rather than needing the Network tab.
+                    // Log the request's data-affecting params so a sparse plot shows why.
                     const FILTER_KEYS = ['x_var','y_var','c_var','qc_flags',
                         'profile_num','cycle_num','cycle_var','sci_phases','direction_filter',
                         'zXmin','zXmax','zYmin','zYmax','max_points'];
@@ -997,12 +851,8 @@
                     else window.logRender && window.logRender('WebGL Plot', tPainted - _gpClick);
                 } catch (_) { /* never let logging break the render */ }
 
-                // Reloaded straight into a saved zoom (e.g. the user changed cmap or
-                // draw order while zoomed in)? /api/plot_data returns the full,
-                // downsampled record clipped to the zoom window, which can look sparse
-                // or empty in a tight window. A live zoom-drag normally pulls the
-                // high-res in-bounds chunk via triggerBgFetch, but a fresh load never
-                // fires plotly_relayout — so drive that same fetch explicitly here.
+                // Loaded straight into a saved zoom: no plotly_relayout fires, so drive the
+                // high-res in-bounds fetch explicitly.
                 if (urlParams.has('zXmin') && urlParams.has('zXmax') &&
                     urlParams.has('zYmin') && urlParams.has('zYmax')) {
                     let zx0 = Number(urlParams.get('zXmin')), zx1 = Number(urlParams.get('zXmax'));
@@ -1021,8 +871,7 @@
                 setTimeout(() => overlay.style.display = 'none', 300);
 
             } catch (err) {
-                // A newer replot superseded this fetch — its render is authoritative,
-                // so drop this one silently (don't flash an error over the new plot).
+                // Superseded by a newer replot — drop silently.
                 if (err && err.name === 'AbortError') return;
                 document.getElementById('loadingIcon').style.display = 'none';
                 document.getElementById('statusText').style.color = '#ef4444';
@@ -1048,27 +897,18 @@
             const AXIS_LABEL_COLOR = TC.label;
             const GRID_COLOR = TC.grid;
             const LINE_COLOR = TC.line;
-            // The density isopycnals already give the T-S diagram a reference grid —
-            // the default square gridlines just clutter on top of them.
+            // T-S mode: isopycnals are the reference grid, so hide the default gridlines.
             const isTSMode = TS_SALINITY_VARS.includes(plotData.x_var) && TS_TEMP_VARS.includes(plotData.y_var);
             const layout = {
-                // Tight margins so stacked plots pack close in multiview. Top is
-                // mostly empty space; bottom only needs to fit the x tick labels
-                // (plus the axis title when there is one, i.e. non-datetime x).
-                // In multiview, tighten the right margin so the plot sits snug against
-                // the colour-bar gutter (the reserved strip provides the breathing
-                // room). This is keyed on _multiview, NOT on whether THIS plot has a
-                // bar, so every synced plot keeps an identical plotting box and their
-                // x-axes line up when stacked. A date x-axis needs only one row of
-                // ticks (see tickformatstops), so its bottom margin is tighter.
+                // Tight margins for multiview stacking. Right margin keys on _multiview (NOT on whether
+                // this plot has a bar) so synced plots share an identical plotting box.
                 margin: { l: 60, r: _multiview ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: !isTSMode, zeroline: false,
                     gridcolor: GRID_COLOR, linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
                     title: xLabel ? { text: xLabel, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined,
-                    // Keep each date tick on a single line (Plotly's default splits the
-                    // year onto a wasteful second row); the year rides inline instead.
+                    // Keep each date tick on a single line; the year rides inline.
                     tickformatstops: isXDate ? [
                         { dtickrange: [null, 60000], value: '%H:%M:%S' },
                         { dtickrange: [60000, 3600000], value: '%H:%M' },
@@ -1088,9 +928,7 @@
                 paper_bgcolor: 'transparent',
                 dragmode: 'zoom',
                 showlegend: (urlParams.get('cmap') || 'thermal') === 'discrete_09',
-                // Overlay the phase legend inside the plot (top-left) rather than
-                // outside to the right — keeps the plotting area full width so the
-                // x axis lines up with other (colorbar/no-legend) plots in multiview.
+                // Legend overlays the plot (top-left) so the plotting area stays full width in multiview.
                 legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: TC.anno, bordercolor: GRID_COLOR, borderwidth: 1, x: 0.01, xanchor: 'left', y: 0.99, yanchor: 'top' },
             };
 
@@ -1098,23 +936,14 @@
                 layout.xaxis.range = xRange;
                 layout.xaxis.autorange = false;
             } else if (urlParams.has('zXmin') && urlParams.has('zXmax')) {
-                // Saved zoom bounds for a date axis come through as epoch-ms strings;
-                // Plotly's date axis wants numbers (a numeric string is read as a
-                // date string and rejected). Coerce for dates, leave linear as-is.
+                // Saved date-axis zoom bounds arrive as epoch-ms strings; coerce to numbers
+                // (converted to naive-UTC strings below).
                 const zx0 = urlParams.get('zXmin'), zx1 = urlParams.get('zXmax');
                 layout.xaxis.range = isXDate ? [Number(zx0), Number(zx1)] : [zx0, zx1];
                 layout.xaxis.autorange = false;
             } else {
-                // No explicit/saved range: instead of letting Plotly pick its own
-                // autorange padding (which differs from the parent's synced union
-                // padding and so caused a visible layout shift the moment sync drove
-                // the union range on load), pin an explicit range with the SAME side
-                // padding the union uses. A plot that already spans the full timeline
-                // then matches the union exactly → the on-load union drive is a no-op
-                // (caught by the <0.1%-of-span skip in updateLimits) → no nudge.
-                // Setting it explicitly also clears any stale range on a Plotly.react
-                // reuse over a zoomed div, and keeps the same tight 1.5% padding on
-                // value x-axes (Plotly's own autorange padding is looser).
+                // No explicit range: pin one with the SAME side padding as the parent's union range
+                // (SIDE_PAD_FRAC) so the on-load sync is a no-op; also clears a stale range on react reuse.
                 const { min: xMin, max: xMax } = xDataExtent(plotData.x, plotData.is_x_dt);
                 if (isFinite(xMin) && isFinite(xMax) && xMax > xMin) {
                     const pad = (xMax - xMin) * SIDE_PAD_FRAC;
@@ -1125,19 +954,8 @@
                 }
             }
 
-            // A numeric ms range on a 'date' axis is stored by Plotly internally as
-            // an ms number too (this is how zoom-restore/sync already relied on it
-            // working) — EXCEPT it turns out Plotly's date axis re-derives its stored
-            // range from a tick-formatted (browser-LOCAL) string representation of
-            // the number it's given, not the number itself, so on a non-UTC browser
-            // the axis Plotly actually draws ends up shifted by the local offset
-            // from what we asked for — while the trace's own x values (fed as naive-
-            // UTC STRINGS, never numbers) are placed correctly. Result: a short,
-            // filtered selection (single cycle/profile) renders with its real points
-            // sitting up to an hour outside the axis window Plotly settles on —
-            // "off the edge" / "cut off at one end". Sidestep it by giving the axis
-            // the SAME naive-UTC string format the trace itself uses, never a number,
-            // so there's no ms<->string round trip for Plotly to get local-time about.
+            // TIMEZONE: never pass epoch-ms NUMBERS into a date axis `range` — Plotly round-trips them via a
+            // browser-local string and shifts the axis. Convert to the trace's naive-UTC string format (toNaiveStr).
             if (isXDate && Array.isArray(layout.xaxis.range)) {
                 const pad2 = n => String(n).padStart(2, '0');
                 const toNaiveStr = (v) => {
@@ -1160,21 +978,14 @@
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
             }
 
-            // The clicked-point marker is a DOM overlay (#point-pin), not a layout
-            // shape — see positionPin. It's re-projected on plotly_afterplot, so it
-            // survives these full redraws without us seeding any shapes here.
+            // Clicked-point marker is a DOM overlay (#point-pin, see positionPin), not a shape.
             layout.shapes = [];
 
             return layout;
         }
 
-        // --- T-S diagram density (isopycnal) contours -----------------------------
-        // Seawater density at atmospheric pressure from practical salinity + in-situ
-        // temperature (Millero & Poisson 1981 / UNESCO EOS-80 "dens0"). This is the
-        // classic formula oceanographic tools use to draw sigma-t contour lines on a
-        // T-S diagram; it's a close approximation even when the plot is actually using
-        // absolute salinity / conservative temperature (the small TEOS-10 offset from
-        // sigma-t doesn't matter for a visual reference grid).
+        // --- T-S diagram density (isopycnal) contours ---
+        // Density at atmospheric pressure (Millero & Poisson 1981 / EOS-80 dens0); fine as a visual reference grid.
         function dens0(S, T) {
             const T68 = T * 1.00024;
             const rhoW = 999.842594 + T68 * (6.793952e-2 + T68 * (-9.095290e-3 + T68 * (1.001685e-4 + T68 * (-1.120083e-6 + T68 * 6.536332e-9))));
@@ -1187,8 +998,7 @@
         const TS_SALINITY_VARS = ['PRAC_SALINITY', 'ABS_SALINITY'];
         const TS_TEMP_VARS = ['TEMP', 'CONS_TEMP'];
 
-        // Solve for T at fixed S such that dens0(S,T)-1000 == target, given density
-        // decreases monotonically with T over the ocean's normal temperature range.
+        // Bisect for T at fixed S where dens0(S,T)-1000 == target (density falls monotonically with T).
         function solveIsopycnalT(S, target, tLo, tHi) {
             let fLo = dens0(S, tLo) - 1000 - target;
             let fHi = dens0(S, tHi) - 1000 - target;
@@ -1214,8 +1024,7 @@
             const sLo = sExt.min - sPad, sHi = sExt.max + sPad;
             const tLo = tExt.min - tPad, tHi = tExt.max + tPad;
 
-            // Density falls as T rises and rises as S rises, so the extreme corners
-            // bound the sigma-t range spanned by the (possibly padded) view.
+            // Extreme corners bound the sigma-t range (density falls with T, rises with S).
             const sigLo = dens0(sLo, tHi) - 1000;
             const sigHi = dens0(sHi, tLo) - 1000;
             const STEP = 0.5;
@@ -1268,11 +1077,8 @@
             const densityContourTraces = buildDensityContourTraces(data);
             let cmapName = urlParams.get('cmap') || 'thermal';
             const isDiscrete09 = cmapName === 'discrete_09';
-            // Point draw order: 'normal' = file/measurement order (as before),
-            // 'largest' = high colour values drawn last (on top), 'smallest' = low
-            // values on top, 'outliers' = both tails drawn last (on top), ranked by
-            // distance from the median. Marker size is independent of draw order,
-            // set by `size_mode` ('small' | 'med' | 'large').
+            // draw_order: 'normal' | 'largest' | 'smallest' | 'outliers' (what draws on top);
+            // size_mode: 'small' | 'med' | 'large'.
             const drawOrder = urlParams.get('draw_order') || 'normal';
             const orderActive = drawOrder === 'largest' || drawOrder === 'smallest' || drawOrder === 'outliers';
             const sizeMode = urlParams.get('size_mode') || 'large';   // 'small' | 'med' | 'large'
@@ -1311,15 +1117,11 @@
             let traces = densityContourTraces.slice();
 
             let px = data.x, py = data.y, pc = (data.c && data.c.length) ? data.c : null;
-            // Reorder so the chosen extreme draws last (on top) — keeps outliers
-            // (e.g. backscatter spikes) from hiding behind other points. Markers-
-            // only, so reordering doesn't affect WebGL render speed, and we leave
-            // data.x/data.c untouched for the running-mean trace below.
+            // Reorder so the chosen extreme draws last (on top); data.x/data.c stay untouched.
             if (pc && orderActive) {
                 const sign = drawOrder === 'smallest' ? -1 : 1;   // largest on top → ascending
                 const isOutliers = drawOrder === 'outliers';
-                // For 'outliers', rank each point by its distance from the median
-                // rather than by raw value, then draw the most extreme (either tail) last.
+                // 'outliers': rank by distance from the median.
                 let extremityOf = null;
                 if (isOutliers) {
                     const finite = Array.from(pc).filter(v => v !== null && v !== undefined && !Number.isNaN(v));
@@ -1332,9 +1134,7 @@
                         extremityOf = () => 0;
                     }
                 }
-                // Plain Array, not pc.map(): pc may be a Float32Array (binary path),
-                // and a typed-array `order` would coerce the date-string x values to
-                // NaN in the maps below → blank plot.
+                // Plain Array, not pc.map(): a typed-array `order` would coerce date-string x values to NaN.
                 const order = Array.from({ length: pc.length }, (_, i) => i).sort((a, b) => {
                     const va = pc[a], vb = pc[b];
                     const na = va === null || va === undefined, nb = vb === null || vb === undefined;
@@ -1367,41 +1167,28 @@
             _originalPlotData = plotData;
             _cbarMin = plotData.c_min; _cbarMax = plotData.c_max;
 
-            // Build traces + layout first so the timing can separate CPU trace-building
-            // from the WebGL draw. `marks.tBuilt` is read by initPlot's build+draw split.
+            // `marks.tBuilt` is read by initPlot's build+draw timing split.
             const traces = createTraces(plotData);
             const layout = buildLayout(null, null);
             if (marks) marks.tBuilt = performance.timeOrigin + performance.now();
 
-            // Reserve the colour-bar (and profile-sidebar) strip and reveal the bar
-            // BEFORE the first draw, so Plotly measures the final (narrower) box and
-            // paints once into place. Without this the plot draws full-width with the
-            // bar on top of it, then resizes — the visible "shift to make room" jump.
-            // No plot exists yet, so layoutPlotArea just sets the box size (no resize).
+            // Reserve the colour-bar / sidebar strip BEFORE the first draw so Plotly paints once into the final box.
             applyCbar();
 
-            // Returned so callers (initPlot) can await the actual WebGL draw, not just
-            // the synchronous trace-building. The secondary work in .then (profile
-            // sidebar) is incidental and not awaited by the timing.
-            // Warm reuse (a 'replot' message re-drove this iframe in place) → Plotly.react
-            // keeps the existing WebGL context and shaders, which is the whole point of
-            // the reuse. A genuine first draw → newPlot. Same traces/layout/config either way.
+            // Returned so initPlot can await the actual draw. Warm reuse → Plotly.react (keeps the
+            // WebGL context); first draw → newPlot.
             const PLOT_CFG = { displayModeBar: false, responsive: true, showAxisDragHandles: false, showAxisRangeEntryBoxes: false, editable: false, showTips: false };
             const drawDone = drawPlot('data', gd => gd._fullLayout
                 ? Plotly.react(gd, traces, layout, PLOT_CFG)
                 : Plotly.newPlot(gd, traces, layout, PLOT_CFG)
             ).then(function(plotDiv) {
                 applyCbar();
-                // Kick off the profile sidebar now (it paints concurrently with this
-                // plot) and hand the promise to initPlot so its fetch + draw time is
-                // folded into this plot's PLOT timing instead of logging on its own.
+                // Start the profile sidebar concurrently; initPlot folds its time into the PLOT log.
                 const _profilePromise = renderProfileSidebar();
                 if (marks) marks.profilePromise = _profilePromise;
                 let yMin = getSafeMin(plotData.y);
                 let yMax = getSafeMax(plotData.y);
-                // Epoch-ms (date) / raw (value) x extent — the SAME basis buildLayout
-                // pads from, so the parent's union range and each plot's initial range
-                // agree and the on-load sync drives no visible nudge.
+                // Same extent basis buildLayout pads from, so the parent's union range agrees.
                 const { min: xMin, max: xMax } = xDataExtent(plotData.x, plotData.is_x_dt);
 
                 _globalExtent = { xMin, xMax, yMin, yMax };
@@ -1416,19 +1203,13 @@
 
             const plotDiv = document.getElementById('plotDiv');
 
-            // Plotly event handlers persist on the div across Plotly.react reuses, so
-            // attach them exactly once (a warm replot would otherwise stack duplicate
-            // listeners that each re-fire hover/zoom messages to the parent).
-            // Draws go through the drawPlot gate and start on a later macrotask, so
-            // on a cold start plotDiv.on doesn't exist yet here — wait for the first
-            // draw to land before attaching.
+            // Attach Plotly handlers exactly once (they persist across react reuses), and only after
+            // the first draw lands — plotDiv.on doesn't exist before that.
             drawDone.then(function() {
             if (_handlersAttached || typeof plotDiv.on !== 'function') return;
             _handlersAttached = true;
 
-            // Re-project the clicked-point overlay marker after every redraw (zoom,
-            // pan, autorange, zoom-fetch react, theme rebuild, resize) so it stays
-            // glued to its data point. Cheap: a no-op when nothing is pinned.
+            // Re-project the clicked-point pin after every redraw (no-op when nothing is pinned).
             plotDiv.on('plotly_afterplot', positionPin);
 
             plotDiv.on('plotly_hover', function(data){
@@ -1441,17 +1222,8 @@
                 }
             });
 
-            // Double-click reset. Plotly emits 'plotly_doubleclick' and then, on the
-            // SAME call stack, runs its own _guiRelayout (restoring its saved initial
-            // range — which is NOT necessarily our full extent: it's captured once per
-            // div and never refreshed on a warm replot). The draw gate runs our reset
-            // from a later macrotask, after Plotly's redraw and the relayout it emits
-            // have finished, so the two never race on one div. The relayout Plotly
-            // emits for that double-click (autorange, or ranges from its stale
-            // initial range) must not be read as a fresh user zoom: _dblClickPending
-            // makes the handler ignore it, and is cleared when the reset job actually
-            // runs — which is always after that relayout — so it can't go stale and
-            // swallow a later real zoom.
+            // Double-click reset. Plotly then emits its own relayout (from a possibly stale initial range) on the
+            // same stack; _dblClickPending makes the relayout handler ignore it, and clears when the reset job runs.
             plotDiv.on('plotly_doubleclick', function() {
                 _dblClickPending = true;
                 resetZoomToFull();
@@ -1462,9 +1234,7 @@
                 if (_suppressRelayout) return;
                 const hasXRange = 'xaxis.range[0]' in eventData && 'xaxis.range[1]' in eventData;
                 const hasYRange = 'yaxis.range[0]' in eventData && 'yaxis.range[1]' in eventData;
-                // Plotly fires `'xaxis.autorange': true` for a normal axis and
-                // `'yaxis.autorange': 'reversed'` for an inverted axis after
-                // a dbl-click — treat any truthy value as "autoranged".
+                // autorange is `true` or 'reversed' (inverted axis) — treat any truthy value as autoranged.
                 const xAuto = !!eventData['xaxis.autorange'];
                 const yAuto = !!eventData['yaxis.autorange'];
 
@@ -1476,9 +1246,7 @@
                 }
 
                 if (xAuto && yAuto) {
-                    // Same reset as plotly_doubleclick — delegate instead of duplicating,
-                    // since a real double-click fires both events and racing two
-                    // independent Plotly.react calls here corrupted the axis autorange.
+                    // Same reset as plotly_doubleclick — delegate; two racing reacts corrupt autorange.
                     resetZoomToFull();
                     return;
                 }
@@ -1511,16 +1279,8 @@
                     const t = yMin; yMin = yMax; yMax = t;
                 }
 
-                // Resolve to unambiguous epoch-ms HERE, via this panel's own live axis
-                // (axisXToMs -> r2l), before xMin/xMax leave this scope. Left as Plotly's
-                // raw emitted date strings, they carry exactly the ambiguity axisXToMs
-                // exists to dodge (see its comment above) — leaking them out via
-                // postMessage made every downstream consumer (the parent's zoom state,
-                // the cycle/profile navigator's zoom-constrained stepping, other synced
-                // panels re-parsing them with THEIR OWN axis) independently re-guess the
-                // same timezone question with no live axis of their own to resolve it
-                // correctly, which is how this exact class of bug — already fixed for
-                // this panel's own in-panel zoom-fetch — resurfaced one level out.
+                // TIMEZONE: resolve date bounds to epoch-ms HERE via this panel's live axis (axisXToMs) before
+                // posting — consumers of 'plotZoomed' have no axis to disambiguate Plotly's date strings.
                 if (plotData.is_x_dt) {
                     xMin = axisXToMs(xMin);
                     xMax = axisXToMs(xMax);
@@ -1531,27 +1291,15 @@
                 window.parent.postMessage({ type: 'plotZoomed', limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 clearTimeout(_pendingBounds);
-                // Fast path: the current chunk already holds every raw point in this
-                // window (it came back complete and we're zooming further in), so a
-                // refetch + WebGL redraw would buy nothing. Plotly has already clipped
-                // the axes — just refresh the stat/marginal and skip the fetch.
+                // Fast path: the current chunk already holds every raw point in this window — skip the fetch.
                 if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
                     _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
                 }
             });
 
-            // Click-to-inspect a point. hovermode is off (kept off for WebGL perf
-            // on huge scatters), so Plotly's own plotly_click doesn't fire — we do
-            // our own nearest-point hit test in pixel space instead. Plotly stops
-            // propagation on its drag layer, so (like the panelActivate hooks) we
-            // listen on document in the capture phase. handlePlotClick validates the
-            // click landed inside the drawing area; the move tolerance ignores drags.
-            //
-            // The pick fires immediately for a snappy single click. To stop a
-            // double-click (Plotly's zoom-out) from leaving a marker, the second click
-            // removes the marker IF this same double-click's first click just placed one
-            // (tracked via _lastUpDidPick) — a pre-existing marker is left alone so it
-            // survives a zoom-out. Detection window matches Plotly's ~300ms double-click.
+            // Click-to-inspect: hovermode is off (WebGL perf) so plotly_click never fires — own pixel-space hit test,
+            // on document in the capture phase (Plotly stops propagation). A double-click's second click removes
+            // the marker only if its first click placed it (_lastUpDidPick).
             let _ptDown = null;
             let _lastUpT = 0, _lastUpPos = null, _lastUpOnBubble = false, _lastUpDidPick = false;
             const _PT_MOVE_TOL = 6;
@@ -1573,12 +1321,8 @@
                 _lastUpT = now; _lastUpPos = { x: e.clientX, y: e.clientY }; _lastUpOnBubble = onBubble;
 
                 if (isDouble) {
-                    // A double-click → zoom out, not a pick. If this gesture's first click
-                    // just dropped a marker, remove it (and clear the synced pins); a
-                    // marker placed earlier is left in place. Plotly fires its own
-                    // plotly_doubleclick only when BOTH clicks hit its drag layer; if
-                    // either landed on the popup (which overlays the plot), it won't — so
-                    // we zoom out ourselves in that case.
+                    // Double-click = zoom out, not a pick. Plotly only fires plotly_doubleclick when BOTH clicks
+                    // hit its drag layer, so reset ourselves if either landed on the popup.
                     if (_lastUpDidPick) {
                         hidePointBubble();
                         try { window.parent.postMessage({ type: 'plotPointClear' }, '*'); } catch (_) {}
@@ -1588,8 +1332,7 @@
                     return;
                 }
 
-                // Single click on the popup → leave its own controls (close button,
-                // selecting value text) untouched; don't treat it as a plot pick.
+                // Single click on the popup → not a plot pick.
                 if (onBubble) { _lastUpDidPick = false; return; }
 
                 // Single click on the plot → pick immediately.
@@ -1601,15 +1344,8 @@
             return drawDone;
         }
 
-        // Reset the plot to its full extent (the double-click "zoom out" action),
-        // restoring the base downsampled record. Shared by Plotly's own double-click
-        // and by a double-click landing on the point popup (which sits over the plot).
-        // A real double-click fires BOTH 'plotly_doubleclick' and a 'plotly_relayout'
-        // with xaxis/yaxis autorange — each used to independently call Plotly.react
-        // to reset the zoom. Two Plotly.react calls racing on the same div corrupted
-        // Plotly's axis autorange (it fell back to its empty-plot default [-1,6]
-        // range despite valid data). This guard makes a reset idempotent so only the
-        // first of the two events actually redraws.
+        // Reset to full extent (double-click zoom-out), restoring the base record. Idempotent: a real
+        // double-click reaches here twice (plotly_doubleclick + autorange relayout).
         let _dblClickPending = false;   // set by plotly_doubleclick, cleared when the reset job runs
         function resetZoomToFull() {
             if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
@@ -1619,12 +1355,8 @@
             if (_originalPlotData) {
                 plotData = _originalPlotData;
                 const pd = plotData;
-                // Coalesces with any other queued 'data' draw (a real double-click
-                // reaches here twice: once from plotly_doubleclick, once from the
-                // autorange relayout) — only one react runs. The gate suppresses the
-                // relayout the react emits (Plotly resolves the autoranged axes to
-                // concrete ranges), which would otherwise read as a fresh zoom and
-                // trigger a full-dataset hi-res refetch.
+                // Coalesces with any queued 'data' draw so only one react runs; the gate suppresses the
+                // react's relayout, which would otherwise read as a fresh zoom.
                 drawPlot('data', gd => {
                     _dblClickPending = false;
                     return Plotly.react(gd, createTraces(pd), buildLayout(null, null));
@@ -1634,27 +1366,15 @@
             } else {
                 _dblClickPending = false;
             }
-            // A profile/cycle filter narrows what "reset to full" means for THIS
-            // panel to just that selection's own extent (_globalExtent, taken from
-            // this filtered load) — not the whole file. Reporting the reset as an
-            // EMPTY zoom told the parent "no filter is active, fit every synced
-            // panel to the union of everyone's full unfiltered extent"
-            // (applyUnionRange) — correct for a genuinely unfiltered view, but for
-            // a filtered one it fires anyway (any 2+-panel synced view) and drives
-            // every panel, including this one, back out to the whole file a beat
-            // after the correct cycle-scoped reset renders — "double-click reset
-            // zooms out to the whole file/profile instead of staying on the cycle".
-            // Reporting the reset as a real zoom to this panel's own (already
-            // filtered) extent makes the parent sync every panel to THIS selection
-            // instead of re-deriving the whole-file union.
+            // With a profile/cycle filter, report the reset as a zoom to THIS panel's filtered extent — an empty
+            // `limits` tells the parent to fit every synced panel to the whole-file union (applyUnionRange).
             const hasSelection = urlParams.has('cycle_num') || urlParams.has('profile_num');
             const limits = (hasSelection && _globalExtent) ? { ..._globalExtent } : {};
             window.parent.postMessage({ type: 'plotZoomed', limits }, '*');
             renderProfileSidebar();   // zoom cleared → drop the marginal greying
         }
 
-        // A zoom window in numeric space (epoch-ms for date x, raw otherwise), with
-        // bounds canonicalised lo<=hi. Returns null if any bound can't be resolved.
+        // Zoom window in numeric space (epoch-ms for date x), lo<=hi; null if unresolvable.
         function _numViewBox(xMin, xMax, yMin, yMax) {
             const isDt = !!(plotData && plotData.is_x_dt);
             let xlo = isDt ? axisXToMs(xMin) : Number(xMin);
@@ -1666,9 +1386,7 @@
             return { xlo, xhi, ylo, yhi };
         }
 
-        // True when the current chunk already holds every raw point inside `box`:
-        // it was returned complete (un-decimated) and `box` sits within its fetched
-        // box. Such a zoom-IN gains no detail from a refetch, so we can skip it.
+        // True when the current chunk is complete (un-decimated) and `box` sits within its fetched box.
         function _chunkCovers(box) {
             if (!box || !plotData || !plotData._complete || !plotData._fetchBox) return false;
             const fb = plotData._fetchBox;
@@ -1676,15 +1394,8 @@
                    box.ylo >= fb.yMin && box.yhi <= fb.yMax;
         }
 
-        // Walk the points inside a numeric view box to (a) count them for the "Points
-        // in view" stat and (b), when there's a colour channel, stretch the colour
-        // scale to the in-view 0.1–99.9 percentiles — exactly what a hi-res refetch
-        // does server-side, so a skipped fetch ends up colour-identical. The trace and
-        // colour bar are restyled in place (a cheap uniform update, no data rebuild),
-        // and the new range + count are returned for the parent's slider/stat. Date x
-        // is compared as ISO strings (which sort lexicographically) to avoid per-point
-        // Date parsing. QC filtering already happened server-side, so every point here
-        // already passed it.
+        // Count in-view points and stretch the colour scale to the in-view 0.1–99.9 percentiles (matches the
+        // server's hi-res refetch). Date x is compared as ISO strings (sort lexicographically).
         function _autoColourInView(box) {
             const xs = plotData.x, ys = plotData.y, cs = plotData.c, n = ys.length;
             const hasC = !!(cs && cs.length);
@@ -1721,11 +1432,7 @@
             return { plotted: cnt, cMin, cMax };
         }
 
-        // Skip a redundant hi-res refetch when the current chunk already covers the
-        // requested zoom box at full detail. Still does the in-view colour auto-stretch
-        // (and updates the stat + marginal) so the result matches a real refetch — just
-        // without the server round-trip or WebGL data rebuild. Returns true when it took
-        // over so the caller fetches nothing.
+        // Skip a redundant hi-res refetch when the chunk already covers the box; returns true when it took over.
         function _skipFetchIfCovered(xMin, xMax, yMin, yMax) {
             const box = _numViewBox(xMin, xMax, yMin, yMax);
             if (!_chunkCovers(box)) return false;
@@ -1742,14 +1449,8 @@
             
             const isXDate = plotData.is_x_dt;
             let xMinVal, xMaxVal;
-            // For a datetime x-axis, read the visible window straight from the axis
-            // pixel scale (p2c) instead of parsing Plotly's emitted range strings.
-            // With numeric epoch-ms data, Plotly formats those range strings in the
-            // BROWSER'S LOCAL timezone, but the server's data is UTC — parsing them
-            // (as UTC or via r2l) shifted the fetched window by the local offset
-            // (e.g. BST = +1h), so a sub-hour zoom fetched an empty, hour-off window.
-            // p2c is pure linear math (pixels → data ms): no Date, no timezone, so it
-            // always matches the ms space the points were plotted in.
+            // TIMEZONE: for a date axis read the window from the axis pixel scale (p2c: pure linear ms math),
+            // never by parsing Plotly's emitted range strings (browser-local vs the server's UTC).
             const _gd = document.getElementById('plotDiv');
             const _xa = isXDate && _gd && _gd._fullLayout ? _gd._fullLayout.xaxis : null;
             if (_xa && typeof _xa.p2c === 'function' && _xa._length) {
@@ -1763,21 +1464,12 @@
             let yMinVal = Number(yMin);
             let yMaxVal = Number(yMax);
 
-            // Canonicalise: server expects min < max. Reversed bounds (e.g. inverted
-            // axis or right-to-left drag) would otherwise make the padding tighten
-            // the range and the >= / <= filter return zero points.
+            // Canonicalise: the server expects min < max (inverted axis / right-to-left drag).
             if (xMinVal > xMaxVal) { const t = xMinVal; xMinVal = xMaxVal; xMaxVal = t; }
             if (yMinVal > yMaxVal) { const t = yMinVal; yMinVal = yMaxVal; yMaxVal = t; }
 
-            // Expand the requested range generously before fetching the high-res
-            // chunk. Reasons points at/near the visible edge can otherwise vanish:
-            //   - datetime millisecond truncation in `new Date(str).getTime()`
-            //   - float drift between Plotly's reported range and raw data values
-            //   - Plotly's axis tick padding shows slightly past the box bounds,
-            //     so points appearing "on the axis" can lie just outside it
-            //   - server's strict >= / <= filter has no tolerance
-            // Plotly still clips visually to the exact zoom range, so over-fetching
-            // costs nothing visually — extra points are simply outside the viewport.
+            // Over-fetch by PAD: the server's strict >=/<= filter has no tolerance for ms truncation, float
+            // drift or tick padding at the edges. Plotly still clips to the exact zoom range.
             const PAD = 0.15;
             const xPad = Math.abs(xMaxVal - xMinVal) * PAD;
             const yPad = Math.abs(yMaxVal - yMinVal) * PAD;
@@ -1787,8 +1479,7 @@
             params.set('y_min', yMinVal - yPad);
             params.set('y_max', yMaxVal + yPad);
 
-            // Exact (unpadded) view bounds so the server can report an honest
-            // "Points in view" count that excludes the over-fetched margin.
+            // Exact (unpadded) view bounds for an honest "Points in view" count.
             params.set('view_x_min', xMinVal);
             params.set('view_x_max', xMaxVal);
             params.set('view_y_min', yMinVal);
@@ -1804,15 +1495,8 @@
                 const newData = await res.json();
                 if (newData.error) return;
 
-                // abort() only stops the request in flight — once the response has
-                // resolved, the abort is a no-op and this continuation still runs.
-                // Every caller that abandons a zoom (double-click reset, a new zoom,
-                // a synced updateLimits, replot) aborts and then immediately does its
-                // own Plotly.react; without this check the stale continuation reacted
-                // a second time on the same div a tick later. Two reacts racing on one
-                // div corrupt Plotly's axis autorange — it falls back to its empty-plot
-                // [-1, 6] default with the real data far outside it, i.e. a silently
-                // blank plot that only a full re-render fixes (see resetZoomToFull).
+                // abort() is a no-op once the response resolved, so re-check: a stale continuation reacting
+                // alongside the aborter's own react corrupts autorange (blank plot).
                 if (controller.signal.aborted) return;
 
                 // Carry over var/unit metadata from the full-dataset load
@@ -1823,25 +1507,18 @@
                     if (!newData.y_units) newData.y_units = _originalPlotData.y_units;
                 }
                 newData._zoomFetchedFor = { xMin, xMax, yMin, yMax };
-                // Remember whether this chunk is the full raw set for its (padded)
-                // fetched box, and the box itself in numeric ms/value space. A later
-                // zoom-IN that lands inside this box, on a complete chunk, needs no
-                // refetch — see _chunkCovers / the relayout + updateLimits fast paths.
+                // Record completeness + the padded fetched box (numeric space) for _chunkCovers.
                 newData._complete = !!newData.complete;
                 newData._fetchBox = { xMin: xMinVal - xPad, xMax: xMaxVal + xPad,
                                       yMin: yMinVal - yPad, yMax: yMaxVal + yPad };
 
-                // The gate holds this draw while a second zoom box is being dragged,
-                // and drops it (skipIf) if that drag's relayout aborted us — the new
-                // zoom fetches its own chunk. Committing plotData INSIDE the job keeps
-                // the on-screen data and our record of it in step: a dropped job
-                // leaves the previous chunk both drawn and recorded.
+                // Commit plotData INSIDE the job so a dropped (skipIf) job leaves the previous chunk
+                // both drawn and recorded.
                 await drawPlot('data', gd => {
                     plotData = newData;
                     const zoom = _currentZoom;
                     const xRange = zoom ? [zoom.xMin, zoom.xMax] : null;
-                    // yAuto marks an x-only zoom (e.g. a synced time-axis update): keep
-                    // the y axis autoranged rather than pinning it to the full extent.
+                    // yAuto marks an x-only zoom: keep y autoranged.
                     const yRange = (zoom && !zoom.yAuto) ? [zoom.yMin, zoom.yMax] : null;
                     const p = Plotly.react(gd, createTraces(newData), buildLayout(xRange, yRange));
                     if (window.logRedraw) window.logRedraw('zoom (hi-res)', (newData.x && newData.x.length) || 0);
@@ -1861,11 +1538,8 @@
             const msg = event.data;
 
             if (msg.type === 'replot') {
-                // Re-drive this already-loaded iframe with a fresh param set instead of
-                // a full src navigation. renderPlot's Plotly.react reuses the WebGL
-                // context, so we skip the HTML refetch + Plotly re-eval + context/shader
-                // rebuild a navigation pays (~190ms/plot). Reset all per-plot state so
-                // the new plot starts clean (no stale zoom / base record / in-flight fetch).
+                // 'replot' {params, gpt0, gpt1}: re-drive this iframe in place (Plotly.react reuses the
+                // WebGL context). Reset all per-plot state so nothing stale carries over.
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
                 drawPlotClear();     // nothing queued against the old data may draw
@@ -1908,8 +1582,7 @@
                 return;
             }
 
-            // Parent clearing the point popup (X pressed on a globe bubble, or a new
-            // selection made elsewhere). Independent of plotData, so handle it here.
+            // Parent clearing the point popup; independent of plotData.
             if (msg.type === 'clearPointPopup') { hidePointBubble(); return; }
 
             // A sibling plot picked a point — mirror it here by matching time.
@@ -1918,19 +1591,14 @@
             if (!plotData) return;
 
             if (msg.type === 'updateLimits') {
-                // A datetime x-axis reports its range as date strings (e.g.
-                // '2026-04-25 10:08:25.6638'), which Plotly accepts directly — so
-                // only number-type bounds are validated with isNaN. (This path is
-                // used by the parent's "align time axes" feature, where x bounds
-                // arrive as date strings copied from another plot's zoom.)
+                // x bounds may be date strings (Plotly accepts them directly), so only numbers are NaN-checked.
                 const isValidBound = (v) => v !== undefined && v !== null && (typeof v === 'number' ? !isNaN(v) : true);
                 const hasX = isValidBound(msg.limits.xMin) && isValidBound(msg.limits.xMax);
                 const hasY = isValidBound(msg.limits.yMin) && isValidBound(msg.limits.yMax);
                 const invY = urlParams.get('invert_y') === 'true';
                 if (!hasX && !hasY) return;
 
-                // Parse an axis bound to a comparable number (ms for date axes), via
-                // Plotly's own conversion so it matches the plotted data's ms space.
+                // Bound → comparable number (ms for date axes) via Plotly's own conversion.
                 const toNumX = axisXToMs;
                 const gl = _globalExtent || {};
 
@@ -1942,17 +1610,8 @@
                     if (reqXMin > reqXMax) { const t = reqXMin; reqXMin = reqXMax; reqXMax = t; }
                 }
 
-                // Decide whether the full downsampled record (_originalPlotData,
-                // already in memory) should be shown right now instead of the
-                // currently-displayed high-res chunk:
-                //   coversFull — the incoming x-range spans our whole data extent
-                //     (a synced double-click reset / "show all"). The base record
-                //     IS the zoomed-out data, so no server fetch is needed at all.
-                //   needBase   — we're showing a narrower zoom chunk that doesn't
-                //     cover the new (wider) range, so relayouting it alone would
-                //     leave a stale partial slice stretched across the axis until
-                //     a fetch trickles in. Drop back to the full record instantly
-                //     as a stopgap; the high-res fetch below still upgrades it.
+                // coversFull: incoming x-range spans our whole extent → the base record IS the answer, no fetch.
+                // needBase: current zoom chunk doesn't cover the wider range → drop to the base record as a stopgap.
                 let coversFull = false, needBase = false;
                 if (hasX && _originalPlotData && gl.xMin !== undefined && gl.xMax !== undefined) {
                     const span = Math.abs(gl.xMax - gl.xMin) || 1;
@@ -1966,13 +1625,8 @@
                     }
                 }
 
-                // If the driven x-range already matches what's on screen (within an
-                // imperceptible 0.1% of the span) and nothing else needs to change,
-                // skip the relayout entirely. This is the common on-load case: a
-                // freshly-drawn plot already padded to the union range (see buildLayout)
-                // gets driven to that same range — so there's no point paying for a
-                // WebGL redraw or risking the faint shift it would cause. We bail before
-                // aborting any in-flight fetch, since that fetch is for the same range.
+                // Driven x-range already matches the screen (within 0.1% of span): skip entirely, and bail
+                // BEFORE aborting the in-flight fetch (it's for the same range).
                 if (hasX && !hasY && !needBase) {
                     const pd = document.getElementById('plotDiv');
                     const curR = pd && pd._fullLayout && pd._fullLayout.xaxis && pd._fullLayout.xaxis.range;
@@ -1988,25 +1642,18 @@
                 clearTimeout(_pendingBounds);
 
                 const showBase = coversFull || needBase;
-                // Was this panel already displaying the full base record (vs a zoomed
-                // high-res chunk)? If so, showing the base at a new range is just an axis
-                // move — no trace data changes — so we can relayout instead of rebuilding.
+                // Already on the base record? Then a new range is just an axis move (relayout, no rebuild).
                 const wasBase = plotData === _originalPlotData;
                 if (showBase && !wasBase) plotData = _originalPlotData;
 
                 if (showBase && !wasBase) {
-                    // We swapped a high-res chunk back to the base record: the traces
-                    // genuinely changed, so rebuild them, clipped to the requested axis
-                    // range (y left autoranged when no y bounds were supplied).
+                    // Swapped a high-res chunk back to the base record: traces changed, so rebuild.
                     const pd = plotData;
                     const xr = hasX ? [msg.limits.xMin, msg.limits.xMax] : null;
                     const yr = hasY ? [msg.limits.yMin, msg.limits.yMax] : null;
                     drawPlot('data', gd => Plotly.react(gd, createTraces(pd), buildLayout(xr, yr)));
                 } else {
-                    // Already showing the right data (base record on a zoom-out, or the
-                    // current chunk on a zoom-in) — only the axes need to move. A relayout
-                    // skips the up-to-200k-point WebGL rebuild a react would do, which is
-                    // what made synced panels lag a beat behind the one being driven.
+                    // Right data already shown — relayout only, skipping the WebGL rebuild a react would do.
                     const update = {};
                     if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
                     else if (showBase) update['xaxis.autorange'] = true;
@@ -2021,37 +1668,24 @@
                 const yMax = hasY ? msg.limits.yMax : gl.yMax;
                 if (xMin === undefined || xMax === undefined || yMin === undefined || yMax === undefined) return;
 
-                // Programmatic relayout doesn't always fire plotly_relayout with the flat-indexed
-                // keys (xaxis.range[0], xaxis.range[1]) that the drag handler expects, so we
-                // directly drive the same zoom flow here: record the new zoom bounds and notify
-                // the parent. An x-only update (no y bounds — e.g. a synced time axis) leaves the
-                // y axis autoranged on re-render. `driven` marks this as an alignment-driven echo
-                // (not a fresh user zoom) so the parent doesn't re-propagate it into a feedback loop.
+                // Programmatic relayouts don't reliably fire plotly_relayout with flat keys, so drive the zoom flow
+                // directly. `driven: true` marks an echo so the parent doesn't re-propagate it (feedback loop).
                 _currentZoom = { xMin, xMax, yMin, yMax, yAuto: !hasY };
                 setZoomHint(true);
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: { xMin, xMax, yMin, yMax } }, '*');
 
                 if (showBase) {
-                    // We're already showing the base record clipped to this range — either a
-                    // full-extent reset (coversFull) or a zoom-OUT past our last-fetched window
-                    // (needBase). The base record covers it at full downsample density, so skip
-                    // the high-res fetch: re-fetching buys nothing, and across N synced panels it
-                    // serializes on the server NETCDF lock and makes multiview zoom-out crawl in
-                    // one panel at a time. The render above is the final state — report it done.
+                    // Base record already covers this range — skip the hi-res fetch (N synced panels would
+                    // serialise on the server's NetCDF lock) and report done.
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
                     renderProfileSidebar();   // match the marginal greying to the synced view
                 } else if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
-                    // A true zoom-IN whose detail we don't already hold: the global
-                    // downsample is too sparse for this narrower window, so fetch
-                    // high-res data for it (triggerBgFetch reports completion). If the
-                    // current chunk already covers it at full detail, _skipFetchIfCovered
-                    // handled the stat/marginal and we fetch nothing.
+                    // True zoom-IN we don't hold detail for: fetch hi-res (unless _skipFetchIfCovered took over).
                     _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
                 }
             }
             
-            // Driven reset (e.g. the parent's "align time axes" toggle being turned
-            // off) — same effect as a double-click zoom-out, but initiated remotely.
+            // Driven reset — same as a double-click zoom-out, but initiated by the parent.
             if (msg.type === 'resetZoom') {
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
@@ -2072,16 +1706,12 @@
             }
 
             if (msg.type === 'updateColour' && !isNaN(msg.limits.cMin)) {
-                // If dual trace, update the coloured trace (Passed QC / Selection)
                 const traceIdx = colouredTraceIdx();
-                // Ack once the restyle has actually been applied and painted, so the
-                // parent paces the next slider value to this plot's real redraw cost
-                // (keeps the slider smooth instead of flooding it with restyles).
+                // Ack ('colourUpdated') after the restyle has painted so the parent paces its slider.
                 const ackColour = () => requestAnimationFrame(() => {
                     try { window.parent.postMessage({ type: 'colourUpdated' }, '*'); } catch (_) {}
                 });
-                // A superseded (coalesced) job still resolves, so the ack always fires
-                // and the parent's slider never waits on its 1s safety timer.
+                // A superseded job still resolves, so the ack always fires.
                 const cMin = msg.limits.cMin, cMax = msg.limits.cMax;
                 drawPlot('colour', gd => Plotly.restyle(gd, { 'marker.cmin': [cMin], 'marker.cmax': [cMax] }, [traceIdx]))
                     .then(ackColour, ackColour);
@@ -2110,7 +1740,7 @@
                 if (!plotData || !plotData.c || !plotData.c.length) return;
 
                 const isXDate = plotData.is_x_dt;
-                const parseDate = (d) => typeof d === 'string' ? new Date(d.replace(' ', 'T')).getTime() : new Date(d).getTime();
+                const parseDate = (d) => typeof d === 'string' ? new Date(d.replace(' ', 'T') + 'Z').getTime() : new Date(d).getTime();   // naive-UTC strings: force UTC
 
                 let calcCMin = Infinity, calcCMax = -Infinity;
 
@@ -2146,8 +1776,7 @@
         // ── Clicked-point popup ────────────────────────────────────────────
         const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-        // Epoch-ms → "25 Apr 2026, 10:08:25 UTC". Data times are naive UTC, so we
-        // read the UTC fields explicitly (never the viewer's local timezone).
+        // Epoch-ms → "25 Apr 2026, 10:08:25 UTC" (UTC fields only — data times are naive UTC).
         function fmtPlotTime(ms) {
             const d = new Date(ms);
             if (isNaN(d.getTime())) return String(ms);
@@ -2159,8 +1788,7 @@
 
         function _unitSuffix(u) {
             u = (u || '').trim();
-            // '1' / 'dimensionless' are placeholder "no real unit" values that read
-            // as noise in the popup (e.g. "34.9295 1") — drop them.
+            // '1' / 'dimensionless' are placeholder units — drop them.
             if (!u || u === 'No units' || u === '1' || u === '1.0' || u.toLowerCase() === 'dimensionless') return '';
             return ' ' + u;
         }
@@ -2192,15 +1820,8 @@
             applyPinShape();
         }
 
-        // The blue marker on the clicked point, drawn as a DOM overlay (#point-pin)
-        // rather than a Plotly layout shape. We deliberately avoid Plotly.relayout
-        // here: replacing layout.shapes on every click forced a relayout that
-        // re-created the scattergl WebGL context, leaking contexts until the browser
-        // reclaimed them and the data canvas blanked (axes + JS hit-testing survived,
-        // so it still "picked" points — the bug being fixed). Instead we store the
-        // point's DATA coords and project them to pixels with the axis c2p on every
-        // redraw (positionPin is wired to plotly_afterplot), so the dot stays glued
-        // to the point through zoom/pan with zero Plotly calls.
+        // Clicked-point marker: a DOM overlay projected from DATA coords via axis c2p on every redraw
+        // (plotly_afterplot). Never use layout.shapes/relayout here — it leaks scattergl WebGL contexts.
         let _pinPoint = null;   // null or { x, y } in data coords
         function positionPin() {
             const pin = document.getElementById('point-pin');
@@ -2211,36 +1832,28 @@
             if (!xa || !ya || xa._offset === undefined || typeof xa.c2p !== 'function') {
                 pin.classList.remove('visible'); return;
             }
-            // Date axes plot in epoch-ms; convert a stored string x the same way the
-            // click hit-test does so the projection matches the plotted position.
+            // Date axes plot in epoch-ms; parse the naive-UTC string x with 'T' + 'Z'.
             const xv = _pinPoint.x;
             const xForPixel = (plotData && plotData.is_x_dt && typeof xv === 'string')
                 ? new Date(xv.replace(' ', 'T') + 'Z').getTime() : xv;
             if (!isFinite(xForPixel) || !isFinite(_pinPoint.y)) { pin.classList.remove('visible'); return; }
             const sx = xa._offset + xa.c2p(xForPixel);
             const sy = ya._offset + ya.c2p(_pinPoint.y);
-            // Clip to the drawing area — Plotly used to clip the shape for us. Done in
-            // plotDiv-internal coords (what _offset/c2p return), before shifting below.
+            // Clip to the drawing area (plotDiv-internal coords).
             if (sx < xa._offset || sx > xa._offset + xa._length ||
                 sy < ya._offset || sy > ya._offset + ya._length) {
                 pin.classList.remove('visible'); return;
             }
-            // #point-pin is a body-level sibling of plotDiv, so its coords are relative
-            // to the page, not the plot. plotDiv itself is shifted right when the depth
-            // profile sidebar is open (and resized for the colour bar) — add its offset
-            // so the marker lands on the point, not SIDEBAR_W px to its left.
+            // #point-pin is a body-level sibling of plotDiv, so add plotDiv's offset (sidebar / colour bar shift).
             pin.style.left = (sx + gd.offsetLeft) + 'px';
             pin.style.top = (sy + gd.offsetTop) + 'px';
             pin.classList.add('visible');
         }
-        // Back-compat name: callers just want the pin re-rendered at its current point.
+        // Back-compat name.
         function applyPinShape() { positionPin(); }
 
-        // Show the popup for data index `i` and ask the parent to pin its lat/lon
-        // (resolved from the point's TIME) on every open globe + sync the matching
-        // point onto sibling plots. `opts.silent` suppresses the outbound message —
-        // used when THIS popup was itself driven by a sibling's pick, so a near (but
-        // not exact) time match can't bounce back and cascade between plots.
+        // Show the popup for index `i` and post 'plotPointPick' {timeMs} to the parent. `opts.silent`
+        // suppresses the message when a sibling's pick drove this one (prevents ping-pong).
         function showPointPopup(i, opts) {
             if (!plotData) return;
             const xv = plotData.x[i], yv = plotData.y[i];
@@ -2258,7 +1871,7 @@
             }
             renderPointBubble(rows);
 
-            // Drop the blue marker on the point (tracks zoom/pan via the layout shape).
+            // Drop the blue marker on the point.
             _pinPoint = { x: xv, y: yv };
             applyPinShape();
 
@@ -2271,10 +1884,7 @@
             try { window.parent.postMessage(payload, '*'); } catch (_) {}
         }
 
-        // A sibling plot was clicked: select OUR nearest point at the same time and
-        // show its values. Silent (never re-broadcast) so a slightly-off nearest
-        // match can't ping-pong between plots. Only time-axis plots can match; others
-        // clear any stale popup so the selection stays consistent across the board.
+        // A sibling plot was clicked: select our nearest point in time, silently. Non-time plots clear their popup.
         function selectPointByTime(timeMs) {
             if (!plotData || !plotData.is_x_dt || typeof timeMs !== 'number') { hidePointBubble(); return; }
             const xs = plotData.x;
@@ -2291,17 +1901,9 @@
             else hidePointBubble();
         }
 
-        // Nearest plotted point to a screen click, in pixel space. Returns when the
-        // click lands within HIT_TOL pixels of a point; otherwise does nothing (a
-        // click on truly empty plot area shouldn't open a popup). The radius is
-        // deliberately generous: zoomed out the points are dense so the nearest is
-        // always within a few px (so this changes nothing), but zoomed in they're
-        // sparse, and a wider radius lets you click at/near any rendered point.
+        // Nearest plotted point to a click, in pixel space, within a deliberately generous radius.
         const _HIT_TOL = 40;
-        // Returns true if it placed a point marker, false otherwise (no plot, click
-        // outside the drawing area, or no point within the hit radius) — the pointer
-        // handler uses this to know whether a follow-up double-click should remove the
-        // marker this click just dropped.
+        // Returns true if it placed a marker (the pointer handler uses this for double-click removal).
         function handlePlotClick(clientX, clientY) {
             const gd = document.getElementById('plotDiv');
             if (!gd || !gd._fullLayout || !plotData || !plotData.x || !plotData.x.length) return false;
@@ -2320,7 +1922,7 @@
                 const xv = xs[i], yv = ys[i];
                 if (xv === null || yv === null || xv === undefined || yv === undefined) continue;
                 if (Number.isNaN(yv)) continue;
-                // Plotly's c2p on a date axis expects epoch-ms; convert strings.
+                // c2p on a date axis expects epoch-ms; parse naive-UTC strings with 'T' + 'Z'.
                 const xForPixel = (isXDate && typeof xv === 'string')
                     ? new Date(xv.replace(' ', 'T') + 'Z').getTime()
                     : xv;
@@ -2335,8 +1937,7 @@
             return false;
         }
 
-        // Pressing 'x' anywhere clears this plot's marker and (via the parent) the
-        // globe pin and every other plot's marker too.
+        // 'x' clears this plot's marker and, via the parent ('clearAllPicks'), every other pin.
         window.addEventListener('keydown', (e) => {
             if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
                 && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) {

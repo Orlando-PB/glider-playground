@@ -7,7 +7,7 @@ tagged with a free-text `glider` string and matched against filenames by a
 case-insensitive substring check — good enough for "which track is this a
 target for" without inventing a glider registry.
 
-Persisted the same way live_logic.py tracks managed files: a small JSON file
+Persisted the same way erddap_fetch.py tracks managed files: a small JSON file
 under CACHE_ROOT, loaded/saved whole under a lock. No versioning needed since
 waypoints aren't derived from file content.
 """
@@ -19,19 +19,15 @@ import threading
 import time
 import uuid
 
-from . import cache_logic
-from . import server_config
+from ..core import cache_logic
+from ..server import server_config
 
 WAYPOINTS_FILE = cache_logic.CACHE_ROOT / "waypoints.json"
 
 _lock = threading.RLock()
 
-# One-time bootstrap for the public server: written the first time
-# waypoints.json doesn't exist yet, in the exact schema add_waypoint()
-# produces, so the entries are indistinguishable from (and editable/removable
-# as) admin-added waypoints from then on. Gated to IS_SERVER so pip/desktop
-# installs don't get someone else's stations seeded into their local store.
-# Remove this once the admin plugin has been used to manage these for real.
+# One-time seed for the public server (IS_SERVER only), in add_waypoint()'s schema so the entries
+# stay editable like any other.
 _SEED_WAYPOINTS = [
     {
         "glider": "Stella",

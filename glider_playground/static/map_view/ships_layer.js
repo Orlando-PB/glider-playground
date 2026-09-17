@@ -1,19 +1,8 @@
-/* Research-ship layer for map_view.html — experimental, self-contained.
- *
- * Shows the latest reported position of RRS Discovery, RRS James Cook and
- * RRS Sir David Attenborough as MARS map icons (vendored in static/icons/),
- * rendered through map_view's own HTML marker layer so they look exactly like
- * the glider end markers, plus a sidebar toggle and a detail card. No tracks:
- * the feeds are only good to a few km. map_view.html only calls:
- *
- *   ShipsLayer.attach(getGlobe, layerBody, refreshDots)   once the globe exists
- *   ShipsLayer.dots()                        inside buildPositionDots() (marker items)
- *   ShipsLayer.handleClick(x, y)             at the top of its click handler
- *   ShipsLayer.hoverInfo(x, y, tol)          at the top of its hover pass
- *
- * Remove the <script> tag + those four calls and nothing else changes.
- * Backend: ships_logic.py (/api/ships).
- */
+/* Research-ship layer for map_view.html — experimental, self-contained (backend: ships_logic.py, /api/ships).
+* Latest position only, rendered through map_view's own HTML marker layer. map_view.html only calls
+* ShipsLayer.attach(getGlobe, layerBody, refreshDots), dots(), handleClick(x, y) and hoverInfo(x, y, tol);
+* remove the <script> tag + those four calls and it's gone.
+*/
 (function () {
     'use strict';
 
@@ -158,9 +147,7 @@
         }
     }
 
-    // ---------- drawing ----------
-    // Marker items for map_view's htmlElementsData layer (same renderer as the
-    // glider end markers; dotEl handles `ship: true`).
+    // ---------- drawing: marker items for map_view's htmlElementsData layer (dotEl handles `ship: true`) ----------
     function dots() {
         if (!enabled) return [];
         return ships.map(s => ({

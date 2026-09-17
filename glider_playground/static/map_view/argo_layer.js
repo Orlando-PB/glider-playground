@@ -1,19 +1,7 @@
-/* Argo float layer for map_view.html — experimental, self-contained.
- *
- * Draws the fleet as one THREE.Points sprite cloud (constant pixel size, one
- * draw call, depth-tested against the globe so the far side hides) added to
- * the globe scene, draws the selected float's trajectory with the map's own
- * surface ribbon builder (passed in via attach, so it sits exactly on the
- * sphere like the glider tracks — no parallax), and adds its
- * own row in the Layers sidebar and a detail card. map_view.html only calls:
- *
- *   ArgoLayer.attach(getGlobe, layerBody, ribbonMesh)   once the globe exists
- *   ArgoLayer.handleClick(x, y)             at the top of its click handler
- *   ArgoLayer.hoverInfo(x, y, tol)          at the top of its hover pass
- *
- * Remove the <script> tag + those three calls and nothing else changes.
- * Backend: argo_logic.py (/api/argo/floats, /api/argo/float/<wmo>).
- */
+/* Argo float layer for map_view.html — experimental, self-contained (backend: argo_logic.py).
+* map_view.html only calls ArgoLayer.attach(getGlobe, layerBody, ribbonMesh), handleClick(x, y)
+* and hoverInfo(x, y, tol); remove the <script> tag + those three calls and it's gone.
+*/
 (function () {
     'use strict';
 
@@ -92,8 +80,7 @@
         #argoCard.collapsed .chev { transform: rotate(-90deg); }
         #argoCard.collapsed > :not(h3) { display:none; }
         #argoCard.collapsed h3 { margin-bottom:0; }
-        /* Narrow frames: stay top-left (the bottom belongs to the Layers
-           button), just a bit narrower and shorter; the header folds it. */
+        /* Narrow frames: stay top-left, just narrower and shorter. */
         @media (max-width: 520px) {
             #argoCard { width:210px; max-height:60vh; padding:6px 8px; font-size:10px; }
             #argoCard dl { grid-template-columns: 66px 1fr; }
@@ -103,8 +90,7 @@
     function esc(s) {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
-    // Backend ISO strings carry an explicit Z; fleet-monitoring ones are
-    // truncated to seconds with no zone (they're UTC) — force UTC either way.
+    // Time strings may lack a zone (they're UTC) — force UTC either way.
     function parseUTC(s) {
         if (!s) return NaN;
         s = String(s).replace(' ', 'T');
@@ -236,8 +222,7 @@
         }
     }
 
-    // Apply the BODC-only checkbox to the fetched range and redraw. A selected
-    // float that drops out of the filter keeps its card but loses its dot.
+    // Apply the BODC-only checkbox and redraw; a filtered-out selected float keeps its card.
     function applyFilter() {
         floats = bodcOnly ? allFloats.filter(f => f.dac === 'bodc') : allFloats;
         ui.count.textContent = floats.length.toLocaleString() + ' floats';
@@ -249,11 +234,7 @@
         return !isNaN(t) && (Date.now() - t) < 30 * 86400000;
     }
 
-    // Fleet dots: a GL point cloud with its own tiny shader, matching how the
-    // glider map draws every surface layer — depth test OFF (the ocean tiles
-    // make the depth buffer useless for surface things), the far hemisphere
-    // discarded by the "outward normal faces the camera" test, stacking by
-    // renderOrder only. Each point is a fixed-pixel disc with a white rim.
+    // Fleet dots: GL point cloud, depth test OFF, far hemisphere culled in-shader, stacked by renderOrder.
     const DOT_VERT = `
         uniform float uSize;
         attribute vec3 color;
@@ -461,8 +442,7 @@
         trackMesh = null;
     }
 
-    // Trajectory as a surface ribbon (same shader/altitude as glider tracks):
-    // yellow, 2px, fading in from the oldest fix to the newest.
+    // Trajectory as a surface ribbon (same shader as glider tracks), fading in oldest → newest.
     function drawTrajectory(d) {
         clearTrajectory();
         const g = getGlobe && getGlobe();

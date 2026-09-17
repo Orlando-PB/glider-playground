@@ -1,8 +1,12 @@
-"""Spatial QC, map path, and 3D view payloads.
+"""The glider's own track: position QC, and the map + 3D view payloads.
 
-The map and 3D view both share the same QC'd lat/lon/pres/temp arrays
-produced by `get_core_spatial_data`. Results are cached per-file so
-switching back and forth is free.
+Reads lat / lon / pressure / temperature, trims position outliers and
+decimates to a point budget. The map and 3D view share these arrays via
+`get_core_spatial_data`, cached per file so switching between them is free.
+
+Also: the 3D view payload (track, attitude, bathymetry), depth-averaged
+current vectors, nearest-fix lookups, location summary, and KMZ export.
+Map *layers* (Copernicus, Argo, ships, waypoints) live in maps/ instead.
 """
 
 import functools
@@ -19,13 +23,13 @@ from netCDF4 import Dataset
 
 from . import plot_logic
 
-# Desktop/RAM mode keeps the active globe track detailed; server/low-memory
-# mode renders far fewer points per track so the globe stays fast.
-MAX_POINTS = 1000 if plot_logic._LOW_MEMORY else 5000
+# Points per globe track — the same locally and on the server. Lower it here if
+# the Pi's globe ever feels heavy with many tracks loaded (bump CACHE_VERSION).
+MAX_POINTS = 5000
 # The 3D view carries no colour data any more, so it can afford a denser
 # track than the map: the model is interpolated between samples, so this
 # mostly sharpens dive shapes and pitch/roll changes. Separate cache entry.
-MAX_POINTS_3D = 4000 if plot_logic._LOW_MEMORY else 20000
+MAX_POINTS_3D = 20000
 BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 100.0
 GEO_GAP_THRESHOLD_SEC = 2 * 86400.0   # 2 days
@@ -181,8 +185,8 @@ def _read_lat_lon_pres_temp(filepath):
 
 def _read_named_arrays(filepath, names):
     """Read the given variables as float arrays, via the shared var-read cache
-    (`plot_logic._read_vars_cached`) — same preloaded-RAM/disk/raw-file fallback
-    the main plot pipeline uses, so a low-memory/server deployment reads only
+    (`plot_logic._read_vars_cached`) — same preloaded-disk/raw-file fallback
+    the main plot pipeline uses, so it reads only
     the requested variables from disk (not every preloaded array) and reuses
     the result across repeated calls instead of re-reading every time.
 
@@ -805,12 +809,8 @@ def generate_3d_data(filepath):
                 roll = _out(np.where(rt, rv, 0.0))
             hv, ht = _attitude('GLIDER_HEADING', 'HEADING', circular=True)
             if hv is not None:
-                # Unlike pitch, heading is held between surfacings, so bridging
-                # long gaps between compass samples is sound - and switching to
-                # the track direction in the gaps made the model snap between
-                # the two (they disagree in any current). Keep the compass
-                # throughout, then smooth (circular mean over time) to take out
-                # the sample-to-sample yaw wobble.
+                # Heading is held between surfacings, so bridge compass gaps (switching to track direction made
+                # the model snap) and smooth with a circular mean.
                 r = np.radians(hv)
                 win = max(3, min(41, (len(hv) // 500) | 1))
                 ker = np.hanning(win + 2)[1:-1]

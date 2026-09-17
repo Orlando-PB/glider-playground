@@ -1,21 +1,18 @@
-// Build config for the prebuilt static CSS that replaced the Tailwind Play CDN.
-// Rebuild after changing/adding utility classes:
-//   tailwindcss -i tailwind/input.css -o glider_playground/static/tailwind.css --minify
-// (use the standalone Tailwind v4 CLI binary; no Node required)
+// Source for static/vendor/tailwind.css. Rebuild after adding/changing utility classes:
+//   tailwindcss -i tailwind/input.css -o glider_playground/static/vendor/tailwind.css --minify
 module.exports = {
   content: [
-    "../glider_playground/static/index.html",
-    "../glider_playground/static/main_plot.html",
-    "../glider_playground/static/map_view.html",
-    "../glider_playground/static/3d_view.html",
-    "../glider_playground/static/cycle_profile.js",
-    "../glider_playground/static/console_log.js",
+    "../glider_playground/static/*.html",
+    "../glider_playground/static/js/*.js",
+    "../glider_playground/static/map_view/*.js",
   ],
   theme: {
     extend: {
+      // App colours: `text-blue`, `text-red`, `text-green` (the shaded `blue-500` etc. still work).
       colors: {
-        googleBlue: '#41658a', googleBlueHover: '#2e4a68', googleRed: '#ea4335',
-        googleYellow: '#fbbc04', googleGreen: '#34a853', bgMain: '#ffffff', panelBg: '#f8f9fa',
+        blue: { DEFAULT: '#41658a' },
+        red: { DEFAULT: '#ea4335' },
+        green: { DEFAULT: '#34a853' },
       },
       borderRadius: { DEFAULT: '4px' },
     },

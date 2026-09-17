@@ -1,4 +1,14 @@
-"""FastAPI app — file management and cached data endpoints."""
+"""FastAPI app — every HTTP route, kept thin.
+
+Serves the static frontend and /api/*: files, live ERDDAP deployments, map /
+3D / KMZ, plot data, variables / profiles / cycles, Copernicus overlays, and
+the extras (Argo, ships, waypoints, update check, plot_presets.js). Handlers
+resolve a file id to a path, serve from cache_logic when the payload is
+ready, and otherwise call into core/, maps/ or server/.
+
+In server mode only, also loads private plugins from
+~/.glider_playground/plugins.
+"""
 
 import logging
 import os
@@ -14,43 +24,32 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import argo_logic
-from . import cache_logic
-from . import cycle_profile_logic
-from . import live_logic
-from . import overlay_logic
-from . import overlay_prefetch
-from . import plot_logic
-from . import presets_logic
-from . import spatial_logic
-from . import update_logic
-from . import waypoint_logic
-from . import server_config
-from . import ships_logic
+from .maps import argo_logic
+from .core import cache_logic
+from .core import cycle_profile_logic
+from .server import erddap_fetch
+from .maps import copernicus_fetch
+from .maps import copernicus_prefetch
+from .core import plot_logic
+from .core import presets_logic
+from .core import spatial_logic
+from .server import update_logic
+from .maps import waypoint_logic
+from .server import server_config
+from .maps import ships_logic
 
 server_config.configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Compress responses over ~1 KB. The overlay/currents JSON (coordinate grids)
-# compresses ~5x, which is the biggest win for the user on home-internet uplink
-# — see the overlay size audit. minimum_size skips tiny payloads where the
-# gzip overhead isn't worth it. Negligible CPU cost on the Pi.
-# compresslevel=1 (was 5): on a ~10MB plot_data payload, level 5 spends ~157ms
-# compressing to 2.13MB while level 1 spends ~36ms to 2.44MB. Trading +0.3MB of
-# transfer for ~120ms less server CPU is a clear win on the plot hot path (and the
-# big vendor bundles are cached immutably, so their compression only matters once).
+# Gzip responses over ~1 KB (overlay grids compress ~5x). Level 1: on a 10 MB plot payload it costs
+# ~36 ms vs ~157 ms at level 5 for only ~0.3 MB more.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
 
-# Starlette's default handler for an unhandled exception is a plain-text
-# "Internal Server Error" body, not JSON. Every frontend call does
-# `await response.json()` unconditionally, so that plain-text body blows up as
-# "Unexpected token 'I', "Internal S"... is not valid JSON" and aborts whatever
-# chain of awaits was mid-flight (e.g. loadVariables during a dataset swap).
-# Returning JSON here means a backend bug degrades to a normal fetch-error the
-# frontend can catch, instead of a JSON.parse crash.
+# Unhandled errors must return JSON: every frontend call does `await response.json()`, and
+# Starlette's plain-text 500 would crash that parse instead of surfacing as a normal fetch error.
 @app.exception_handler(Exception)
 async def _json_500(request: Request, exc: Exception):
     logging.exception("Unhandled error on %s", request.url.path)
@@ -61,10 +60,10 @@ async def _json_500(request: Request, exc: Exception):
 # happens before the per-phase timers, so it otherwise shows up as unattributed
 # "other" time on the very first overlay). Daemon thread; failures are harmless.
 import threading as _threading
-_threading.Thread(target=overlay_logic.warm_up, name="cm-warmup", daemon=True).start()
+_threading.Thread(target=copernicus_fetch.warm_up, name="cm-warmup", daemon=True).start()
 # Background overlay prefetch: every READY file gets its Copernicus layers
-# fetched once and stored on disk (see overlay_prefetch).
-overlay_prefetch.start()
+# fetched once and stored on disk (see copernicus_prefetch).
+copernicus_prefetch.start()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -97,7 +96,7 @@ _SEO_HEAD = f"""\
     <meta property="og:title" content="{SEO_TITLE}">
     <meta property="og:description" content="{SEO_DESCRIPTION}">
     <meta property="og:url" content="{SITE_URL}/">
-    <meta property="og:image" content="{SITE_URL}/static/dashboard.webp">
+    <meta property="og:image" content="{SITE_URL}/static/readme_images/dashboard.webp">
     <meta property="og:image:type" content="image/webp">
     <meta property="og:image:width" content="1600">
     <meta property="og:image:height" content="847">
@@ -107,7 +106,7 @@ _SEO_HEAD = f"""\
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{SEO_TITLE}">
     <meta name="twitter:description" content="{SEO_DESCRIPTION}">
-    <meta name="twitter:image" content="{SITE_URL}/static/dashboard.webp">
+    <meta name="twitter:image" content="{SITE_URL}/static/readme_images/dashboard.webp">
     <meta name="twitter:image:alt" content="The Glider Playground dashboard showing OG1 glider data plots and a map">
     <!-- Structured data: helps search engines understand this is a web app/tool -->
     <script type="application/ld+json">
@@ -121,7 +120,7 @@ _SEO_HEAD = f"""\
       "applicationCategory": "ScientificApplication",
       "operatingSystem": "Any",
       "browserRequirements": "Requires JavaScript",
-      "image": "{SITE_URL}/static/dashboard.webp",
+      "image": "{SITE_URL}/static/readme_images/dashboard.webp",
       "isAccessibleForFree": true,
       "offers": {{"@type": "Offer", "price": "0", "priceCurrency": "GBP"}},
       "creator": {{
@@ -165,12 +164,8 @@ def _index_html() -> str:
     return _seo_html_cache
 
 
-# Vendor bundles are immutable (version is baked into the filename, e.g.
-# plotly-gl2d-2.32.0.min.js) so they can be cached forever — important since the
-# plot iframe reloads them on every re-plot. Our own source (HTML + the small
-# helper scripts/styles) changes between releases, so it must revalidate every
-# load or users run stale code after an auto-update (e.g. a cached console_log.js
-# missing a newly-added helper).
+# Versioned vendor bundles and images are cached forever; our own HTML/JS/CSS must revalidate
+# every load so an auto-update never leaves users on stale code.
 _IMMUTABLE_SUFFIXES = (".min.js", ".woff", ".woff2", ".ttf", ".png", ".webp",
                        ".svg", ".jpg", ".jpeg", ".gif", ".ico", ".icns")
 
@@ -266,8 +261,6 @@ def get_config():
     return {
         "is_server": is_server,
         "version": version,
-        "throttle": is_server,
-        "low_memory": server_config.LOW_MEMORY,
     }
 
 
@@ -415,17 +408,17 @@ def api_update_check(force: bool = False):
 @app.get("/api/live")
 def api_live(force: bool = False):
     """Active gliders + uploads. Server-side cache prevents Pi flooding."""
-    return live_logic.list_live(force_scan=force)
+    return erddap_fetch.list_live(force_scan=force)
 
 
 @app.post("/api/live/download")
 def api_live_download(filename: str):
-    return live_logic.request_download(filename)
+    return erddap_fetch.request_download(filename)
 
 
 @app.delete("/api/live/{filename}")
 def api_live_delete(filename: str):
-    if not live_logic.delete_managed(filename):
+    if not erddap_fetch.delete_managed(filename):
         raise HTTPException(status_code=404, detail="Not a managed file")
     return {"status": "ok"}
 
@@ -538,7 +531,7 @@ def api_map_all():
         tracks.append({
             "id": fid,
             "name": rec.get("name"),
-            "path": _downsample_path(path, 500 if plot_logic._LOW_MEMORY else 800),
+            "path": _downsample_path(path, 800),
             "dac": payload.get("dac") or [],
             "last_lat": rec.get("last_lat"),
             "last_lon": rec.get("last_lon"),
@@ -554,7 +547,7 @@ def api_waypoints(glider: str | None = None):
     """Manually curated target points (e.g. planned stations) for a glider,
     optionally filtered by a case-insensitive substring match on the `glider`
     tag. Read-only here — managed from the admin panel on the server
-    deployment (see deploy/waypoints_admin.py)."""
+    deployment (a server-only plugin)."""
     return {"waypoints": waypoint_logic.list_waypoints(glider)}
 
 
@@ -586,7 +579,7 @@ def api_nearest_fix_by_coord(id: str, lat: float, lon: float):
 
 @app.get("/api/plot_presets.js")
 def api_plot_presets_js():
-    # static/plot_presets.json as a blocking script (window.GP_PLOT_PRESETS) so the
+    # glider_playground/plot_presets.json as a blocking script (window.GP_PLOT_PRESETS) so the
     # pages have presets/palettes synchronously — no toolbar reflow after first paint.
     return Response(presets_logic.as_script(), media_type="application/javascript",
                     headers={"Cache-Control": "no-cache"})
@@ -712,13 +705,13 @@ def api_plot_data_bounds(
 @app.get("/api/overlays")
 def api_overlays():
     """List of overlay variables the map view can request."""
-    return {"overlays": list(overlay_logic.OVERLAYS.keys())}
+    return {"overlays": list(copernicus_fetch.OVERLAYS.keys())}
 
 
 @app.get("/api/copernicus/status")
 def api_copernicus_status():
     """Whether Copernicus Marine credentials are set up on this machine."""
-    return {"logged_in": overlay_logic.credentials_present()}
+    return {"logged_in": copernicus_fetch.credentials_present()}
 
 
 @app.post("/api/copernicus/login")
@@ -728,9 +721,9 @@ async def api_copernicus_login(request: Request):
     if server_config.IS_SERVER:
         raise HTTPException(status_code=403, detail="Copernicus login not available in server mode")
     body = await request.json()
-    out = overlay_logic.login(body.get("username"), body.get("password"))
+    out = copernicus_fetch.login(body.get("username"), body.get("password"))
     if out.get("status") == "success":
-        overlay_prefetch.retry_errors()   # layers that failed for lack of creds
+        copernicus_prefetch.retry_errors()   # layers that failed for lack of creds
     return out
 
 
@@ -739,25 +732,25 @@ def api_overlay_status(id: str):
     """Per-layer prefetch state for a file (pending/ready/error + field date),
     used by the map view to grey out layers until they're on disk. Asking also
     moves the file to the front of the prefetch queue."""
-    return overlay_prefetch.get_status(id)
+    return copernicus_prefetch.get_status(id)
 
 
 @app.get("/api/overlay")
 def api_overlay(id: str, var: str):
     """Surface overlay (chla/temp/salinity/o2/ph/biomass/sla) for a file's bbox.
 
-    Normally a read of the prefetched, on-disk field (see overlay_prefetch). If
+    Normally a read of the prefetched, on-disk field (see copernicus_prefetch). If
     it isn't stored yet (file still processing, or the user clicked before the
     prefetch reached it) the layer is fetched now and stored for next time. For
     a past deployment the date is tied to the glider's last GPS fix so the field
     is contemporaneous with the track; for a still-live glider it uses the most
-    recent available field — see overlay_prefetch.target_date.
+    recent available field — see copernicus_prefetch.target_date.
     """
-    if var not in overlay_logic.OVERLAYS:
+    if var not in copernicus_fetch.OVERLAYS:
         raise HTTPException(status_code=404, detail=f"Unknown overlay '{var}'")
-    data = overlay_prefetch.get_layer_bytes(id, var)
+    data = copernicus_prefetch.get_layer_bytes(id, var)
     if data is None:
-        data, err = overlay_prefetch.fetch_layer(id, var)
+        data, err = copernicus_prefetch.fetch_layer(id, var)
         if err is not None:
             return err   # plain JSON error (the rare fallback path)
     # Packed binary (uint32 header len + JSON header + raw LE float32
@@ -769,9 +762,9 @@ def api_overlay(id: str, var: str):
 def api_currents(id: str):
     """Surface current (uo/vo) grid for a file's bbox, for the animated flow
     layer. Same prefetched-store-first behaviour and date rule as /api/overlay."""
-    data = overlay_prefetch.get_layer_bytes(id, "currents")
+    data = copernicus_prefetch.get_layer_bytes(id, "currents")
     if data is None:
-        data, err = overlay_prefetch.fetch_layer(id, "currents")
+        data, err = copernicus_prefetch.fetch_layer(id, "currents")
         if err is not None:
             return err
     return Response(content=data, media_type="application/json")

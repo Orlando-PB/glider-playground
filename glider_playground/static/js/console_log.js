@@ -1,7 +1,6 @@
 // Shared console + fetch logging used across the index/plot/map/3d pages.
 (function () {
-    // Suppress the well-known Tailwind play-CDN production warning.
-    // console_log.js must be loaded BEFORE the Tailwind CDN script for this to fire in time.
+    // Suppress the Tailwind play-CDN warning; this file must load BEFORE the Tailwind CDN script.
     const _origWarn = console.warn;
     console.warn = function (...args) {
         const first = args[0];
@@ -9,13 +8,7 @@
         return _origWarn.apply(console, args);
     };
 
-    // --- Diagnostics toggle ---
-    // Off by default: the only thing logged is the one-line startup banner
-    // (logVersion). On: the full API/PLOT/RENDER/REDRAW timing breakdowns
-    // below, useful for perf or memory-leak investigation. Persisted in
-    // localStorage, which — since every panel is a same-origin iframe — is
-    // shared instantly across all of them. Toggle from any panel's devtools
-    // console: gpSetDebug(true) / gpSetDebug(false).
+    // --- Diagnostics toggle: off by default; gpSetDebug(true/false) from any panel (shared via localStorage) ---
     function _readDebugFlag() {
         try { return localStorage.getItem('gp_debug') === '1'; } catch (_) { return false; }
     }
@@ -29,9 +22,7 @@
         );
     };
 
-    // --- API call batching ---
-    // Calls within a 150ms window are grouped and deduplicated.
-    // /api/files is very high-frequency polling — demoted to console.debug (hidden unless Verbose).
+    // --- API call batching: 150ms windows, deduplicated; NOISY_PATHS go to console.debug ---
     const NOISY_PATHS = ['/api/files'];
 
     const _pendingApi = {};
@@ -66,16 +57,13 @@
         console.groupEnd();
     }
 
-    // The main plot fetch is folded into the unified PLOT timing log (logPlotTiming),
-    // so we skip its standalone "API /api/plot_data" line to avoid a duplicate log.
-    // initPlot sets this flag synchronously right before issuing that one fetch.
+    // The main plot fetch is logged by logPlotTiming, so initPlot sets this flag to skip its API line.
     let _skipNextApiLog = false;
     window.gpSkipNextApiLog = function () { _skipNextApiLog = true; };
 
     const _origFetch = window.fetch;
     window.fetch = async function (...args) {
-        // Capture (and clear) the suppress flag synchronously at call time, before
-        // any await — otherwise a concurrent fetch could consume it.
+        // Capture (and clear) the flag synchronously, before any await.
         const skipLog = _skipNextApiLog;
         _skipNextApiLog = false;
         const response = await _origFetch.apply(this, args);
@@ -105,9 +93,7 @@
         return response;
     };
 
-    // Lightweight one-liner for plot re-draws that don't go through the full PLOT
-    // timing pipeline — zoom-in high-res swaps and zoom-out/reset. `points` is the
-    // count now on the plot, so you can watch it change as you zoom in and back out.
+    // One-liner for plot re-draws outside the full PLOT timing pipeline; `points` is the count now on the plot.
     window.logRedraw = function (action, points, ms) {
         if (!window.GP_DEBUG) return;
         const pts = (typeof points === 'number') ? points.toLocaleString() + ' pts' : '';
@@ -132,31 +118,14 @@
         );
     };
 
-    // High-resolution timestamp comparable ACROSS documents (parent <-> iframe).
-    // performance.now() is per-document; adding timeOrigin lifts it to a shared
-    // epoch-ms clock so a timestamp taken in index.html lines up with one taken
-    // inside the plot iframe.
+    // Timestamp comparable ACROSS documents (parent <-> iframe): performance.now() + timeOrigin.
     window.gpNow = function () {
         return performance.timeOrigin + performance.now();
     };
 
-    // One collapsed log for a full plot render: header shows the total click->painted
-    // time, the expanded view breaks it into phases plus any unaccounted remainder.
-    //   label   — e.g. 'WebGL Plot'
-    //   phases  — ordered [{ name, ms, color?, children? }]; deltas between pipeline
-    //             marks. A phase may carry `children` (same shape) to break it down
-    //             further — they render indented, with an auto "·other" remainder so
-    //             the children always reconcile to the parent.
-    //   totalMs — overall click -> fully-painted time
-    // Unaccounted = total - sum(phases); it surfaces time we didn't attribute to a
-    // named phase (queueing, idle waiting, anything we forgot to measure).
-    //   note    — optional string shown in the collapsed header (e.g. point count),
-    //             kept out of the aligned columns so it never shifts the bars.
-    //   detail  — optional string printed as a dim line inside the group (e.g. the
-    //             request's filter params, for debugging "why so few points?").
-    //   opts    — optional { badge, badgeBg, badgeColor } to relabel/recolour the
-    //             header chip (defaults to the green "PLOT" badge). Lets other
-    //             pipelines (e.g. overlays) reuse this same breakdown view.
+    // One collapsed log for a full render. phases: ordered [{ name, ms, color?, children? }] (children get an
+    // auto "·other" remainder); unaccounted = totalMs - sum(phases). note: header text; detail: dim line inside;
+    // opts: { badge, badgeBg, badgeColor } to relabel the header chip.
     window.logPlotTiming = function (label, phases, totalMs, note, detail, opts) {
         if (!window.GP_DEBUG) return;
         opts = opts || {};
@@ -190,9 +159,7 @@
 
         const printRow = (p, indent) => {
             const name = (' '.repeat(indent) + p.name).padEnd(nameW);
-            // A `header` phase is a pure grouping label — its children carry the
-            // numbers, so showing the parent's own bar/total would read as a
-            // double count. Print just the label; children still reconcile to p.ms.
+            // A `header` phase is a pure grouping label: print just the label, not its own bar.
             if (p.header) {
                 console.log(`%c${name}`, 'color:#aac8e8;font-weight:600');
             } else {
@@ -220,10 +187,7 @@
         console.groupEnd();
     };
 
-    // Clean one-line log for expected/handled failures shown to the user (e.g.
-    // "no points remain" after a filter) — unlike console.error, this never prints
-    // a stack trace. Always visible (not gated by GP_DEBUG): it's the only trace
-    // of a real, user-facing condition, not a perf diagnostic.
+    // One-line log for expected user-facing failures (no stack trace); always visible, not gated by GP_DEBUG.
     window.logNote = function (message) {
         console.log(
             `%c NOTE %c ${message}`,
@@ -232,28 +196,16 @@
         );
     };
 
-    window.logVersion = function (version, isServer, throttle, lowMemory) {
+    window.logVersion = function (version, isServer) {
         const modeLabel = isServer ? 'server' : 'local';
         const modeBg = isServer ? '#3b1f6e' : '#1a3a1a';
         const modeColor = isServer ? '#c4a8f5' : '#86efac';
-        const throttleOn = !!throttle;
-        const lowMemOn = !!lowMemory;
-        const modeBorder = (throttleOn || lowMemOn) ? '0' : '0 3px 3px 0';
         const parts = [
             `%c Glider Playground %c v${version} %c ${modeLabel} `,
             'background:#1e3a5f;color:#7ec8f7;font-weight:bold;padding:2px 6px;border-radius:3px 0 0 3px',
             'background:#0f2540;color:#aac8e8;padding:2px 6px',
-            `background:${modeBg};color:${modeColor};padding:2px 6px;border-radius:${modeBorder}`,
+            `background:${modeBg};color:${modeColor};padding:2px 6px;border-radius:0 3px 3px 0`,
         ];
-        if (throttleOn) {
-            const isLast = !lowMemOn;
-            parts[0] += `%c throttle ON `;
-            parts.push(`background:#5a3a0a;color:#fbbf24;padding:2px 6px;border-radius:${isLast ? '0 3px 3px 0' : '0'}`);
-        }
-        if (lowMemOn) {
-            parts[0] += `%c low-mem `;
-            parts.push('background:#3a1a1a;color:#fca5a5;padding:2px 6px;border-radius:0 3px 3px 0');
-        }
         console.log(...parts);
         if (!window.GP_DEBUG) {
             console.log('%cdiagnostics off — run gpSetDebug(true) for API/PLOT/RENDER timing logs', 'color:#5b6472');

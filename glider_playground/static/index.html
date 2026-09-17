@@ -3,17 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <title>Glider Playground</title>
-    <link rel="icon" href="/static/noc_logo_square.svg">
+    <link rel="icon" href="/static/icons/noc_logo_square.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <script src="/static/console_log.js"></script>
+    <script src="/static/js/console_log.js"></script>
     <script src="/api/plot_presets.js"></script>
-    <!-- Prebuilt Tailwind (replaces the runtime Play-CDN compiler). Regenerate
-         with the Tailwind CLI when classes change — see scratchpad build. -->
-    <link rel="stylesheet" href="/static/tailwind.css">
-    <script src="/static/cycle_profile.js"></script>
-    <!-- Icon font: loaded non-render-blocking so it never delays first paint.
-         Flips to a stylesheet on load; <noscript> keeps icons without JS. -->
+    <!-- Prebuilt Tailwind; regenerate with the Tailwind CLI when classes change. -->
+    <link rel="stylesheet" href="/static/vendor/tailwind.css">
+    <script src="/static/js/cycle_profile.js"></script>
+    <!-- Icon font loaded non-render-blocking; <noscript> keeps icons without JS. -->
     <link rel="preload" as="style"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0"
           onload="this.onload=null;this.rel='stylesheet'">
@@ -30,9 +28,7 @@
             } catch (_) {
                 document.documentElement.setAttribute('data-theme', 'light');
             }
-            // Same idea for the Settings-row open/closed state: apply it
-            // before <body> parses so the toolbar never has a moment in the
-            // wrong state for a returning user.
+            // Apply the Settings-row open/closed state before <body> parses (no flash).
             try {
                 if (localStorage.getItem('gp_settings_open') === 'true') {
                     document.documentElement.setAttribute('data-settings-open', '');
@@ -144,7 +140,7 @@
         ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
         /* ---------- Tailwind-class overrides so existing markup inherits dark theme ---------- */
-        nav, [class*="bg-[#f8f9fa]"], .bg-panelBg { background-color: var(--bg-panel) !important; }
+        nav, [class*="bg-[#f8f9fa]"] { background-color: var(--bg-panel) !important; }
         .bg-white { background-color: var(--bg-panel-2) !important; }
         .bg-gray-50, .bg-gray-100, [class*="bg-[#eee]"] { background-color: var(--bg-input) !important; }
         .bg-blue-50\/50 { background-color: rgba(65,101,138,0.08) !important; }
@@ -152,15 +148,15 @@
         .text-gray-400, .text-gray-500 { color: var(--text-muted) !important; }
         .text-gray-600, .text-gray-700 { color: var(--text-secondary) !important; }
         .text-gray-800, .text-gray-900 { color: var(--text-primary) !important; }
-        .text-googleBlue { color: var(--accent) !important; }
-        .text-googleRed { color: var(--danger) !important; }
-        .text-googleGreen { color: var(--success) !important; }
+        .text-blue { color: var(--accent) !important; }
+        .text-red { color: var(--danger) !important; }
+        .text-green { color: var(--success) !important; }
 
         /* Flat theme: kill all visible borders from Tailwind classes too */
         .border, .border-2, .border-b, .border-t, .border-l, .border-r,
         .border-b-2, .border-t-2, .border-l-2, .border-r-2,
         .border-gray-100, .border-gray-200, .border-gray-300,
-        .border-blue-100, .border-googleBlue, .border-transparent {
+        .border-blue-100, .border-blue, .border-transparent {
             border-color: transparent !important;
         }
         .hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover { background-color: var(--bg-hover) !important; }
@@ -262,14 +258,7 @@
             cursor: not-allowed;
         }
 
-        /* Consistent height across the main toolbar-tier controls (jelly,
-           settings, theme, sync, download, share, Invert Y, Profile, and the
-           X/Y/Colour/Order/Size/Quality selects) — each previously derived
-           its height only from its own padding + content (icon vs SVG vs
-           text vs icon+text), so they didn't line up. Fix a shared height
-           matching the existing 28px (h-7) cmap swatch button, zero out
-           vertical padding (which would otherwise still count against the
-           now-fixed height) and centre content with flex instead. */
+        /* Shared 28px height for all toolbar-tier controls; vertical padding zeroed, content centred with flex. */
         .toolbar-actions .toggle-btn, #invertYBtn, #profileSidebarBtn {
             height: 28px;
             box-sizing: border-box;
@@ -286,14 +275,12 @@
             padding-bottom: 0;
         }
 
-        /* Segmented "view layout" selector (Classic / Map / Overview / Dashboard):
-           a rounded pill rail with a sliding accent for the active option. */
+        /* Segmented view-layout selector: pill rail with a sliding accent. */
         .view-seg {
             display: inline-flex; gap: 2px; padding: 0;
             border-radius: 9999px;
             background-color: var(--bg-panel-3);
-            /* Shrink and scroll rather than forcing the whole group to wrap
-               onto its own line when the toolbar is tight on width. */
+            /* Shrink and scroll rather than wrapping when the toolbar is tight. */
             flex-shrink: 1;
             min-width: 0;
             overflow-x: auto;
@@ -332,9 +319,7 @@
         nav select:hover, nav input:hover { border-color: var(--border-strong); }
 
         /* ---------- Colormap menu ---------- */
-        /* Use inset shadow on focus so the highlight stays inside the button —
-           the menu has overflow:auto and the default focus ring was getting
-           clipped on the left edge of the first option. */
+        /* Inset focus shadow: the menu's overflow:auto clips a normal focus ring. */
         .cmap-option:focus, .cmap-option:focus-visible {
             outline: none;
             box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 1px rgba(0,0,0,0.2);
@@ -707,15 +692,12 @@
             position: absolute;
             box-sizing: border-box;
             overflow: visible;            /* let edge "+" buttons straddle the border */
-            /* No layout border — panels sit flush so plots pack tightly. The
-               active highlight is the ::after ring below (no layout impact). */
+            /* No layout border; the active highlight is the ::after ring below. */
             border: none;
             border-radius: 3px;
             background: var(--plot-bg);
         }
-        /* Active highlight + drag-target ring. Drawn as a pseudo-element on TOP of
-           the panel body (z 7) because an inset box-shadow on .gp-panel is painted
-           under the body/iframe, which fully covers it — so the border never showed. */
+        /* Active/drag-target ring: a pseudo-element above the body (z 7), since an inset box-shadow is covered by the iframe. */
         .gp-panel.active::after,
         .gp-panel.gp-drag-target::after {
             content: ''; position: absolute; inset: 0; z-index: 7;
@@ -728,11 +710,7 @@
         .gp-panel.active.idle .gp-add.show { display: none; }
         .gp-panel.active.idle .gp-panel-header { opacity: 0; }
         .gp-panel-body { position: absolute; inset: 0; overflow: hidden; border-radius: 3px; }
-        /* While the active file is downloading/processing the centred progress
-           overlay is shown. Hide EVERY panel's content (plots, stats, map, 3D) —
-           not just the active one — so nothing peeks out behind/around the
-           overlay when multiple panels are open. The panel's plot-bg background
-           stays, giving the overlay a clean backdrop. */
+        /* While the active file is processing, hide EVERY panel's content so nothing peeks around the overlay. */
         #panelHost.gp-processing .gp-panel-body { visibility: hidden; }
         .gp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; display: block; background: var(--plot-bg); }
         .gp-frame.hidden { display: none; }
@@ -764,21 +742,16 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.35); white-space: nowrap;
         }
         .gp-drop-badge .material-symbols-outlined { font-size: 15px; }
-        /* The panel being dragged dims; the hovered target's ring is drawn by the
-           shared .gp-panel.gp-drag-target::after rule above. */
+        /* The dragged panel dims; the target ring is .gp-panel.gp-drag-target::after above. */
         .gp-panel.gp-drag-source { opacity: 0.5; }
-        /* Resize preview: while a divider is dragged, every panel shows a filled
-           placeholder that expands/shrinks with it (the live iframes don't reflow
-           until drop, so without this you'd just see blank letterboxed space). */
+        /* Resize preview: placeholder tiles, since live iframes don't reflow until drop. */
         .gp-resize-veil {
             position: absolute; inset: 0; z-index: 5; display: none;
             align-items: center; justify-content: center;
             background: var(--plot-bg); border: 1px dashed var(--accent); border-radius: 3px;
         }
         body.gp-resizing .gp-resize-veil { display: flex; }
-        /* A panel with no data/plot yet shows the same chip placeholder
-           persistently (per-panel, so it never floats over a sibling's plot).
-           Muted rather than the accent dashed look of an active resize. */
+        /* Empty panels show the same chip placeholder persistently, muted. */
         .gp-panel.gp-empty .gp-resize-veil { display: flex; border-style: solid; border-color: var(--border); }
         .gp-panel.gp-empty .gp-resize-chip { background: var(--bg-panel-3, rgba(0,0,0,0.18)); color: var(--text-muted); }
         body.gp-resizing .gp-panel.gp-empty .gp-resize-veil { border-style: dashed; border-color: var(--accent); }
@@ -821,10 +794,9 @@
             border: none; border-radius: 4px; cursor: pointer; color: var(--text-muted);
             background: var(--bg-panel-3, rgba(0,0,0,0.25));
         }
-        .gp-panel-close:hover { color: #fff; background: var(--googleRed, #ea4335); }
+        .gp-panel-close:hover { color: #fff; background: var(--red, #ea4335); }
         .gp-panel-close .material-symbols-outlined { font-size: 14px; }
-        /* Edge "+" buttons — sit centred ON the panel border (out of the plot
-           interior so they don't cover axis labels). Shown on the active panel. */
+        /* Edge "+" buttons sit centred ON the panel border; shown on the active panel. */
         .gp-add {
             position: absolute; z-index: 9; display: none;
             align-items: center; justify-content: center;
@@ -855,15 +827,11 @@
         .gp-divider.col { cursor: row-resize; height: 8px; transform: translateY(-50%); }
         .gp-divider.col::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
 
-        /* Colour-trim rail — blended into the plot area background, not a
-           separate floating card. */
+        /* Colour-trim rail, blended into the plot background. */
         #cTrimContainer {
             background: var(--bg-panel);
         }
-        /* While any plot panel exists the rail stays mounted: a dimmed,
-           non-interactive placeholder (cTrim-inactive) when there's no active
-           colour-mapped data, so it never flickers in/out as a plot loads. It's
-           fully removed (.hidden) only in Map view / when no plots remain. */
+        /* Rail stays mounted while any plot panel exists (dimmed via cTrim-inactive); .hidden only when no plots remain. */
         #cTrimContainer.cTrim-inactive { opacity: 0.4; pointer-events: none; }
         #cTrimContainer.cTrim-inactive #cTrimMaxInput,
         #cTrimContainer.cTrim-inactive #cTrimMinInput { visibility: hidden; }
@@ -876,9 +844,7 @@
         }
 
         /* ---------- Variables / Attributes lists ---------- */
-        /* Search bar pinned to the top of each list. The panel's drag-handle /
-           close chrome overlays the top ~22px, so the wrap pads its top to keep
-           the input clear of (and below) that strip. */
+        /* Search bar pinned to the top; padded to clear the panel's ~22px drag/close chrome. */
         .ds-search-wrap {
             position: sticky; top: 0; z-index: 5;
             display: flex; align-items: center; gap: 6px;
@@ -904,15 +870,13 @@
             transition: background-color 0.12s;
         }
         .var-row:hover { background: var(--bg-panel-3); }
-        /* The row rules above set display:flex with the same specificity as Tailwind's
-           .hidden{display:none}, but win by cascade order — so filtering (which toggles
-           .hidden) wouldn't hide rows. Re-assert hidden at higher specificity. */
+        /* Re-assert .hidden at higher specificity: the row rules' display:flex otherwise wins by cascade order. */
         .var-row.hidden, .attr-row.hidden { display: none !important; }
         .var-row .var-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .var-row .var-name { font-size: 11px; font-weight: 500; color: var(--text-primary); font-family: 'SF Mono','Menlo','Monaco', ui-monospace, monospace; letter-spacing: -0.01em; }
         .var-row .var-units { font-size: 9.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
         .var-row .var-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
-        .var-row .var-derived { font-size: 9px; font-weight: 600; color: #fff; background: var(--googleRed, #ea4335); padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+        .var-row .var-derived { font-size: 9px; font-weight: 600; color: #fff; background: var(--red, #ea4335); padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
         .var-row .var-time-warning { font-size: 9px; font-weight: 600; color: #1f2937; background: #f9ab00; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
         .var-row .var-desc { font-size: 10px; color: var(--text-muted); line-height: 1.35; overflow: hidden; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .var-row.is-qc .var-name { color: var(--text-muted); font-style: italic; }
@@ -1010,13 +974,12 @@
             position: relative;
         }
         #datasetInfoContainer button[id^="tab"]:hover { color: var(--text-primary); }
-        #datasetInfoContainer button[id^="tab"].text-googleBlue {
+        #datasetInfoContainer button[id^="tab"].text-blue {
             color: var(--text-primary) !important;
             background: var(--bg-panel-3) !important;
         }
-        /* Active-tab indicator: a thin solid bar at the bottom — easier to read
-           than the previous low-contrast bottom border, especially in light mode. */
-        #datasetInfoContainer button[id^="tab"].text-googleBlue::after {
+        /* Active-tab indicator: a thin solid bar at the bottom. */
+        #datasetInfoContainer button[id^="tab"].text-blue::after {
             content: '';
             position: absolute;
             left: 12%; right: 12%; bottom: 0;
@@ -1028,9 +991,7 @@
         /* ---------- Plot area ---------- */
         #plotAreaWrapper { background: var(--bg-panel) !important; }
         #emptyState, #demoPrompt { color: var(--text-muted); }
-        /* The "Select variables to Plot" overlay is superseded by per-panel
-           placeholders (.gp-empty veils), which are correctly scoped to a
-           single panel instead of floating over the whole dashboard. */
+        /* The "Select variables to Plot" overlay is superseded by per-panel .gp-empty veils. */
         #emptyState { display: none !important; }
         iframe#plotIframe { background: var(--bg-panel) !important; }
 
@@ -1052,16 +1013,8 @@
         }
 
         /* ---------- Toolbar ----------
-           .toolbar-row is one flex-wrap container, not a single row that JS
-           reflows. .toolbar-topline (logo/files/view + right-side actions)
-           is width:100% so it always claims its own line first and never
-           changes shape based on settings state. Presets and — when open —
-           #settingsRow's groups (axes/QC/phases/profiles) are the remaining
-           children, so they wrap together in whatever space is left rather
-           than each claiming a separate boxed row. #settingsRow itself is
-           shown/hidden as a whole by CSS off data-settings-open (display:
-           contents when open, so its groups act as direct .toolbar-row
-           flex items) — nothing inside it needs its own show/hide class. */
+           .toolbar-row is one flex-wrap container. .toolbar-topline is width:100% so it always claims line 1;
+           Presets and (when open) #settingsRow's groups wrap together below. #settingsRow is display:contents, keyed off data-settings-open. */
         .toolbar-row {
             display: flex;
             flex-wrap: wrap;
@@ -1071,10 +1024,7 @@
             border-bottom: 1px solid var(--border);
             background: var(--bg-panel);
         }
-        /* Files/View/logo + right-side actions: kept as their own nowrap row so
-           .toolbar-actions (Settings/theme/sync/download/share) never wraps onto
-           a separate line — only #presetsGroup (a .toolbar-row sibling, below)
-           is allowed to drop to its own line. */
+        /* .toolbar-topline is nowrap so .toolbar-actions never wraps; only #presetsGroup may drop to its own line. */
         .toolbar-topline {
             display: flex;
             flex-wrap: nowrap;
@@ -1098,19 +1048,12 @@
             gap: 4px;
             flex: 0 0 auto;
         }
-        /* Settings button shows "Settings <chevron>"; swapped for a lone
-           tune (sliders) icon below 1500px alongside the rest of .group-label. */
+        /* Settings button: "Settings <chevron>", or a lone tune icon below 1500px. */
         .settings-toggle-icon { display: none; }
         .settings-toggle-text { display: inline-flex; align-items: center; gap: 4px; }
         #settingsRow { display: none; }
         html[data-settings-open] #settingsRow { display: contents; }
-        /* Flatten the Axes/QC/Phases/Profiles .toolbar-groups into .toolbar-row's
-           flex layout (rather than each group wrapping as one rigid block) so
-           individual controls — the X/Y/Colour selects, Invert Y, Order, Size,
-           Quality, the QC chips, etc. — each wrap on their own and pack the
-           available width efficiently, right alongside the preset chips. Group
-           labels/dividers ride along as ordinary flex items, still marking
-           where one group ends and the next begins. */
+        /* Flatten the settings groups into .toolbar-row's flex layout so each control wraps on its own. */
         #settingsRow .toolbar-group { display: contents; }
         .toolbar-group {
             display: flex;
@@ -1118,30 +1061,16 @@
             gap: 6px;
             padding: 0 6px;
         }
-        /* Presets is a direct .toolbar-row child (not nested in .toolbar-main)
-           so it isn't pinched by .toolbar-actions' width once it wraps below
-           .toolbar-topline (which is width:100%, so it always claims its own
-           line first). Like the Settings groups, #presetsGroup and #presetContainer
-           are flattened (display:contents) so each preset chip becomes a direct
-           .toolbar-row flex item — if left as its own nested flex-wrap box,
-           #presetContainer only gets whatever narrow width is left over on its
-           line, so it wraps chips (e.g. PAR) inside that cramped box instead of
-           using the rest of the row. Flattened, chips wrap using the full row
-           width, alongside the Settings groups when open. */
+        /* #presetsGroup/#presetContainer are display:contents so each chip is a direct .toolbar-row flex item and wraps using the full row width. */
         #presetsGroup, #presetContainer { display: contents; }
-        /* Below 1500px: drop the per-group labels ("Files", "Axes", ...) and
-           their (i) tooltips — pure clutter at that width, controls still
-           work the same — and collapse the Settings button to a lone tune
-           (sliders) icon instead of the word. Sizing is unchanged either way. */
+        /* Below 1500px: drop group labels and (i) tooltips; Settings collapses to an icon. */
         @media (max-width: 1500px) {
             .group-label { display: none; }
             .settings-toggle-icon { display: inline-flex; }
             .settings-toggle-text { display: none; }
         }
 
-        /* ---------- Jelly: a small notification icon that lives in the toolbar
-           next to Settings, hidden until there's something to show (a new
-           release, or Copernicus setup help). ---------- */
+        /* ---------- Jelly: toolbar notification icon, hidden until there's something to show ---------- */
         #jellyBubble { position: relative; }
         #jelly-icon { display: block; }
         :root[data-theme="dark"] #jelly-icon { filter: invert(1); }
@@ -1168,9 +1097,7 @@
             box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
         }
 
-        /* Each notification renders as a small icon+title+body card — not a chat
-           bubble, since Jelly only ever has two things to say: an update is
-           available, or Copernicus overlays need setup. */
+        /* Each notification is a small icon+body card. */
         .jelly-card {
             display: flex;
             gap: 10px;
@@ -1286,7 +1213,7 @@
                 <!-- Logo -->
                 <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
                      title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
-                    <img src="/static/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
+                    <img src="/static/icons/logo_with_text.png" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
                          style="height:30px;width:auto;">
                 </div>
 
@@ -1344,7 +1271,7 @@
                             </button>
                         </div>
                         <div class="files-panel-credit">
-                            <img src="/static/noc_logo_square.svg" alt="National Oceanography Centre" class="w-4 h-4 shrink-0">
+                            <img src="/static/icons/noc_logo_square.svg" alt="National Oceanography Centre" class="w-4 h-4 shrink-0">
                             <span>© National Oceanography Centre · Developed by Orlando Prugel-Bennett</span>
                         </div>
                     </div>
@@ -1352,9 +1279,7 @@
 
                 <div class="group-divider"></div>
 
-                <!-- View layout selector: each is a fresh start (clears filters, zoom,
-                     overlays, chat) that swaps the whole-page layout. Distinct from the
-                     plot presets below. "Classic" is the default single-plot view. -->
+                <!-- View layout selector: each is a fresh start that swaps the whole-page layout. Distinct from the plot presets below. -->
                 <div class="toolbar-group">
                     <span class="group-label" data-tip="Switch the layout.">
                         View
@@ -1373,16 +1298,12 @@
 
             </div>
 
-            <!-- Right-side actions: always shown, never hidden — a button that
-                 doesn't currently apply is disabled (greyed via .toggle-btn:disabled)
-                 rather than removed, so the bar's shape never changes. -->
+            <!-- Right-side actions: never hidden, only disabled, so the bar's shape never changes. -->
             <div class="toolbar-group toolbar-actions">
-                <!-- Jelly: a quiet notification icon, hidden until there's something to
-                     show (a new release, or Copernicus setup help). Clicking it opens
-                     the notifications panel anchored beneath it. -->
+                <!-- Jelly: notification icon, hidden until there's something to show. -->
                 <div id="jellyBubble" class="hidden">
                     <button id="jellyToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Update available" aria-label="Update available">
-                        <img id="jelly-icon" src="/static/jelly-icon.png" width="18" height="18" alt="Jelly">
+                        <img id="jelly-icon" src="/static/icons/jelly-icon.png" width="18" height="18" alt="Jelly">
                     </button>
                     <div id="jellyPanel" class="w-72 max-w-[95vw] flex-col hidden">
                         <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--border);">
@@ -1416,14 +1337,7 @@
             </div>
             </div>
 
-            <!-- Presets: kept OUT of .toolbar-topline so its wrapped-onto-its-own-row
-                 width isn't pinched by .toolbar-actions' width — .toolbar-actions
-                 only sits beside line 1, but a nested flex box reserves that width
-                 on every internal line, including this one. .toolbar-topline (Files/
-                 View/logo + actions) is itself a nowrap row so Settings/Download etc.
-                 never wrap away from each other; as a direct .toolbar-row child
-                 (basis 100%) Presets only wraps beneath .toolbar-topline once it's
-                 claimed line 1, then gets the row's full width to itself. -->
+            <!-- Presets: kept OUT of .toolbar-topline so its wrapped row gets the full width (see CSS). -->
             <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
                 <span class="group-label shrink-0" data-tip="Select your view, or make custom plots in Settings.">
                     Presets
@@ -1432,13 +1346,7 @@
                 <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
             </div>
 
-            <!-- Settings: Axes / QC / Phases / Profiles. #settingsRow itself is
-                 display:contents when open (see CSS, keyed off data-settings-open
-                 on <html>) so its groups become items of the same wrapping flex
-                 row as Presets above, instead of a separate boxed row — nothing
-                 inside needs its own show/hide class. Phases and Profiles
-                 additionally hide themselves (inline style, via CycleProfile.init
-                 in cycle_profile.js) when the loaded file has no SCI_PHASE / cycle data. -->
+            <!-- Settings: Axes / QC / Phases / Profiles. #settingsRow is display:contents when open (see CSS). Phases/Profiles also hide themselves via CycleProfile.init when the file has no SCI_PHASE / cycle data. -->
             <div id="settingsRow">
             <!-- Axes: presets drive variables by default, this is the manual override -->
             <div class="toolbar-group">
@@ -1493,7 +1401,7 @@
                 </div>
                 <!-- Colour palette picker -->
                 <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-googleBlue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
+                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-blue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false"></button>
                     <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
                 </div>
                 <input type="hidden" id="cmap" value="thermal">
@@ -1525,8 +1433,7 @@
                 <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
             </div>
 
-            <!-- Profiles navigation (JS-conditional: hidden when the file has no
-                 profile/cycle data). Direction rides alongside. -->
+            <!-- Profiles navigation (hidden by JS when the file has no profile/cycle data). -->
             <div id="navigateDivider" class="group-divider" style="display: none;"></div>
             <div id="navigateContainer" class="toolbar-group" style="display: none;">
                 <span class="group-label" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle.">
@@ -1543,7 +1450,7 @@
                         <span class="material-symbols-outlined text-[14px]">chevron_right</span>
                     </button>
                     <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
-                    <button id="profileClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
+                    <button id="profileClearBtn" class="text-gray-400 hover:text-red px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
                         <span class="material-symbols-outlined text-[13px]">close</span>
                     </button>
                 </div>
@@ -1557,7 +1464,7 @@
                     <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
                         <span class="material-symbols-outlined text-[14px]">chevron_right</span>
                     </button>
-                    <button id="cycleClearBtn" class="text-gray-400 hover:text-googleRed px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
+                    <button id="cycleClearBtn" class="text-gray-400 hover:text-red px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
                         <span class="material-symbols-outlined text-[13px]">close</span>
                     </button>
                 </div>
@@ -1578,10 +1485,7 @@
         </div>
     </nav>
     <script>
-        // The head script already set data-settings-open on <html> (before
-        // <body> parsed) so #settingsRow is correctly shown/hidden from first
-        // paint. This just syncs the toggle button's own icon/active look to
-        // match, now that it exists in the DOM.
+        // The head script already set data-settings-open; this just syncs the toggle button's look.
         (function() {
             if (document.documentElement.hasAttribute('data-settings-open')) {
                 const icon = document.getElementById('settingsToggleIcon');
@@ -1598,20 +1502,18 @@
         <div id="inspectorContainer" class="hidden flex flex-col gap-2 p-3 rounded-lg" style="position: fixed; bottom: 14px; left: 14px; z-index: 45; width: 184px; background: var(--bg-panel); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,0.25);">
             <div class="flex justify-between items-center pb-1">
                 <div class="flex items-center gap-1">
-                    <span class="text-[9px] font-bold text-googleBlue uppercase tracking-wider">Inspector</span>
+                    <span class="text-[9px] font-bold text-blue uppercase tracking-wider">Inspector</span>
                 </div>
                 <button id="resetInspectorBtn" class="text-[9px] bg-white hover:bg-gray-50 px-1.5 py-0.5 text-gray-600 hidden rounded border-none">Reset</button>
             </div>
             <div class="grid grid-cols-2 gap-x-2 gap-y-1">
                 <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hxLabel">X Value</span><span id="hxVal" class="font-medium text-gray-800 truncate transition-opacity">--</span></div>
-                <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hyLabel">Y Value</span><span id="hyVal" class="font-bold text-googleBlue truncate transition-opacity">--</span></div>
+                <div class="flex flex-col text-[10px]"><span class="text-gray-500 font-medium truncate" id="hyLabel">Y Value</span><span id="hyVal" class="font-bold text-blue truncate transition-opacity">--</span></div>
                 <div class="flex flex-col text-[10px] hidden" id="hcContainer"><span class="text-gray-500 font-medium truncate" id="hcLabel">C Value</span><span id="hcVal" class="font-medium transition-opacity">--</span></div>
             </div>
         </div>
 
-        <!-- Hidden home for panelisable singletons + retained-but-unshown stats.
-             IDs are preserved so all existing population/stats code keeps working;
-             elements are moved into a panel body when added and returned here. -->
+        <!-- Hidden home for panelisable singletons. IDs are preserved; elements move into a panel body when added and return here. -->
         <div id="panelStash" style="display:none;">
             <div id="statsEmptyState"></div>
             <div id="datasetInfoContainer" class="flex flex-col hidden w-full overflow-hidden h-full">
@@ -1619,8 +1521,7 @@
             </div>
             <span id="mapEmptyText" class="text-[10px] absolute text-center px-4" style="color: var(--text-muted);">Load data to see map</span>
             <iframe id="gliderMap" src="" class="w-full h-full border-none"></iframe>
-            <!-- Second globe, used only by the Duo view (an independent map_view so it
-                 can carry a different Copernicus overlay than the primary globe). -->
+            <!-- Second globe, used only by the Duo view. -->
             <iframe id="gliderMap2" src="" class="w-full h-full border-none"></iframe>
             <iframe id="iframe3D" src="/static/3d_view.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
             <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
@@ -1717,8 +1618,7 @@
         const view3DContainer = document.getElementById('view3DContainer');
         const plotStatsContainer = document.getElementById('plotStatsContainer');
 
-        // Most recent full-dataset stats, kept so we can restore the card when the
-        // user zooms back out after the count was swapped to "Points in view".
+        // Most recent full-dataset stats, restored when the user zooms back out.
         let lastPlotStats = null;
 
         function renderPlotStats(stats) {
@@ -1726,7 +1626,7 @@
             lastPlotStats = stats;
             plotStatsContainer.classList.remove('hidden');
             plotStatsContainer.classList.add('flex');
-            let html = `<div class="flex justify-between font-medium"><span id="plottedPointsLabel">Plotted Points:</span> <span id="plottedPointsValue" class="text-googleBlue font-bold">${stats.valid.toLocaleString()}</span></div>`;
+            let html = `<div class="flex justify-between font-medium"><span id="plottedPointsLabel">Plotted Points:</span> <span id="plottedPointsValue" class="text-blue font-bold">${stats.valid.toLocaleString()}</span></div>`;
             if (stats.qc_removed > 0 || stats.time_removed > 0 || stats.profile_removed > 0) {
                 html += `<div id="statsBreakdown"><div class="border-t border-gray-100 my-0.5"></div>`;
                 if (stats.qc_removed > 0) html += `<div class="flex justify-between text-gray-500"><span>Failed QC:</span> <span>${stats.qc_removed.toLocaleString()}</span></div>`;
@@ -1737,8 +1637,7 @@
             plotStatsContainer.innerHTML = html;
         }
 
-        // Swap the count to reflect the points within the current zoom window. The
-        // full-dataset removal breakdown no longer applies to the view, so hide it.
+        // Swap the count to the points within the current zoom window; hide the removal breakdown.
         function setInViewCount(n) {
             const valEl = document.getElementById('plottedPointsValue');
             const labelEl = document.getElementById('plottedPointsLabel');
@@ -1752,10 +1651,7 @@
         const profileSidebarBtn = document.getElementById('profileSidebarBtn');
         const drawOrderSelect = document.getElementById('drawOrder');
         const drawOrderSizeSelect = document.getElementById('drawOrderSize');
-        // Marker size defaults to 'large', except for the 'largest'/'smallest'/'outliers'
-        // draw orders (used by presets like Backscatter/Chlorophyll/PAR to surface
-        // outliers), where 'med' keeps the surfaced points from overwhelming the rest
-        // of the trace.
+        // Marker size defaults to 'large', except 'med' for the largest/smallest/outliers draw orders.
         const defaultDrawOrderSize = (drawOrder) => (drawOrder === 'largest' || drawOrder === 'smallest' || drawOrder === 'outliers') ? 'med' : 'large';
         const qualitySelect = document.getElementById('quality');
         
@@ -1772,11 +1668,7 @@
         ];
         const QC_DEFAULT_FLAGS = '0,1,2,5,8';
 
-        // Rows shown in the QC info-dot's hover tooltip — one line per flag,
-        // instead of a wall of paragraph text. Flags 6/7 (unused) and 9
-        // (missing — already excluded/nulled before it ever reaches a plot)
-        // aren't shown here since they never appear as a live chip choice a
-        // user needs explained.
+        // Rows for the QC info-dot tooltip. Flags 6/7/9 never appear as a chip, so are omitted.
         const QC_TIP_ROWS = [
             [0, 'No QC', 'No quality control has been performed'],
             [1, 'Good', 'Passed all QC checks'],
@@ -1854,10 +1746,8 @@
         
         const datasetSelect = document.getElementById('dataset');
         const viewSelector = document.getElementById('viewSelector');
-        // `plotIframe` always points at the ACTIVE panel's plot iframe. It is
-        // reassigned by setActive() so the large body of existing single-plot
-        // logic (colour trim, jelly, download, zoom relay) transparently acts
-        // on whichever panel is highlighted.
+        // `plotIframe` always points at the ACTIVE panel's plot iframe (reassigned by setActive()),
+        // so single-plot logic acts on whichever panel is highlighted.
         let plotIframe = null;
         const plotAreaWrapper = document.getElementById('plotAreaWrapper');
         const panelHost = document.getElementById('panelHost');
@@ -1877,12 +1767,12 @@
         const gliderMap = document.getElementById('gliderMap');
         const cmapTrigger = document.getElementById('cmapTrigger'), cmapMenu = document.getElementById('cmapMenu');
 
-        // Palettes live in static/plot_presets.json (served as /api/plot_presets.js).
+        // Palettes live in glider_playground/plot_presets.json (served as /api/plot_presets.js).
         const cmoceanPalettes = (window.GP_PLOT_PRESETS || {}).palettes || {};
 
         (function buildCmapMenu() {
             const menu = document.getElementById('cmapMenu');
-            const btnClass = 'cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-googleBlue';
+            const btnClass = 'cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-blue';
             const addBtn = (val, bg, title) => {
                 const b = document.createElement('button');
                 b.className = btnClass;
@@ -1934,15 +1824,9 @@
         const cTrimMinInput = document.getElementById('cTrimMinInput'), cTrimMaxInput = document.getElementById('cTrimMaxInput');
         const cTrimLabel = document.getElementById('cTrimLabel');
 
-        // Show the active plot's colour (Z) variable above the bar, shrinking the
-        // font so even long names fit the bar's fixed width without widening it.
-        // Show/hide the colour-trim rail. The rail's column is always reserved
-        // (so the plot never shifts); `active=false` just dims it to a placeholder.
+        // Show/hide the colour-trim rail. Its column is always reserved; `active=false` just dims it.
         function setColourRail(active) {
-            // Fully hide the rail only when there's nothing to colour at all (Map
-            // view, or every plot closed) — it makes no sense then. Whenever any
-            // plot panel exists we keep it mounted and just grey it out via
-            // cTrim-inactive, so it never flickers in/out while a plot loads.
+            // Fully hide only when there's nothing to colour (Map view / no plots); otherwise just grey it out.
             const hasPlot = hasPanelType('plot');
             cTrimContainer.classList.toggle('hidden', !hasPlot);
             cTrimContainer.classList.toggle('flex', hasPlot);
@@ -1965,8 +1849,7 @@
         let trimTimeout;
         let currentMapDataset = "";
         let currentZoomBounds = null;
-        // DAC (depth-averaged current) arrow state, mirrored from the map iframe
-        // so Jelly knows whether currents exist for this file and if they're shown.
+        // DAC arrow state, mirrored from the map iframe.
         let currentDacStatus = { available: false, shown: false };
 
         let baseCMin = null, baseCMax = null;
@@ -1978,9 +1861,7 @@
 
         let isDraggingCTop = false, isDraggingCBottom = false;
 
-        // ============================================================
-        //  Dashboard panel / split-layout engine
-        // ============================================================
+        // ── Dashboard panel / split-layout engine ──
         const MAX_PANELS = 9;
         const panels = {};          // id -> { id, type, state, el, iframe }
         let layoutTree = null;      // BSP tree: leaf {leaf:true,panelId} | split {dir,ratio,a,b}
@@ -1990,24 +1871,18 @@
         let _suspendToolbar = false; // guard: writing widgets from state must not fire updatePlot
         let _highlightTimer = null;
         let _pendingGlobeFit = false; // ask the globe to fit-to-track once it reloads (Map preset)
-        // Which built-in layout is currently shown ('default'|'map'|'dashboard'),
-        // and the orientation it was built for. Cleared to null the moment the
-        // user hand-edits the layout, so the orientation reflow below only ever
-        // re-flows the untouched preset layouts — never a custom dashboard.
+        // Which built-in layout is shown, and its orientation. Null once the user hand-edits the layout,
+        // so the orientation reflow never touches a custom dashboard.
         let _viewKind = null;
         let _layoutPortrait = null;
         function markCustomLayout() { _viewKind = null; }
 
-        // Panel type catalogue. Singletons host an existing DOM element (kept in
-        // #panelStash) so all their population code keeps working by id.
+        // Panel type catalogue. Singletons host an existing DOM element kept in #panelStash.
         const PANEL_DEFS = {
             plot:  { label: 'Plot',       icon: 'show_chart',    singleton: false },
-            // `multi`: more than one allowed. The first globe hosts the stashed
-            // gliderMap (keeps all its dataset/DAC bookkeeping working); extra globes
-            // added via the panel "+" get their own iframe. 3D stays a hard singleton.
+            // `multi`: the first globe hosts the stashed gliderMap; extras get their own iframe. 3D is a hard singleton.
             map:   { label: 'Globe',      icon: 'public',        singleton: true, multi: true, stashId: 'gliderMap', isFrame: true },
-            // Second globe — only assembled by the Duo view, hidden from the add menu
-            // so users don't see two "Globe" entries.
+            // Second globe: only assembled by the Duo view, hidden from the add menu.
             map2:  { label: 'Globe',      icon: 'public',        singleton: true, stashId: 'gliderMap2', isFrame: true, hidden: true },
             '3d':  { label: '3D View',    icon: 'deployed_code', singleton: true, stashId: 'iframe3D',  isFrame: true },
             vars:  { label: 'Variables',  icon: 'table_rows',    singleton: true, stashId: 'varList',   isFrame: false },
@@ -2022,28 +1897,17 @@
         const genPanelId = () => 'panel' + (_nextPanelId++);
 
         // ---- Time-axis alignment ----
-        // When on, zooming/panning the time (x) axis of any timeseries plot drives
-        // the same x-range onto every other open timeseries plot. The "master" is
-        // simply whichever plot was last zoomed, so it follows the active plot.
-        // Defaults on so the dashboard's thermal/chlorophyll/oxygen tiles stay in
-        // step out of the box.
+        // When on, zooming the time axis of any timeseries plot drives every other one. Master = last zoomed plot.
         const ALIGN_KEY = 'gp_align_time';
         let alignTimeAxes = (() => { try { return localStorage.getItem(ALIGN_KEY) !== 'false'; } catch (_) { return true; } })();
         let alignMasterId = null;
-        // True only when a real user zoom is in effect (not an alignment-driven or
-        // union "reset" range). Lets newly-loaded plots tell "follow the active
-        // zoom" apart from "re-fit everything to the union time range".
+        // True only when a real user zoom is in effect (not an alignment-driven or union range).
         let _userZoomActive = false;
-        // Sync-driven zooms are distinguished from genuine user zooms by the iframe's
-        // `driven: true` flag on its plotZoomed echo (a driven relayout is suppressed
-        // from the plot's own relayout handler, so it never masquerades as a user
-        // zoom). The parent filters those echoes before maybeAlign, which is what
-        // stops synced plots from re-propagating each other in an endless loop.
+        // Sync-driven zooms carry `driven: true` on their plotZoomed echo; the parent filters those
+        // before maybeAlign, which stops synced plots re-propagating each other forever.
 
-        // True while a multi-plot view (e.g. Dashboard) is loading its panels in a
-        // staggered queue. Alignment drives are suppressed until it clears, so the
-        // dozen plots don't re-render each other into a refresh cascade (which also
-        // spikes the browser's WebGL-context count past its cap).
+        // True while a multi-plot view loads its panels; alignment is suppressed until it clears
+        // (avoids a refresh cascade and blowing the WebGL-context cap).
         let _bulkLoading = false;
         let _bulkLoadTimer = null;
 
@@ -2060,14 +1924,12 @@
         function timeseriesPanels() {
             return Object.values(panels).filter(isTimeseriesPanel);
         }
-        // The live x-range of a panel (the active plot's lives in currentZoomBounds;
-        // background panels keep theirs in state.zoomBounds). null = full / no zoom.
+        // A panel's live x-range (active plot: currentZoomBounds; others: state.zoomBounds). null = no zoom.
         function panelXRange(p) {
             const zb = (p.id === activePlotPanelId) ? currentZoomBounds : (p.state && p.state.zoomBounds);
             return (zb && zb.xMin !== undefined && zb.xMin !== null) ? { xMin: zb.xMin, xMax: zb.xMax } : null;
         }
-        // The y variable a panel plots (e.g. DEPTH). Plots sharing a y var should
-        // zoom together vertically, so a depth window matches across them.
+        // The y variable a panel plots; plots sharing it zoom together vertically.
         function panelYVar(p) { return (p && p.state && p.state.y) || null; }
         // The live y-range of a panel, when it carries a real y zoom. null = y auto.
         function panelYRange(p) {
@@ -2075,15 +1937,8 @@
             return (zb && typeof zb.yMin === 'number' && typeof zb.yMax === 'number') ? { yMin: zb.yMin, yMax: zb.yMax } : null;
         }
 
-        // A profile / cycle / phase / direction change is a DATA filter (applied
-        // server-side by PROFILE_NUMBER / cycle var, see plot_logic.py), not a
-        // time-axis alignment concern — it must reach every plot panel regardless
-        // of that panel's x variable or the Sync-time-axes toggle. Previously this
-        // only propagated to timeseries panels when alignTimeAxes was on, so a
-        // non-time panel (e.g. a T-S plot) in a multiview kept showing unfiltered
-        // data, and turning Sync off silently stopped stepping working at all. The
-        // active plot is already re-rendered by updatePlot(); here we push the same
-        // cycle/profile params onto the rest (each keeps its own x/y/c variables).
+        // A profile/cycle/phase/direction change is a server-side DATA filter, so it must reach every plot
+        // panel regardless of its x variable or the Sync toggle. updatePlot() handles the active plot.
         function propagateCycleProfileToSynced() {
             if (_suspendToolbar) return;
             const cp = (CycleProfile.getParams && CycleProfile.getParams()) || {};
@@ -2098,12 +1953,8 @@
             scheduleSaveLayout();
         }
 
-        // Drive a set of timeseries plots to an explicit x (time) range. When a
-        // master y var + y range are given, plots plotting that SAME y variable
-        // (e.g. Depth) also receive the y range, so a depth window matches across
-        // them; plots with a different y var get only x (y stays autoranged). The
-        // targets' echoed plotZoomed events are flagged so they don't re-trigger
-        // alignment.
+        // Drive timeseries plots to an explicit x range; plots sharing the master's y var also get the y range.
+        // Echoed plotZoomed events are flagged so they don't re-trigger alignment.
         function driveAlignX(targets, xRange, masterYVar, yRange) {
             targets.forEach(p => {
                 if (!p.iframe || !p.iframe.contentWindow) return;
@@ -2115,17 +1966,14 @@
             });
         }
 
-        // Push `xRange` from `master` onto every other timeseries plot. A null
-        // xRange means "reset" — in sync mode the reset target is the union range
-        // (total time across all plots), not each plot's own extent.
+        // Push `xRange` from `master` onto every other timeseries plot. null = reset to the union range.
         function propagateAlignment(master, xRange, yRange) {
             if (!xRange) { applyUnionRange(); return; }
             driveAlignX(timeseriesPanels().filter(p => !master || p.id !== master.id),
                         xRange, panelYVar(master), yRange);
         }
 
-        // The union of every loaded timeseries plot's full time extent — earliest
-        // start to latest end. Returns null until at least one extent is known.
+        // Union of every loaded timeseries plot's time extent; null until one is known.
         function unionTimeRange() {
             let lo = Infinity, hi = -Infinity;
             timeseriesPanels().forEach(p => {
@@ -2139,10 +1987,7 @@
             return { xMin: lo - pad, xMax: hi + pad };
         }
 
-        // Apply the union (total-time) range to every timeseries plot. This is the
-        // synced "reset" / on-load state so a plot covering only part of the record
-        // (e.g. chlorophyll for the first month) lines up under the full timeline.
-        // Debounced so a dashboard's burst of plot loads collapses into one apply.
+        // Apply the union range to every timeseries plot (the synced reset/on-load state). Debounced.
         let _unionTimer = null;
         function applyUnionRange() {
             clearTimeout(_unionTimer);
@@ -2154,10 +1999,8 @@
             }, 60);
         }
 
-        // The x range of the current real user zoom, if any — the master's,
-        // falling back to the active plot's. null when in the reset/union state
-        // (union-driven ranges must NOT count, or new plots would lock to them).
-        // Returns { master, xRange, yRange } for the active zoom, or null.
+        // Returns { master, xRange, yRange } for the current real user zoom, or null.
+        // Union-driven ranges must NOT count, or new plots would lock to them.
         function activeAlignRange() {
             if (!_userZoomActive) return null;
             const cand = [];
@@ -2168,9 +2011,7 @@
             return null;
         }
 
-        // A plot just finished loading. With sync on, fit it to the others: to the
-        // active zoom if one is in effect, otherwise re-apply the union so the new
-        // plot widens/joins the shared timeline.
+        // A plot just loaded: with sync on, fit it to the active zoom, else re-apply the union.
         function syncOnPlotLoad(panel) {
             if (_bulkLoading) return;   // wait until the staggered batch has settled
             if (!alignTimeAxes || !isTimeseriesPanel(panel)) return;
@@ -2180,9 +2021,7 @@
             else applyUnionRange();
         }
 
-        // A real (user) zoom on a timeseries plot: it becomes the master and drives
-        // the others. Only called for genuine user zooms — the caller has already
-        // filtered out our own `driven` alignment echoes, so there's no feedback loop.
+        // A real user zoom: this plot becomes the master. The caller has already filtered `driven` echoes.
         function maybeAlign(srcPanel, limits) {
             if (_bulkLoading) return;   // ignore load-time zoom echoes during a staggered batch
             if (!alignTimeAxes || !isTimeseriesPanel(srcPanel)) return;
@@ -2195,15 +2034,11 @@
             propagateAlignment(srcPanel, xRange, yRange);
         }
 
-        // Toggle alignment from the toolbar's Sync button. On → align to the active
-        // zoom if there is one, else snap all plots to the union (total) time range.
-        // Off → reset every plot to span only its own time extent.
+        // Sync button. On: align to the active zoom, else the union range. Off: each plot spans its own extent.
         function toggleAlign() {
             alignTimeAxes = !alignTimeAxes;
             try { localStorage.setItem(ALIGN_KEY, alignTimeAxes ? 'true' : 'false'); } catch (_) {}
             if (alignTimeAxes) {
-                // Turning sync on: honour a real zoom on the active plot if present,
-                // otherwise snap everything to the union (total) time range.
                 const ap = activePlotPanel();
                 const r = isTimeseriesPanel(ap) ? panelXRange(ap) : null;
                 if (r) { alignMasterId = ap.id; _userZoomActive = true; driveAlignX(timeseriesPanels(), r, panelYVar(ap), panelYRange(ap)); }
@@ -2222,15 +2057,8 @@
             refreshAlignButtons();
         }
 
-        // Enable the toolbar Sync button only when there are at least two
-        // timeseries plots to align (otherwise it stays visible but greyed
-        // out); its active state mirrors the global alignment toggle.
-        // During layout restore, each panel's iframe reports back (plotLoaded)
-        // as a separate async message, so this can be called several times in
-        // quick succession with the panel set still settling. Coalescing the
-        // actual DOM write onto the next frame means only the final state for
-        // that burst ever paints, instead of the button visibly flickering
-        // through each intermediate call.
+        // Enable the Sync button only with 2+ timeseries plots. The DOM write is coalesced onto the next
+        // frame so a burst of plotLoaded messages doesn't flicker the button.
         let _alignBtnRaf = null;
         function refreshAlignButtons() {
             if (_alignBtnRaf !== null) return;
@@ -2245,13 +2073,10 @@
         }
         const hasPanelType = (type) => Object.values(panels).some(p => p.type === type);
 
-        // Count of plot panels currently on screen. Two or more = "multiview", which
-        // is when each plot gets its own compact left-hand colour bar (rendered
-        // inside main_plot.html). A lone plot keeps the single big colour rail only.
+        // Count of plot panels. Two or more = "multiview": each plot gets its own compact colour bar.
         const plotPanelCount = () => Object.values(panels).filter(p => p.type === 'plot').length;
 
-        // Tell every plot iframe whether it's in multiview, so each can show/hide its
-        // own compact colour bar without a full reload when panels are added/removed.
+        // Tell every plot iframe whether it's in multiview.
         function broadcastMultiview() {
             const multi = plotPanelCount() > 1;
             Object.values(panels).forEach(p => {
@@ -2265,8 +2090,7 @@
             return Object.values(panels).find(p => p.iframe && p.iframe.contentWindow === win) || null;
         }
 
-        // Snapshot of every per-panel plot control. Read from the live toolbar
-        // (which always reflects the active panel) or built directly for new panels.
+        // Snapshot of every per-panel plot control, from the live toolbar or built for new panels.
         function captureToolbarState() {
             return {
                 datasetId: datasetSelect.value || '',
@@ -2287,8 +2111,7 @@
             };
         }
 
-        // Push a panel's stored state back into the toolbar widgets, without
-        // firing the change handlers (guarded by _suspendToolbar).
+        // Push a panel's stored state into the toolbar without firing change handlers (_suspendToolbar).
         function applyToolbarState(s) {
             if (!s) return;
             _suspendToolbar = true;
@@ -2308,12 +2131,7 @@
                 updatePresetUI();
                 baseCMin = (s.cMin === undefined ? null : s.cMin);
                 baseCMax = (s.cMax === undefined ? null : s.cMax);
-                // Restore this panel's colour-trim slider — but only if the saved
-                // trim is sane for THIS panel's colour range. A new panel can
-                // inherit the previously-active plot's trim values (a different
-                // variable entirely), which would otherwise show nonsense numbers
-                // until the user nudges the slider. When invalid, fall back to the
-                // full range.
+                // Restore the colour trim only if it's sane for THIS panel's range; otherwise use the full range.
                 const tmin = parseFloat(s.cTrimMin), tmax = parseFloat(s.cTrimMax);
                 const rng = (baseCMin !== null && baseCMax !== null) ? (baseCMax - baseCMin) : 0;
                 const eps = Math.abs(rng) * 1e-6;
@@ -2352,11 +2170,8 @@
             return params;
         }
 
-        // Absolute timestamp (gpNow / shared epoch-ms clock) of the user action that
-        // kicked off the current (re)plot — set at the start of updatePlot and read
-        // by renderPanel so the plot iframe can measure the full click->painted time.
-        // For multiview every panel in the same burst shares this one click time, so
-        // each panel's timing reveals how long it waited before its iframe started.
+        // gpNow timestamp of the user action that kicked off the current (re)plot; renderPanel forwards it
+        // to the iframe for click->painted timing.
         let _interactionTs = 0;
 
         // (Re)load / refresh a panel from its state, dispatched by type.
@@ -2367,39 +2182,23 @@
                 if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; panel._frameReady = false; return; }
                 panel.iframe.classList.remove('hidden');
                 const multiview = plotPanelCount() > 1 ? 1 : 0;
-                // Hand the iframe the click time (_gpt0) and this src-set time (_gpt1)
-                // so it can attribute parent dispatch + browser navigation/parse. Use
-                // the recorded click only when it's fresh (a real action <2s ago),
-                // else fall back to now so a stray reload doesn't show a huge delay.
+                // Pass click time (_gpt0) and src-set time (_gpt1); use the click only if fresh (<2s), else now.
                 const tSrc = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
                 const t0 = (_interactionTs && tSrc - _interactionTs < 2000) ? _interactionTs : tSrc;
-                // Shared point budget: split a fixed total across the open plot panels so
-                // the combined draw work — and thus wall-clock, since same-origin iframes
-                // draw serially on one main thread — stays ~constant no matter how many
-                // plots are open. One plot gets the full server cap (classic unchanged);
-                // N plots get cap/N each. The server's stride downsample still spans the
-                // full record, so the extent (incl. endpoints) is preserved.
                 const nPlots = plotPanelCount();
-                // Auto point budget: 100k looks good locally; the Pi can't draw/ship
-                // much over 60k without feeling slow, so it gets a smaller default.
+                // Auto point budget: smaller on the Pi, which can't draw/ship much over 60k.
                 const POINT_BUDGET = isServerMode ? 60000 : 100000;
                 let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
-                // The point budget — Auto's mode default or the Advanced "Quality" choice
-                // — is split across the open plot panels so the combined draw work (and
-                // thus wall-clock, since same-origin iframes draw serially on one main
-                // thread) stays ~constant no matter how many plots are open. 'full' is the
-                // exception: it sends a sentinel larger than any dataset so the server
-                // skips decimation entirely, per panel.
+                // The budget is split across open plot panels (same-origin iframes draw serially on one thread).
+                // 'full' sends a sentinel so the server skips decimation.
                 if (s.quality === 'full') {
                     params += `&max_points=100000000`;
                 } else {
                     const budget = s.quality ? Number(s.quality) : POINT_BUDGET;
                     params += `&max_points=${Math.max(1, Math.round(budget / nPlots))}`;
                 }
-                // Warm reuse: once this iframe has loaded once, re-drive it in place with
-                // a 'replot' message (→ Plotly.react, reusing the WebGL context) instead
-                // of a full src navigation. _frameReady flips true on the first
-                // plotLoaded and back to false whenever the frame is blanked/reloaded.
+                // Warm reuse: once loaded, re-drive the iframe with a 'replot' message instead of a src navigation.
+                // _frameReady is true after the first plotLoaded, false whenever the frame is blanked.
                 if (panel._frameReady && panel.iframe.contentWindow) {
                     panel.iframe.contentWindow.postMessage({ type: 'replot', params, gpt0: t0, gpt1: tSrc }, '*');
                 } else {
@@ -2421,10 +2220,8 @@
         // Back-compat alias used by older call sites.
         const renderPlotPanel = renderPanel;
 
-        // Blank a plot iframe AND clear its warm-reuse flag, so the next render goes
-        // through a full (cold) src load instead of posting a 'replot' message into a
-        // now-about:blank frame (which would silently vanish). Use this everywhere a
-        // plot iframe's src is cleared directly (abort-in-flight, live placeholder, …).
+        // Blank a plot iframe AND clear its warm-reuse flag. Use this everywhere a plot iframe's src is
+        // cleared, or the next 'replot' vanishes into about:blank.
         function blankPlotFrame(iframeEl) {
             if (!iframeEl) return;
             const owner = Object.values(panels).find(p => p.iframe === iframeEl);
@@ -2432,9 +2229,7 @@
             iframeEl.src = '';
         }
 
-        // Does this panel currently have nothing to show? (no plot rendered, no
-        // map/3D loaded, or a data list with no file selected). Used to drive a
-        // per-panel placeholder so we never float a single overlay over siblings.
+        // Does this panel have nothing to show? Drives the per-panel placeholder.
         function isPanelEmpty(panel) {
             switch (panel.type) {
                 case 'plot':
@@ -2470,11 +2265,8 @@
             el.style.width = '100%'; el.style.height = '100%';
             if (!def.isFrame) { el.classList.add('flex'); el.style.display = 'flex'; }
             else { el.style.display = 'block'; }
-            // Re-parenting an iframe reloads it from its src. The primary globe's src
-            // only ever carries the id it was first loaded with (later glider swaps
-            // are in-place 'setActive' messages, see loadMapImage), so if the active
-            // file changed while the globe was stashed, point the src at the current
-            // file first — otherwise the move-triggered reload resurrects the old glider.
+            // Re-parenting an iframe reloads it from its src, which only carries the first-loaded id.
+            // Point it at the current file first, or the reload resurrects the old glider.
             if (def.stashId === 'gliderMap' && el.src && el.src.includes('map_view.html')) {
                 const want = datasetSelect.value;
                 let have = null;
@@ -2496,9 +2288,7 @@
             el.style.position = ''; el.style.inset = ''; el.style.width = ''; el.style.height = ''; el.style.display = '';
             if (!def.isFrame) el.classList.remove('flex');
             el.classList.add('hidden');
-            // The Duo view's second globe is the only frame that goes fully idle when
-            // stashed (the primary globe shows in every view). Blank it so it stops
-            // rendering; loadMap2Image reloads it next time Duo is built.
+            // Blank the Duo second globe when stashed; loadMap2Image reloads it.
             if (def.stashId === 'gliderMap2') el.src = '';
             document.getElementById('panelStash').appendChild(el);
             panel.hostedEl = null;
@@ -2517,9 +2307,7 @@
             body.className = 'gp-panel-body';
             el.appendChild(body);
 
-            // A `multi` frame singleton (the globe) hosts its stashed element for the
-            // first instance; once that element is in use, any further instance gets
-            // its own iframe so several globes can coexist.
+            // A `multi` singleton hosts the stashed element first; further instances get their own iframe.
             const stashEl = def.stashId ? document.getElementById(def.stashId) : null;
             const stashFree = stashEl ? document.getElementById('panelStash').contains(stashEl) : false;
             const useFreshFrame = !!(def.multi && def.isFrame && stashEl && !stashFree);
@@ -2532,8 +2320,7 @@
                 body.appendChild(iframe);
             }
 
-            // Resize placeholder: covers this panel's content (which doesn't reflow
-            // until the drag ends) so divider drags show a clean expanding tile.
+            // Resize placeholder covering this panel's content during divider drags.
             const veil = document.createElement('div');
             veil.className = 'gp-resize-veil';
             veil.innerHTML = `<span class="gp-resize-chip"><span class="material-symbols-outlined">${def.icon}</span>${def.label}</span>`;
@@ -2582,8 +2369,7 @@
             activePanelId = id;
             Object.values(panels).forEach(p => {
                 p.el.classList.toggle('active', p.id === id);
-                // Let each plot iframe know whether it's the active panel (drives
-                // the in-plot zoom-reset pill, shown on the active plot only).
+                // Tell each plot iframe whether it's active (drives the in-plot zoom-reset pill).
                 if (p.type === 'plot' && p.iframe && p.iframe.contentWindow) {
                     p.iframe.contentWindow.postMessage({ type: 'panelActive', active: p.id === id }, '*');
                 }
@@ -2600,8 +2386,7 @@
                     setColourRail(false);
                 }
             }
-            // Non-plot panels leave the toolbar pointed at the last active plot.
-            // With no plot panel anywhere, grey the colour rail — nothing drives it.
+            // Non-plot panels leave the toolbar on the last active plot; with no plots, grey the colour rail.
             if (!hasPanelType('plot')) setColourRail(false);
             updateAddButtons();
             refreshPanelPlaceholders();
@@ -2610,8 +2395,7 @@
             scheduleSaveLayout();
         }
 
-        // The active panel's highlight (border + edge buttons) fades after a few
-        // seconds of no interaction, then returns the moment the user interacts.
+        // The active panel's highlight fades after a few idle seconds and returns on interaction.
         function pokeHighlight() {
             clearTimeout(_highlightTimer);
             const a = activePanel();
@@ -2622,8 +2406,7 @@
             }, 5000);
         }
 
-        // Show the "+" buttons on the active panel only, disabled once at the
-        // cap; hide the close button when a single panel is left.
+        // "+" buttons on the active panel only (disabled at the cap); no close button on the last panel.
         function updateAddButtons() {
             const atCap = leafCount() >= MAX_PANELS;
             const single = leafCount() <= 1;
@@ -2634,8 +2417,7 @@
             });
         }
 
-        // Recursively walk the tree, assigning each leaf a rect (percent of host)
-        // and collecting divider descriptors for internal nodes.
+        // Walk the tree, assigning each leaf a rect (percent of host) and collecting divider descriptors.
         function computeRects(node, rect, rects, dividers) {
             if (!node) return;
             if (node.leaf) { rects[node.panelId] = rect; return; }
@@ -2655,8 +2437,7 @@
 
         let _dividers = [];   // current divider descriptors (parallel to .gp-divider els)
 
-        // Cheap geometry pass: reposition panels + existing dividers from the tree.
-        // No DOM creation, so it's fast enough to run every animation frame.
+        // Cheap geometry pass (no DOM creation), fast enough for every animation frame.
         function applyGeometry() {
             const rects = {}, dividers = [];
             computeRects(layoutTree, { x: 0, y: 0, w: 100, h: 100 }, rects, dividers);
@@ -2781,9 +2562,7 @@
             return p.x.some(isVal) && p.y.some(isVal) && p.c.some(isVal);
         }
 
-        // State for a freshly-added panel. New plots pick the next available
-        // preset not already on screen (so you don't get duplicates by default);
-        // singletons just need the current dataset.
+        // State for a new panel. New plots pick the next preset not already on screen.
         function makeNewState(type) {
             if (type !== 'plot') return { datasetId: datasetSelect.value || '' };
 
@@ -2843,9 +2622,8 @@
             } else {
                 renderLayout();
             }
-            // Keep the toolbar pointed at a valid plot if one still exists.
-            // If none remain, leave plotIframe pointing at the last (now-detached)
-            // iframe — harmless, since every .contentWindow access is guarded.
+            // Keep the toolbar on a valid plot. If none remain, plotIframe stays on the detached iframe
+            // (harmless: every .contentWindow access is guarded).
             if (!activePlotPanelId) {
                 const firstPlot = Object.values(panels).find(pp => pp.type === 'plot');
                 if (firstPlot) { activePlotPanelId = firstPlot.id; plotIframe = firstPlot.iframe; }
@@ -2867,8 +2645,7 @@
             swapLeafPanels(node.b, idA, idB);
         }
 
-        // Which drop zone of a target rect the cursor is in: 'center' (swap) or an
-        // edge name (dock the dragged panel to that side of the target).
+        // Drop zone under the cursor: 'center' (swap) or an edge name (dock).
         function dropZone(rect, x, y) {
             const fx = (x - rect.left) / rect.width;
             const fy = (y - rect.top) / rect.height;
@@ -2882,8 +2659,7 @@
             return 'bottom';
         }
 
-        // Detach the dragged panel and re-insert it as a split on one side of the
-        // target (the same result as pressing that target's edge "+").
+        // Detach the dragged panel and re-insert it as a split on one side of the target.
         function moveLeafToEdge(srcId, targetId, side) {
             if (srcId === targetId) return;
             markCustomLayout();
@@ -2932,8 +2708,7 @@
             renderLayout();
         }
 
-        // Drag a panel header onto another panel. Drop on its centre to swap; drop
-        // near an edge to dock the panel to that side (like the edge "+").
+        // Drag a panel header onto another panel: centre swaps, edge docks.
         let _dropOverlay = null, _dropBadge = null;
         const DOCK_LABEL = {
             center: { icon: 'swap_horiz',   text: 'Swap' },
@@ -3053,8 +2828,7 @@
             return out;
         }
         function scheduleSaveLayout() {
-            // Re-evaluate which View button (if any) matches the live state. Cheap, and
-            // this fires on essentially every state change (layout, preset, filter).
+            // Re-evaluate which View button matches the live state.
             if (typeof refreshViewSelector === 'function') refreshViewSelector();
             clearTimeout(_saveTimer);
             _saveTimer = setTimeout(() => {
@@ -3067,11 +2841,7 @@
         function clearSavedLayout() { try { localStorage.removeItem(LAYOUT_KEY); } catch (_) {} }
 
         // ---- Shareable view links ----
-        // A share link carries everything that defines "what's shown": the active
-        // file, the full dashboard layout (same snapshot we persist to
-        // localStorage), and a couple of view toggles. We pack it into a URL-safe
-        // base64 blob in the ?s= query param so a link round-trips the view to
-        // anyone with the same file loaded.
+        // Active file + dashboard layout + view toggles, packed as URL-safe base64 in ?s=.
         const SHARE_PARAM = 's';
         const SHARE_VERSION = 1;
         // Holds the decoded payload from an incoming link, consumed once during boot.
@@ -3086,11 +2856,7 @@
             return decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/') + pad)));
         }
 
-        // The basename of a file record's on-disk path. This is stable across
-        // machines for the *same* underlying file — most importantly for BODC live
-        // gliders (everyone's copy has the same filename) but also for an identical
-        // .nc two people each uploaded — even though each local instance assigns its
-        // own internal file id.
+        // Basename of a file's on-disk path: stable across machines, unlike the internal file id.
         function fileBasename(rec) {
             return rec ? (rec.path || rec.name || '').split(/[\\/]/).pop() : '';
         }
@@ -3099,10 +2865,8 @@
             const rec = fileById(datasetSelect.value);
             return {
                 v: SHARE_VERSION,
-                // `file` is the exact local id — matches instantly on the same box
-                // and on the shared web server (where ids are global). `fileKey`
-                // is the portable fallback for local-to-local sharing, and `live`
-                // flags a BODC glider the recipient can auto-download if missing.
+                // `file` = exact local id; `fileKey` = portable basename fallback; `live` = BODC glider the
+                // recipient can auto-download.
                 file: datasetSelect.value || '',
                 fileKey: fileBasename(rec),
                 fileName: rec ? rec.name : '',
@@ -3120,9 +2884,7 @@
             return url.toString();
         }
 
-        // Read an incoming ?s= link (if any) into _sharedBoot and scrub the param
-        // from the address bar, so a reload doesn't keep re-applying the link and
-        // the URL stays clean. Runs synchronously before the dashboard is built.
+        // Read an incoming ?s= link into _sharedBoot and scrub the param. Runs before the dashboard is built.
         function readShareFromUrl() {
             let raw = null;
             try { raw = new URLSearchParams(window.location.search).get(SHARE_PARAM); } catch (_) {}
@@ -3163,19 +2925,11 @@
             showShareToast(ok ? 'Link copied to clipboard' : 'Could not copy link', ok);
         }
 
-        // True while an incoming link still owes us its file (it named one we
-        // haven't matched yet). Kept alive across the async BODC scan so a shared
-        // live glider can be auto-downloaded the moment the live list arrives.
+        // True while an incoming link still owes us its file; kept alive across the async BODC scan.
         let _shareFilePending = false;
 
-        // Try to honour the file an incoming share link asked for. Resolution
-        // order, most to least specific:
-        //   1. exact local id        — same machine, or the shared web server
-        //   2. same file by basename — both have the identical .nc (esp. a live
-        //                              glider that landed under a different id)
-        //   3. download from BODC    — a live glider the recipient doesn't have
-        // Returns true once it has taken over file selection (so the caller skips
-        // its normal cookie/first-ready fallback).
+        // Resolve a share link's file: 1. exact local id, 2. basename match, 3. download from BODC.
+        // Returns true once it has taken over file selection.
         async function resolveSharedFile() {
             if (!_shareFilePending) return false;
             const want = _sharedBoot || {};
@@ -3201,9 +2955,7 @@
                     return true;
                 }
             }
-            // Can't get a non-live file we don't have — give up so we fall back to
-            // the recipient's own files. A live glider stays pending: the BODC scan
-            // may still surface it, and refreshLive() retries this then.
+            // A non-live file we don't have: give up. A live glider stays pending; refreshLive() retries.
             if (!want.live) _shareFilePending = false;
             return false;
         }
@@ -3247,9 +2999,7 @@
                 const ids = treeLeafIds(snap.tree, []);
                 if (!ids.length || ids.some(id => !snap.panels[id])) return false;
                 tearDownPanels();
-                // Restore which canonical view this layout was (or null if the user had
-                // hand-edited it), plus the snapshot, so the View selector re-highlights
-                // the right option after a reload.
+                // Restore which canonical view this was (or null) plus its snapshot, for the View selector.
                 _viewKind = snap.viewKind || null;
                 _viewSnapshot = (snap.viewSnapshot !== undefined ? snap.viewSnapshot : null);
                 _layoutPortrait = isPortrait();   // baseline so orientation reflow doesn't fire on first resize
@@ -3264,12 +3014,9 @@
                 if (activePlotPanelId) plotIframe = panels[activePlotPanelId].iframe;
                 renderLayout();
                 setActive((snap.activePanelId && panels[snap.activePanelId]) ? snap.activePanelId : (activePlotPanelId || Object.keys(panels)[0]));
-                // Panels render when the dataset loads (handleDatasetChange), so
-                // we don't load a possibly-stale dataset here.
+                // Panels render when the dataset loads (handleDatasetChange).
                 _pendingRestoreSync = true;
-                // A restored plot-less (Map) layout should also frame the whole globe,
-                // and select the Map layout preset — otherwise the preset filter/
-                // detection falls back to a real preset (e.g. Thermal) on reload.
+                // A restored plot-less (Map) layout frames the whole globe and selects the Map layout preset.
                 if (!Object.values(panels).some(p => p.type === 'plot')) {
                     _pendingGlobeFit = true;
                     if (Object.values(panels).some(p => p.type === 'map')) currentPreset = '__map__';
@@ -3279,15 +3026,9 @@
         }
 
         function initPanels() {
-            // An incoming share link wins over both the saved dashboard and the
-            // default — it carries the exact view someone wanted to send. We also
-            // apply its view toggles and persist it, so a subsequent reload (the
-            // ?s= param is already scrubbed) keeps showing the shared view.
+            // An incoming share link wins over the saved dashboard; apply and persist it.
             if (_sharedBoot && _sharedBoot.layout) {
-                // The sharer's internal file id is meaningless on another machine
-                // (we re-resolve the file by basename / BODC). Drop it from every
-                // panel so nothing renders against a phantom id; handleDatasetChange
-                // re-points each panel at the recipient's resolved file on load.
+                // Drop the sharer's file id from every panel; handleDatasetChange re-points them.
                 try {
                     Object.values(_sharedBoot.layout.panels || {}).forEach(pd => {
                         if (pd && pd.state && 'datasetId' in pd.state) pd.state.datasetId = '';
@@ -3302,17 +3043,13 @@
                 try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(serializeLayout())); } catch (_) {}
                 return;
             }
-            // Restore the saved dashboard if present; otherwise build the default.
-            // Every tile is a rearrangeable panel; activation comes from
-            // 'panelActivate' messages posted by each panel iframe.
+            // Restore the saved dashboard, else build the default. Activation comes from 'panelActivate' messages.
             const snap = loadSavedLayout();
             if (!(snap && buildFromSnapshot(snap))) buildDefaultLayout();
         }
 
-        // Presets, views and palettes all come from static/plot_presets.json
-        // (served as /api/plot_presets.js → window.GP_PLOT_PRESETS) — edit that
-        // file, not this one. Here it's just reshaped into the OceanPresets form
-        // the rest of the shell uses.
+        // Presets, views and palettes come from plot_presets.json (/api/plot_presets.js →
+        // window.GP_PLOT_PRESETS); edit that file. Reshaped here into OceanPresets.
         const PRESET_CFG = window.GP_PLOT_PRESETS || { axes: {}, presets: {}, views: {}, palettes: {} };
         const PRESET_VIEWS = PRESET_CFG.views || {};
         const PRESET_NAMED_COLOURS = {
@@ -3344,11 +3081,7 @@
             .map(e => typeof e === 'string' ? { key: e } : { key: e.preset, drawOrder: e.draw_order })
             .filter(s => OceanPresets[s.key]);
 
-        // Preset buttons don't depend on any fetched data, so build them right
-        // away rather than waiting on init()'s /api/config round trip — otherwise
-        // the toolbar visibly grows/wraps a moment after first paint on every
-        // load and reload. (renderPresetsDropdown is a hoisted function
-        // declaration, so it's safe to call here even though it's defined below.)
+        // Build preset buttons immediately rather than after /api/config, so the toolbar doesn't grow after first paint.
         renderPresetsDropdown();
 
         const COOKIE_FILE = 'gp_file_id';
@@ -3379,9 +3112,7 @@
         }
         function applyTheme(theme, persist = true) {
             const t = theme === 'light' ? 'light' : 'dark';
-            // Suppress CSS transitions during the swap so the whole UI (including
-            // dropdowns/menus that animate colours) flips instantly instead of
-            // easing over their transition durations.
+            // Suppress CSS transitions during the swap so the whole UI flips instantly.
             const root = document.documentElement;
             root.classList.add('theme-switching');
             document.documentElement.setAttribute('data-theme', t);
@@ -3406,8 +3137,7 @@
             return `&theme=${encodeURIComponent(getCurrentTheme())}`;
         }
         document.addEventListener('DOMContentLoaded', () => {
-            // A shared link can carry the sharer's theme; honour it before the
-            // first paint so the recipient lands on the same look.
+            // A shared link can carry the sharer's theme; honour it before first paint.
             if (_sharedBoot && (_sharedBoot.theme === 'light' || _sharedBoot.theme === 'dark')) {
                 applyTheme(_sharedBoot.theme, true);
             }
@@ -3435,9 +3165,8 @@
             if (syncTimeBtn) syncTimeBtn.addEventListener('click', () => toggleAlign());
         });
 
-        // ── Pinned-point sync helpers ───────────────────────────────────────
-        // Broadcast a message to every open globe iframe (optionally skipping the
-        // window it originated from), and likewise to every plot iframe.
+        // ── Pinned-point sync helpers ──
+        // Broadcast to every globe iframe (optionally skipping the sender), and to every plot iframe.
         function forEachMapFrame(cb, exceptWindow) {
             Object.values(panels).forEach(p => {
                 if ((p.type === 'map' || p.type === 'map2') && p.iframe && p.iframe.contentWindow) {
@@ -3464,23 +3193,19 @@
                 return;
             }
 
-            // A Copernicus overlay failed because copernicusmarine isn't installed
-            // or logged in — surface the one-time setup help through Jelly.
+            // Copernicus overlay failed (not installed / logged in): surface setup help via Jelly.
             if (msg.type === 'overlaySetup') {
                 notifyCopernicusSetup(msg.message, msg.hint, msg.command, msg.setup);
                 return;
             }
 
-            // The user clicked a grey context track on the globe — make it the
-            // active dataset (drives the top menu + every panel). selectFile runs
-            // handleDatasetChange, which posts setActive back to the globe.
+            // A grey context track was clicked: make it the active dataset (selectFile posts setActive back).
             if (msg.type === 'requestActivate') {
                 if (msg.id && msg.id !== datasetSelect.value) selectFile(msg.id);
                 return;
             }
 
-            // The globe finished (re)loading. If we just built the Map preset, ask
-            // it to zoom out to fit the whole track with a margin.
+            // Globe (re)loaded. If we just built the Map preset, ask it to fit the whole track.
             if (msg.type === 'mapReady') {
                 if (_pendingGlobeFit && event.source === gliderMap.contentWindow) {
                     gliderMap.contentWindow.postMessage({ type: 'fitView', whole: true }, '*');
@@ -3499,24 +3224,20 @@
             // Route plot messages to their owning panel.
             const srcPanel = panelByWindow(event.source);
 
-            // First successful draw → this iframe is warm and can be re-driven in place
-            // via a 'replot' message (Plotly.react) rather than a full src reload.
+            // First successful draw: this iframe is warm and can be re-driven via 'replot'.
             if (srcPanel && msg.type === 'plotLoaded') {
                 srcPanel._frameReady = true;
-                // A frame that (re)loaded after the last setActive() missed the
-                // active-state broadcast — tell it now so the zoom pill is right.
+                // A frame that loaded after the last setActive() missed the broadcast; tell it now.
                 event.source.postMessage({ type: 'panelActive', active: srcPanel.id === activePanelId }, '*');
             }
 
-            // Ack that the active plot finished applying a colour-trim update —
-            // releases the flow-control lock so the next slider value can be sent.
+            // Colour-trim ack: releases the flow-control lock so the next slider value can be sent.
             if (msg.type === 'colourUpdated') {
                 if (srcPanel && srcPanel.id === activePlotPanelId) onColourAck();
                 return;
             }
 
-            // Any interaction inside a panel makes it the active panel, and
-            // always refreshes the highlight idle-timer.
+            // Any interaction inside a panel makes it active and refreshes the highlight idle-timer.
             if (msg.type === 'panelActivate') {
                 if (srcPanel) {
                     if (srcPanel.id !== activePanelId) setActive(srcPanel.id);
@@ -3526,14 +3247,9 @@
             }
 
             // ── Shared "pinned point" across globes + the clicked plot ──
-            // A plot point was clicked: its own popup is already shown locally, so
-            // clear any OTHER plot's popup, then resolve the point's TIME to the
-            // nearest lat/lon and drop a blue pin on every open globe.
+            // Plot point clicked: clear other plots' popups, resolve its TIME to lat/lon, pin every globe.
             if (msg.type === 'plotPointPick') {
-                // Mirror the pick onto sibling plots. Match by TIME (the shared axis),
-                // but only across plots of the SAME dataset — a different dataset's
-                // nearest time would be unrelated. Plots that can't match (no time, or
-                // another dataset) just clear, so the selection stays consistent.
+                // Mirror the pick onto sibling plots by TIME, only across plots of the SAME dataset; others clear.
                 const srcId = srcPanel ? srcPanel.id : null;
                 const srcDs = (srcPanel && srcPanel.state && srcPanel.state.datasetId) || '';
                 Object.values(panels).forEach(p => {
@@ -3557,19 +3273,14 @@
                         })
                         .catch(() => {});
                 } else if (msg.timeMs === undefined) {
-                    // Genuinely no time axis (e.g. a T-S diagram) → no resolvable
-                    // position; clear any stale globe pin so the two stay consistent.
-                    // (A missing dataset id with a time present leaves the pin alone.)
+                    // No time axis (e.g. T-S): clear any stale globe pin. A missing dataset id with a time leaves it alone.
                     forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
                 }
                 return;
             }
 
-            // A globe was clicked: mirror the pin onto every OTHER globe. If the click
-            // landed on the ACTIVE glider's path (onPath), resolve the TIME at that
-            // spot — show it in every globe's bubble and mark the matching point on
-            // each open plot. An open-ocean click is position-only, so it just clears
-            // any stale plot popup (a fresh selection supersedes it).
+            // Globe clicked: mirror the pin onto every OTHER globe. On the active glider's path, resolve the
+            // TIME and mark it on each plot; an open-ocean click just clears stale plot popups.
             if (msg.type === 'coordPicked') {
                 forEachMapFrame(w => w.postMessage({ type: 'pinCoord', lat: msg.lat, lng: msg.lng }, '*'), event.source);
                 const onPathDs = msg.onPath ? (datasetSelect.value || '') : '';
@@ -3589,31 +3300,25 @@
                 return;
             }
 
-            // X pressed on a globe bubble or the plot popup, or 'x' pressed anywhere —
-            // clear the pin/marker everywhere.
+            // X on a globe bubble / plot popup, or the 'x' key: clear the pin everywhere.
             if (msg.type === 'coordCleared' || msg.type === 'plotPointClear' || msg.type === 'clearAllPicks') {
                 forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
                 forEachPlotFrame(w => w.postMessage({ type: 'clearPointPopup' }, '*'));
                 return;
             }
 
-            // Plot messages from a non-toolbar-target plot only update that
-            // panel's stored state — they must not touch the shared toolbar / UI.
+            // Messages from a non-toolbar-target plot only update that panel's state, never the shared toolbar.
             if (srcPanel && srcPanel.id !== activePlotPanelId) {
                 if (msg.type === 'plotZoomed') {
                     const l = msg.limits;
                     srcPanel.state.zoomBounds = (l && l.xMin !== 'auto' && l.xMin !== undefined)
                         ? { xMin: l.xMin, xMax: l.xMax, yMin: l.yMin, yMax: l.yMax } : null;
-                    // Alignment-driven echoes carry `driven: true` and must not re-enter
-                    // the propagation logic, or synced plots ping-pong zoom forever.
+                    // `driven: true` echoes must not re-enter propagation, or synced plots ping-pong forever.
                     if (!msg.driven) maybeAlign(srcPanel, l);
                 } else if (msg.type === 'bgFetchComplete' && msg.cMin !== undefined && !isNaN(msg.cMin)) {
                     srcPanel.state.cMin = msg.cMin; srcPanel.state.cMax = msg.cMax;
                 } else if (msg.type === 'plotLoaded') {
-                    // Capture a background plot's colour range as soon as it loads,
-                    // so its trim slider works the instant the user switches to it.
-                    // Without this, only the plot that was active at load time had a
-                    // populated cMin — the others showed greyed/empty with no numbers.
+                    // Capture a background plot's colour range on load so its trim slider works on switch.
                     const gl = msg.globalLimits;
                     if (msg.hasC && gl && gl.cMin !== undefined && !isNaN(gl.cMin)) {
                         srcPanel.state.cMin = gl.cMin; srcPanel.state.cMax = gl.cMax;
@@ -3650,8 +3355,7 @@
                     setColourRail(false);
                 }
 
-                // Persist the resolved colour range into the active panel so
-                // re-activating it later restores the trim slider correctly.
+                // Persist the resolved colour range into the active panel.
                 const ap = activePlotPanel();
                 if (ap) {
                     ap.state.cMin = baseCMin; ap.state.cMax = baseCMax;
@@ -3673,7 +3377,7 @@
                 plotIframe?.classList.add('hidden');
                 emptyState.classList.remove('hidden');
                 emptyState.innerHTML = `
-                    <span class="material-symbols-outlined text-googleRed" style="font-size: 40px;">error</span>
+                    <span class="material-symbols-outlined text-red" style="font-size: 40px;">error</span>
                     <p class="text-sm font-medium text-gray-800">${msg.message}</p>
                     <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
                 `;
@@ -3716,8 +3420,7 @@
                 }
             }
             else if (msg.type === 'bgFetchComplete') {
-                // Zoom out / reset carries the full-dataset stats; a zoom carries the
-                // in-view count. Update the stats card accordingly.
+                // Zoom out / reset carries full-dataset stats; a zoom carries the in-view count.
                 if (msg.stats) {
                     renderPlotStats(msg.stats);
                 } else if (typeof msg.plotted === 'number') {
@@ -3765,10 +3468,7 @@
         }
 
         function checkAndUpdatePreset() {
-            // Variable-based detection only applies when a plot is open. With no
-            // plot (e.g. the Map view, including after a reload that restores it),
-            // the active selection is a layout preset — otherwise detectCurrentPreset
-            // reads the leftover toolbar defaults and wrongly highlights Thermal.
+            // Variable-based detection only applies when a plot is open; with none, the selection is a layout preset.
             if (!hasPanelType('plot')) {
                 if (hasPanelType('map')) currentPreset = '__map__';
                 updatePresetUI();
@@ -3794,9 +3494,7 @@
                 
                 btn.addEventListener('click', () => {
                     if (btn.disabled) return;
-                    // No plot open (e.g. the Map preset) → fully reset to the default
-                    // view seeded with this preset. With a plot present, just retarget
-                    // the active plot — don't disturb the rest of the layout.
+                    // No plot open: reset to the default view seeded with this preset. Otherwise just retarget the active plot.
                     if (!hasPanelType('plot')) {
                         applyDefaultView(key);
                         return;
@@ -3820,10 +3518,8 @@
             });
         }
 
-        // Resolve a preset into a full panel state object (variables resolved
-        // against the current file), inheriting QC settings from the current
-        // toolbar. Mirrors applyPreset() but returns state instead of mutating
-        // the widgets.
+        // Resolve a preset into a panel state object, inheriting QC settings from the toolbar.
+        // Mirrors applyPreset() but returns state.
         function stateFromPreset(presetKey) {
             const p = OceanPresets[presetKey];
             const s = captureToolbarState();
@@ -3840,8 +3536,7 @@
             s.drawOrder = p.drawOrder || 'normal';
             s.drawOrderSize = p.drawOrderSize || defaultDrawOrderSize(s.drawOrder);
             s.zoomBounds = null; s.cMin = null; s.cMax = null;
-            // Don't inherit the active plot's colour-trim — it belongs to a
-            // different variable. Start at full range (filled on first load).
+            // Don't inherit the active plot's colour-trim (different variable).
             s.cTrimMin = ''; s.cTrimMax = '';
             return s;
         }
@@ -3855,19 +3550,13 @@
         }
 
         // ===== Orientation-aware preset layouts =====
-        // A "vertical" (portrait) screen — phones, or a desktop window taller than
-        // it is wide — re-flows the built-in presets so the plot(s) sit on top and
-        // the globe/3D maps share a row beneath. Landscape (normal desktop) keeps
-        // the original arrangements exactly as they were.
+        // Portrait screens put the plot(s) on top with the globe/3D sharing a row beneath.
         function isPortrait() {
             return window.innerHeight > window.innerWidth;
         }
 
-        // Globe + 3D + a single plot, with a full-width summary strip across the top.
-        // Landscape: maps in a narrow left column, plot on the right. Portrait: plot on
-        // top, maps split globe|3D beneath it. `summaryId` is optional (older restored
-        // layouts may not have one). The summary's height is fitted to its content by
-        // fitClassicSummaryHeight() after layout, so the ratio here is just a seed.
+        // Globe + 3D + one plot, with a full-width summary strip on top. `summaryId` is optional;
+        // its height is fitted by fitClassicSummaryHeight(), so the ratio here is a seed.
         function defaultLayoutTree(summaryId, plotId, mapId, tdId) {
             const main = isPortrait()
                 ? {
@@ -3884,10 +3573,7 @@
             return { dir: 'col', ratio: 0.16, _summaryTop: true, a: { leaf: true, panelId: summaryId }, b: main };
         }
 
-        // Size the classic-view summary strip to exactly fit its content (no scrollbar,
-        // no wasted space). The strip is full width, so its grid wraps to as few rows
-        // as fit; we measure that natural height and translate it to a tree ratio.
-        // Skips once the user has hand-edited the layout (_viewKind cleared on drag).
+        // Size the classic-view summary strip to its content. Skipped once the layout is hand-edited.
         function fitClassicSummaryHeight() {
             if (_viewKind !== 'default' || !layoutTree || !layoutTree._summaryTop) return;
             const summaryP = Object.values(panels).find(p => p.type === 'summary');
@@ -3895,8 +3581,7 @@
             const hostH = panelHost.clientHeight;
             const content = summaryP.el.querySelector('#summaryContent');
             if (!hostH || !content) return;
-            // The panel body fills the whole panel (the header floats on top, absolute,
-            // and consumes no layout space), so the body only needs the content height.
+            // The header floats (absolute), so the body only needs the content height.
             const contentH = content.scrollHeight;
             if (!contentH) return;
             const desired = contentH + 2;   // +2 hairline so nothing clips
@@ -3912,9 +3597,7 @@
             return { dir: 'row', ratio: 0.5, a: { leaf: true, panelId: mapId }, b: { leaf: true, panelId: tdId } };
         }
 
-        // Globe + 3D + N stacked plots. Landscape: maps in a narrow left column,
-        // plots stacked on the right. Portrait: plots stacked on top, maps split
-        // globe|3D beneath them.
+        // Globe + 3D + N stacked plots.
         function dashboardLayoutTree(plotIds, mapId, tdId) {
             if (isPortrait()) {
                 return {
@@ -3930,8 +3613,7 @@
             };
         }
 
-        // Bio-optics: globe only (full height) in the left column — no 3D view —
-        // with the plots stacked alongside.
+        // Bio-optics: globe only (no 3D) in the left column, plots stacked alongside.
         function bioopticsLayoutTree(plotIds, mapId) {
             if (isPortrait()) {
                 return {
@@ -3947,9 +3629,7 @@
             };
         }
 
-        // Stats: three equal columns. Left column = summary (top), globe (middle),
-        // instruments (bottom); middle = variables; right = attributes. Portrait
-        // stacks every panel in a single column.
+        // Stats: three columns: summary/globe/instruments, variables, attributes. Portrait: one column.
         function statsLayoutTree(summaryId, mapId, instrId, varsId, attrsId) {
             // Left column: summary on top, then globe over instruments beneath it.
             const leftCol = {
@@ -3971,9 +3651,7 @@
             };
         }
 
-        // Duo: two globes stacked on the left, two plots stacked on the right, with
-        // the plots given the lion's share of the width. Landscape splits left|right;
-        // portrait stacks the plots on top with the globes side by side beneath.
+        // Duo: two globes stacked on the left, two plots on the right.
         function duoLayoutTree(topMapId, bottomMapId, plotTopId, plotBottomId) {
             if (isPortrait()) {
                 return {
@@ -3989,9 +3667,7 @@
             };
         }
 
-        // Re-flow the active preset layout when the screen crosses the
-        // portrait/landscape boundary (e.g. a phone rotating). Only touches the
-        // built-in presets — a hand-edited layout (_viewKind === null) is left as-is.
+        // Re-flow the built-in layout when orientation flips; hand-edited layouts (_viewKind === null) are left alone.
         function reflowLayoutForOrientation() {
             if (!_viewKind) return;
             if (isPortrait() === _layoutPortrait) return;
@@ -4040,13 +3716,9 @@
             _reflowTimer = setTimeout(() => { reflowLayoutForOrientation(); fitClassicSummaryHeight(); }, 150);
         });
 
-        // Drop all plot panels and stash non-(globe/3D) singletons, but KEEP the
-        // globe + 3D panels mounted exactly where they are. Re-parenting an iframe
-        // reloads it (new WebGL context + lost tile cache → sluggish globe), so the
-        // layout builders below reuse these in place and only reposition them.
-        // Returns the surviving {map, td} (either may be null if not currently open).
-        // The primary globe (the one hosting the stashed gliderMap), preferred over
-        // any extra globes when a built-in view needs "the" map.
+        // Drop plot panels and stash other singletons but KEEP the globe + 3D mounted: re-parenting an
+        // iframe reloads it (new WebGL context, lost tile cache). Returns {map, td} (either may be null).
+        // The primary globe (hosting the stashed gliderMap) is preferred over extra globes.
         function primaryMapPanel() {
             return Object.values(panels).find(p => p.type === 'map' && p.hostedEl)
                 || Object.values(panels).find(p => p.type === 'map') || null;
@@ -4064,8 +3736,7 @@
             return { map, td };
         }
 
-        // Like keepGlobeAnd3D but drops the 3D view too (its stashed iframe is
-        // safely returned to the stash) — for views that show the globe alone.
+        // Like keepGlobeAnd3D but drops the 3D view too.
         function keepGlobe() {
             const map = primaryMapPanel();
             Object.values(panels).forEach(p => {
@@ -4077,8 +3748,7 @@
             return { map };
         }
 
-        // Re-fit a reused (already-loaded) globe: whole-globe for Map view, else the
-        // normal track fit. Fresh globes auto-fit on load, so nothing to do there.
+        // Re-fit a reused globe: whole-globe for Map view, else the track fit. Fresh globes auto-fit.
         function refitReusedGlobe(mapPanel, whole) {
             if (mapPanel && mapPanel.iframe && mapPanel.iframe.contentWindow) {
                 mapPanel.iframe.contentWindow.postMessage(whole ? { type: 'fitView', whole: true } : { type: 'fitView' }, '*');
@@ -4098,8 +3768,7 @@
             _pendingGlobeFit = false;
             const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
 
-            // Globe + 3D as a 1×2 side column, then the biogeochemical plots as a
-            // 1×N stack (landscape rows) filling the rest.
+            // Globe + 3D as a side column, then the biogeochemical plots stacked.
             const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
             const plotIds = avail.map(key => createPanel('plot', stateFromPreset(key)).id);
@@ -4115,10 +3784,8 @@
             markViewApplied();
         }
 
-        // Dashboard: globe + 3D on the left, then a stacked column of the six core
-        // time-series plots (temp → salinity → density → oxygen → chlorophyll →
-        // backscatter, skipping any the file lacks), each with its depth-profile
-        // sidebar (the in-plot SVG marginal) switched on.
+        // Dashboard: globe + 3D on the left, then the six core time-series plots (skipping any the file
+        // lacks), each with its depth-profile sidebar on.
         function applyDashboard() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const order = viewSpecs('dashboard').map(s => s.key);
@@ -4133,8 +3800,6 @@
             const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const td  = keepTd  || createPanel('3d',  { datasetId: datasetSelect.value || '' });
 
-            // One time-series plot per variable, each with the depth-profile sidebar
-            // (an in-plot SVG marginal — see main_plot.html) switched on.
             const plotIds = avail.map(key => {
                 const s = stateFromPreset(key);
                 s.profileSidebar = true;
@@ -4145,8 +3810,7 @@
             _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
 
-            // Suppress time-axis alignment while the batch loads so the six plots don't
-            // cascade re-renders into each other; cleared once they've settled.
+            // Suppress time-axis alignment while the batch loads; cleared once settled.
             _bulkLoading = true;
             clearTimeout(_bulkLoadTimer);
             renderLayout();
@@ -4159,10 +3823,7 @@
             _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
-        // Bio-optics: temperature, then chlorophyll and backscatter each shown twice —
-        // once surfacing the smallest values, once the largest — so both faint and
-        // intense features read clearly, then downwelling PAR. The globe fills the
-        // whole left column on its own (no 3D view here).
+        // Bio-optics: temperature, chlorophyll and backscatter each twice (smallest / largest first), then PAR.
         function applyBioOptics() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
             const presetOk = (key) => {
@@ -4202,19 +3863,13 @@
             _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
-        // The Copernicus overlay each Duo globe should carry, keyed by panel id, so
-        // it (re)applies every time that globe finishes loading (see the mapReady
-        // handler). Cleared whenever a non-Duo view is selected.
+        // Copernicus overlay per Duo globe (by panel id), reapplied on mapReady. Cleared for non-Duo views.
         let _duoOverlays = {};
 
-        // Globe panel ids whose Layers panel should start collapsed (the Stats view —
-        // its globe is a compact reference map, so the layers chrome just gets in the
-        // way). Reapplied on every (re)load via the mapReady handler.
+        // Globe panel ids whose Layers panel starts collapsed (Stats view); reapplied on mapReady.
         let _collapseLayersPanels = new Set();
 
-        // Tell one Duo globe to show its overlay and tuck its Layers panel away.
-        // If Copernicus isn't set up the overlay fetch fails inside the globe, which
-        // posts {type:'overlaySetup'} back here → Jelly surfaces the setup help.
+        // Tell a Duo globe to show its overlay and collapse Layers. A failed fetch posts 'overlaySetup' back.
         function applyDuoOverlay(panel, overlay) {
             if (!panel || !panel.iframe || !panel.iframe.contentWindow) return;
             try {
@@ -4223,13 +3878,11 @@
             } catch (_) {}
         }
 
-        // Duo: two globes stacked on the left (Chl-a over currents), the wider right
-        // column holding a backscatter plot above a salinity plot.
+        // Duo: two globes on the left (Chl-a over currents), backscatter above salinity on the right.
         function applyDuo() {
             _pendingGlobeFit = false;
 
-            // Keep the primary globe in place (avoids a reload); drop everything else,
-            // including the 3D view and any leftover second globe.
+            // Keep the primary globe in place (avoids a reload); drop everything else.
             const keepMap = primaryMapPanel();
             Object.values(panels).forEach(p => {
                 if (p === keepMap) return;
@@ -4261,17 +3914,14 @@
             setActive(bbp.id);
             markViewApplied();
 
-            // Chl-a on top, currents below. A freshly-loaded globe gets its overlay
-            // when it reports mapReady; a reused (already-loaded) top globe never
-            // reloads, so push its overlay straight away.
+            // A fresh globe gets its overlay on mapReady; a reused one never reloads, so push it now.
             _duoOverlays = { [topMap.id]: 'chla', [bottomMap.id]: 'currents' };
             if (keepMap) applyDuoOverlay(topMap, 'chla');
 
             _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
-        // "Map" preset: globe + 3D side by side, no plot. The toolbar has nothing
-        // to drive, so the colour rail greys out; the globe pulls back to whole-globe.
+        // "Map" preset: globe + 3D, no plot; the colour rail greys out.
         function applyMapView() {
             _pendingGlobeFit = false;
             const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
@@ -4292,9 +3942,7 @@
             markViewApplied();
         }
 
-        // Stats: a no-plot dataset-inspection layout. Three equal columns — the map
-        // (over the instruments list) on the left, variables in the middle, attributes
-        // on the right — so you can read at a glance which instruments a glider carries.
+        // Stats: a no-plot dataset-inspection layout in three columns.
         function applyStatsView() {
             _pendingGlobeFit = false;
             const { map: keepMap } = keepGlobe();   // globe only — no 3D in Stats
@@ -4308,8 +3956,7 @@
             activePlotPanelId = null;
             plotIframe = null;
             currentPreset = '__stats__';
-            // Keep this globe's Layers panel collapsed — a fresh globe collapses via
-            // the mapReady handler; a reused (already-loaded) one needs it pushed now.
+            // A fresh globe collapses Layers via mapReady; a reused one needs it pushed now.
             _collapseLayersPanels = new Set([map.id]);
             renderLayout();
             if (!keepMap) { _pendingGlobeFit = true; renderPanel(map); }  // fresh globe fits via mapReady
@@ -4327,9 +3974,7 @@
             markViewApplied();
         }
 
-        // Rebuild the default view (globe + 3D in a narrow left column, one plot on
-        // the right) seeded with a chosen preset. Used when a preset button is
-        // pressed while no plot panel is open — a clean "reset to default + this plot".
+        // Rebuild the default view seeded with a preset (preset pressed while no plot panel is open).
         function applyDefaultView(presetKey) {
             _pendingGlobeFit = false;
             const { map: keepMap, td: keepTd } = keepGlobeAnd3D();
@@ -4450,14 +4095,8 @@
             scheduleColourSend();
         };
 
-        // Push colour limits to the plot with ack-based flow control. The plot
-        // iframe is same-origin, so its Plotly.restyle runs on the shared main
-        // thread and blocks the slider while it recolours every point. A fixed
-        // throttle can't know how long that takes, so on big datasets restyles
-        // pile up and the slider freezes / jumps in steps. Instead we keep at most
-        // ONE restyle in flight: send the latest value, then wait for the plot to
-        // post 'colourUpdated' before sending again. This self-paces to whatever
-        // the machine can handle, so the slider stays responsive at any data size.
+        // Ack-based flow control: the same-origin plot's restyle blocks the shared main thread, so keep at
+        // most ONE in flight and wait for 'colourUpdated' before sending the next value.
         let _colourPending = false;   // a newer value is waiting to be sent
         let _colourInFlight = false;  // the plot is busy applying the last value
         let _colourAckTimer = null;
@@ -4470,10 +4109,7 @@
             _colourPending = false;
             _colourInFlight = true;
             if (!sendColourLimitsToIframe()) { _colourInFlight = false; return; }
-            // Safety net: only fires if the plot genuinely never acks (iframe
-            // swapped out / no colour trace). It's set well above any real redraw
-            // time so a slow-but-working restyle always acks first — that keeps the
-            // safety path from racing the real ack and double-sending.
+            // Safety net if the plot never acks; set well above any real redraw time so it can't race the ack.
             clearTimeout(_colourAckTimer);
             _colourAckTimer = setTimeout(onColourAck, 1000);
         }
@@ -4483,8 +4119,7 @@
             _colourInFlight = false;
             if (_colourPending) flushColourSend();
         }
-        // Drop any pending/in-flight colour send — used when the toolbar re-targets
-        // a different plot so the new panel's slider isn't blocked by a stale lock.
+        // Drop any pending colour send when the toolbar re-targets a different plot.
         function resetColourFlow() {
             clearTimeout(_colourAckTimer);
             _colourPending = false; _colourInFlight = false;
@@ -4548,8 +4183,7 @@
         cmapTrigger.addEventListener('click', (e) => {
             e.stopPropagation(); cmapMenu.classList.toggle('hidden');
             if (!cmapMenu.classList.contains('hidden')) {
-                // Focus the currently-active colourmap so it's highlighted on open,
-                // not whatever happens to be first in the list.
+                // Focus the active colourmap so it's highlighted on open.
                 const active = cmapOptions.find(b => b.dataset.val === cmapInput.value) || cmapOptions[0];
                 active.focus();
                 active.scrollIntoView({ block: 'nearest' });
@@ -4573,8 +4207,7 @@
 
         let variableCache = [];
 
-        // The 3D / Variables / Attributes sidebar tabs were replaced by dashboard
-        // panels in Phase 2; switchTab is now a no-op kept for legacy call sites.
+        // switchTab is a no-op kept for legacy call sites.
         function switchTab(activeTabId) {}
 
         const liveList = document.getElementById('liveList');
@@ -4618,10 +4251,7 @@
         function scheduleLivePoll() {
             clearTimeout(_liveRefreshTimer);
             const busy = liveIsBusy();
-            // Keep polling while a download / processing / delete / pending-open
-            // is in flight even if the panel is closed, so the list stays fresh
-            // and any queued activation can complete in the background. When
-            // idle, only keep polling while the panel is open.
+            // Keep polling while a download/processing/delete/pending-open is in flight; when idle, only while open.
             if (!busy && filesPanel.hidden) return;
             const delay = busy ? 2000 : 30000;
             _liveRefreshTimer = setTimeout(() => refreshLive({ force: false }), delay);
@@ -4630,11 +4260,8 @@
         async function refreshLive({ force = false } = {}) {
             if (_liveInFlight) { scheduleLivePoll(); return; }
             _liveInFlight = true;
-            // The spinning refresh icon + the "Scanning…" header are the scan
-            // indicator. BODC re-checks every file in one call, so there's nothing
-            // per-file to convey — and the old grey-out/lock just dimmed every card
-            // on each background poll for no real benefit (clicks are delegated, so
-            // a mid-scan re-render is safe).
+            // The spinning refresh icon + "Scanning…" header are the scan indicator; clicks are delegated,
+            // so a mid-scan re-render is safe.
             liveRefreshIcon.style.animation = 'spin 1s linear infinite';
             if (!_liveData) liveScannedAt.textContent = 'Scanning…';
             try {
@@ -4642,8 +4269,7 @@
                 _liveData = await res.json();
                 renderLive(_liveData);
                 await resolvePendingOpen();
-                // A share link may have asked for a live glider we didn't have at
-                // boot; now that the BODC list is in, download & open it.
+                // A share link may be waiting on a live glider; now the BODC list is in, open it.
                 await resolveSharedFile();
             } catch (e) {
                 console.error('Live fetch failed:', e);
@@ -4678,9 +4304,7 @@
             liveList.innerHTML = active.map(liveCardHtml).join('');
         }
 
-        // Build the markup for a single live-deployment card. Shared between the
-        // real server-scan render and the placeholder render that runs while the
-        // first scan is still in flight.
+        // Markup for one live-deployment card (shared by the real and placeholder renders).
         function liveCardHtml(e) {
             const esc = escapeHtmlSafe;
                 const ago = relTimeAgo(e.server_mtime);
@@ -4723,8 +4347,7 @@
                     actionHtml = `${kmz}${upd}<button class="file-card-action danger" data-act="bodc-delete" data-fn="${esc(e.filename)}" title="Delete downloaded file"><span class="material-symbols-outlined text-[14px]">delete</span></button>`;
                 }
 
-                // Optimistic delete: show it leaving right away, overriding the
-                // (possibly still "downloaded") server snapshot until confirmed.
+                // Optimistic delete: override the server snapshot until confirmed.
                 if (isDeleting) {
                     iconClass = 'processing'; iconName = 'progress_activity'; iconHtml = '';
                     metaLine = `<span class="file-card-stage">Deleting…</span>`;
@@ -4747,12 +4370,7 @@
                 `;
         }
 
-        // Seed the Live list from files we already know about (via /api/files)
-        // while the first BODC scan is still in flight. A managed live glider
-        // that was downloaded in a previous session is re-processed on startup,
-        // so without this the list sits blank until the (slower) server scan
-        // returns — instead we show those gliders right away with a processing
-        // placeholder. Once _liveData arrives, renderLive() takes over.
+        // Seed the Live list from /api/files while the first BODC scan is in flight; renderLive() takes over.
         function renderLivePlaceholders() {
             if (_liveData) return;
             const placeholders = fileRecords
@@ -4775,8 +4393,7 @@
             liveList.innerHTML = placeholders.map(liveCardHtml).join('');
         }
 
-        // Trigger a KMZ track download for any ready file id. The server sets
-        // Content-Disposition: attachment, so this downloads without navigating.
+        // Trigger a KMZ download (server sends Content-Disposition: attachment).
         function downloadKmz(id) {
             const a = document.createElement('a');
             a.href = `/api/kmz?id=${encodeURIComponent(id)}`;
@@ -4793,8 +4410,7 @@
             scheduleLivePoll();
         }
 
-        // Show the main plot area's processing overlay for a live file that has
-        // been clicked but isn't ready yet (still downloading / processing).
+        // Show the processing overlay for a clicked live file that isn't ready yet.
         function showLivePlaceholder(entry) {
             pendingActivateId = null;          // not a real record id yet
             if (plotIframe) blankPlotFrame(plotIframe);
@@ -4813,9 +4429,7 @@
             });
         }
 
-        // Once a queued-open live file has a real record id, hand off to
-        // selectFile — it shows the overlay while processing and swaps in the
-        // plot the moment it's ready.
+        // Once a queued-open live file has a record id, hand off to selectFile.
         async function resolvePendingOpen() {
             if (!_livePendingOpen || !_liveData) return;
             const e = (_liveData.active || []).find(x => x.filename === _livePendingOpen);
@@ -4850,32 +4464,25 @@
                 finally { actBtn.disabled = false; }
                 return;
             }
-            // Bare card click: start it downloading/opening AND swap the main
-            // view to it (placeholder while it's not ready, plot once it is).
+            // Bare card click: start downloading/opening AND swap the main view to it.
             const fn = card.dataset.bodc;
             if (!fn) return;
             await openLiveByFilename(fn);
             closeFilesPanel();
         });
 
-        // Open a BODC live glider by its (stable) filename: if we already have a
-        // record, hand straight to selectFile; otherwise download it first, show a
-        // placeholder, and let resolvePendingOpen() finish the hand-off once the
-        // record appears. Used by both the live-card click and shared links.
+        // Open a BODC live glider by filename: selectFile if we have a record, else download and let
+        // resolvePendingOpen() finish. Used by live-card clicks and shared links.
         async function openLiveByFilename(fn) {
             const entry = _liveData ? (_liveData.active || []).find(x => x.filename === fn) : null;
             if (!entry || _liveDeleting.has(fn)) return;
 
             if (entry.file_id) {
-                // Already a real record — selectFile loads it if ready, or shows
-                // the processing overlay and polls until it is.
                 await refreshFiles();
                 await selectFile(entry.file_id);
                 return;
             }
-            // No record yet: must download first. Queue the open, show a
-            // placeholder immediately, start the download. resolvePendingOpen()
-            // finishes the hand-off to selectFile once the record appears.
+            // No record yet: queue the open, show a placeholder, start the download.
             _livePendingOpen = fn;
             if (!entry.downloading && !_liveOptimistic.has(fn)) {
                 await bodcDownload(fn);
@@ -4904,18 +4511,11 @@
                 const nextReady = fileRecords.find(f => f.status === 'ready');
                 if (nextReady) await selectFile(nextReady.id);
             }
-            // Non-forced: the marker is already gone, so the cached listing now
-            // reports this file as not-downloaded. Avoids the slow ERDDAP re-scan
-            // that used to leave the green tick lingering.
+            // Non-forced: the cached listing already reports this file as not-downloaded, so skip the slow ERDDAP re-scan.
             await refreshLive({ force: false });
         }
 
-        // Ask the backend whether a newer release is on PyPI; if so, have Jelly
-        // deliver the reminder — a notification dot on the bubble, plus a chat
-        // message with upgrade instructions tailored to how this copy was
-        // installed (git pull vs pip upgrade, plus env activation if known).
-        // Copy text to the clipboard, with a fallback for non-secure (LAN/http)
-        // contexts where navigator.clipboard is unavailable. Returns a promise.
+        // Copy text to the clipboard, with a fallback for non-secure (LAN/http) contexts. Returns a promise.
         async function copyToClipboard(text) {
             try {
                 if (navigator.clipboard && window.isSecureContext) {
@@ -4984,9 +4584,7 @@
                 text += `\n\nPlease update to the latest version.`;
             }
 
-            // Reveal Jelly and add the reminder. Pop the panel open the first time
-            // we see this particular version so it's hard to miss — but on later
-            // reloads just badge the bubble with a dot rather than forcing it open.
+            // Pop the panel open the first time we see this version; later reloads just show the dot.
             let notified = null;
             try { notified = localStorage.getItem('gp_update_notified'); } catch (_) {}
             const firstSight = notified !== info.latest;
@@ -4994,8 +4592,7 @@
                 try { localStorage.setItem('gp_update_notified', info.latest); } catch (_) {}
             }
 
-            // Put the reminder in the panel and drop the commands into a copyable
-            // code block (or a one-click download button) beneath the prose.
+            // Add the reminder with a copyable command block (or download button).
             const body = notifyJelly('update', 'system_update', 'Update available', text, { open: firstSight });
             if (steps.length) appendCommandBlock(body, steps);
         }
@@ -5005,7 +4602,7 @@
                 const cfgRes = await fetch('/api/config');
                 const cfg = await cfgRes.json();
                 isServerMode = !!cfg.is_server;
-                logVersion(cfg.version ?? 'unknown', isServerMode, !!cfg.throttle, !!cfg.low_memory);
+                logVersion(cfg.version ?? 'unknown', isServerMode);
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }
@@ -5019,9 +4616,7 @@
 
             await refreshFiles({ activate: true });
 
-            // Start scanning for live deployments right away so the list is
-            // already populated when the user first opens the Files dropdown,
-            // instead of showing "Not scanned yet" until they open it.
+            // Start the live scan right away so the list is populated when Files first opens.
             refreshLive({ force: false });
 
             // Nudge the user if a newer release is on PyPI.
@@ -5032,9 +4627,7 @@
 
         datasetSelect.addEventListener('change', handleDatasetChange);
 
-        // Filter the Variables / Attributes list by its search box. Matches the
-        // combined haystack (name/key + units + description/value) stored on each
-        // row, and shows a "no matches" note when everything is filtered out.
+        // Filter the Variables / Attributes list by its search box (haystack stored on each row).
         function applyListFilter(which) {
             const input = document.getElementById(which === 'var' ? 'varSearch' : 'attrSearch');
             const rows = document.getElementById(which === 'var' ? 'varRows' : 'attrRows');
@@ -5048,8 +4641,7 @@
                 row.classList.toggle('hidden', !hit);
                 if (hit) visible++;
             });
-            // A matched (visible) variable always shows its QC partner too, even if
-            // the QC row itself didn't match the query.
+            // A visible variable always shows its QC partner too.
             if (which === 'var' && q) {
                 const shownBases = new Set();
                 rows.querySelectorAll('[data-search]').forEach(row => {
@@ -5071,11 +4663,7 @@
             if (input) input.addEventListener('input', () => applyListFilter(which));
         });
 
-        // Build the at-a-glance deployment summary (Stats view, above the globe) from
-        // the dataset's global attributes. Everything is best-effort: each card is
-        // skipped when its source attribute is absent, so partial metadata still reads
-        // cleanly. Laid out as an auto-fitting grid so it stays tidy when the panel is
-        // narrow (one column) or wide (two).
+        // Build the deployment summary cards from global attributes; each is skipped when its attribute is absent.
         function renderSummary(attrs, escapeHtml) {
             const host = document.getElementById('summaryContent');
             if (!host) return;
@@ -5097,8 +4685,7 @@
             const id = g('id');
             const title = g('title') || id || g('trajectory') || 'Glider deployment';
 
-            // Real-time vs delayed/recovered. BODC ids end _R (real-time) / _D (delayed);
-            // the title and rtqc method also flag it.
+            // Real-time vs delayed: BODC ids end _R / _D; the title and rtqc method also flag it.
             const isRealTime = /_R$/.test(id) || /real[\s-]?time/i.test(title) || /real[\s-]?time/i.test(g('rtqc_method'));
 
             const parseDate = (s) => { const d = new Date(s); return isNaN(d.getTime()) ? null : d; };
@@ -5230,9 +4817,7 @@
                     attrRows.innerHTML = '<div class="p-4 text-center text-[10px]" style="color: var(--text-muted);">No attributes found.</div>';
                 }
 
-                // Instruments — pulled from the `instrument` global attribute, split
-                // on commas into one clear card each (handles a plain "a, b, c" string
-                // or a Python-list-style "['a', 'b']" value).
+                // Instruments from the `instrument` attribute: "a, b, c" or "['a', 'b']".
                 const instrRows = document.getElementById('instrumentRows');
                 if (instrRows) {
                     instrRows.innerHTML = '';
@@ -5314,10 +4899,7 @@
                 if (!response.ok) throw new Error(`/api/variables ${response.status}`);
                 data = await response.json();
             } catch (e) {
-                // A backend error here must not silently abort the rest of
-                // handleDatasetChange (loadLocation, panel dataset updates,
-                // updatePlot) — swapping to a file that errors out would
-                // otherwise leave the UI pointed at the previous file's data.
+                // A backend error here must not abort the rest of handleDatasetChange, or the UI stays on the previous file.
                 console.error('Failed to load variables:', e);
                 data = { variables: [] };
             }
@@ -5335,10 +4917,7 @@
 
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
 
-            // Remember the outgoing selection: rebuilding the <select>s below
-            // silently snaps each to its FIRST option (alphabetically, e.g.
-            // ABS_SALINITY) — which is what leaked out as "X and Y both reset to
-            // the first variable" whenever nothing re-applied a preset afterwards.
+            // Remember the outgoing selection: rebuilding the <select>s snaps each to its FIRST option.
             const prev = { x: xSelect.value, y: ySelect.value, c: cVarSelect.value };
 
             [xSelect, ySelect, cVarSelect].forEach(sel => {
@@ -5370,8 +4949,7 @@
                 }
             });
             
-            // Pick the exact name the new file carries for an outgoing selection
-            // (preferring its _ADJUSTED form, as applyPreset does), or '' if gone.
+            // The new file's exact name for an outgoing selection (preferring _ADJUSTED), or ''.
             const carry = (val) => {
                 if (!val) return '';
                 if (variableCache.some(v => v.name === val + '_ADJUSTED')) return val + '_ADJUSTED';
@@ -5386,20 +4964,13 @@
                 // Same preset still fits the new file — re-resolve its variables.
                 applyPreset(currentPreset);
             } else if (prevCarries) {
-                // A custom (non-preset) selection, or a synthetic view's toolbar:
-                // the new file has the same variables, so keep what the user had
-                // rather than snapping them to some preset.
+                // Custom selection or synthetic view: keep what the user had.
                 xSelect.value = prevX; ySelect.value = prevY; cVarSelect.value = prevC;
                 if (!synthetic) checkAndUpdatePreset();
             } else {
-                // Selection can't carry over. Fall back to Thermal (the app default)
-                // when the file supports it; only otherwise the first usable preset.
-                // (Phases is first in OceanPresets, so 'first valid' alone made every
-                // fallback a Phases plot.)
+                // Selection can't carry over: fall back to Thermal, else the first usable preset.
                 const fallback = (firstValid && !isValidKey(DEFAULT_PRESET)) ? firstValid : DEFAULT_PRESET;
-                // Synthetic views keep their own selection but still need sane
-                // toolbar variables underneath (a later plot reads them) —
-                // applyPreset re-detects currentPreset, so restore it after.
+                // Synthetic views still need sane toolbar variables; applyPreset re-detects currentPreset, so restore it after.
                 const keep = currentPreset;
                 currentPreset = fallback;
                 applyPreset(fallback);
@@ -5423,8 +4994,7 @@
             const plots = Object.values(panels).filter(p => p.type === 'plot');
             // Time-sync off, or nothing else to sync with: normal single-panel toggle.
             if (!alignTimeAxes || plots.length <= 1) { handleToggle(profileSidebarBtn, false); return; }
-            // Time-sync on: the Profile button applies to every synced plot at once,
-            // all flipping to the new (opposite of current) state together.
+            // Time-sync on: the Profile button flips every synced plot together.
             const turningOn = !profileSidebarBtn.classList.contains('active');
             updateToggleBtn(profileSidebarBtn, turningOn);
             checkAndUpdatePreset();
@@ -5444,9 +5014,7 @@
             const plots = Object.values(panels).filter(p => p.type === 'plot');
             // Single plot: the normal active-panel re-plot path is enough.
             if (plots.length <= 1) { updatePlot(); return; }
-            // Multiview: quality is a shared budget, so apply the new value to EVERY
-            // plot panel and re-render them all — each panel re-derives its split
-            // (budget / nPlots) in renderPanel, so the fractions stay correct.
+            // Multiview: quality is a shared budget, so apply it to EVERY plot panel and re-render them all.
             _interactionTs = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
             const q = qualitySelect.value || '';
             const ap = activePlotPanel();
@@ -5503,10 +5071,7 @@
 
             // Reset until the map reports its DAC status back for the new active.
             currentDacStatus = { available: false, shown: false };
-            // The globe draws every processed glider at once. Switching the active
-            // one is just a recolour + recentre inside the already-loaded iframe —
-            // far snappier than a reload (new WebGL context + refetch of all
-            // tracks). Only set src the first time, or after it was blanked.
+            // Switching the active glider is an in-place recolour + recentre; only set src the first time or after blanking.
             const alreadyLoaded = currentMapDataset && gliderMap.src &&
                                   gliderMap.src.includes('map_view.html');
             if (alreadyLoaded) {
@@ -5515,15 +5080,11 @@
                 gliderMap.src = `/static/map_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             }
             currentMapDataset = fileId;
-            // The globe now has a src — clear its "Globe" placeholder veil. Needed on
-            // refresh into Map view, where placeholders were evaluated before the src
-            // was set (the 3D iframe escapes this only because it has a default src).
+            // The globe now has a src: clear its placeholder veil (evaluated before src was set).
             refreshPanelPlaceholders();
         }
 
-        // Load an "extra" globe (one added beyond the primary gliderMap, e.g. via the
-        // panel "+" menu) into its own iframe. Independent of the shared DAC/dataset
-        // map bookkeeping, which stays tied to the primary globe.
+        // Load an extra globe into its own iframe, independent of the primary globe's DAC/dataset bookkeeping.
         function loadExtraMap(panel) {
             const fileId = datasetSelect.value;
             if (!fileId || !panel || !panel.iframe) return;
@@ -5532,9 +5093,7 @@
             refreshPanelPlaceholders();
         }
 
-        // Load the Duo view's second globe (independent of the primary gliderMap, so
-        // it can hold its own Copernicus overlay). Mirrors loadMapImage but targets
-        // gliderMap2 and doesn't touch the shared DAC/dataset map bookkeeping.
+        // Load the Duo view's second globe; mirrors loadMapImage without the shared bookkeeping.
         function loadMap2Image() {
             const fileId = datasetSelect.value;
             if (!fileId) return;
@@ -5612,9 +5171,7 @@
             return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
         }
 
-        // Platform icon markup for a ready file (server-detected kind, or a
-        // filename guess for live entries not yet downloaded). '' = no icon,
-        // caller falls back to the material tick.
+        // Platform icon markup for a file; '' = caller falls back to the material tick.
         const PLATFORM_KINDS = ['slocum', 'seaglider', 'alr'];
         function platformKindFor(kind, name) {
             if (kind && PLATFORM_KINDS.includes(kind)) return kind;
@@ -5630,10 +5187,7 @@
 
         function renderFilesList() {
             filesList.innerHTML = '';
-            // Files we auto-downloaded show in the dedicated Live list above
-            // WHILE they're still live. Once a glider ages out of the live
-            // window (is_nrt false) it "graduates" to an installed file and
-            // appears here, where it stays — and stays deletable — until removed.
+            // Auto-downloaded files show in the Live list while live; once is_nrt is false they appear here.
             const userFiles = fileRecords.filter(f => !f.is_managed || !f.is_nrt);
             if (userFiles.length === 0) {
                 filesList.style.display = 'none';
@@ -5740,10 +5294,8 @@
         }
 
         function syncDatasetOptions() {
-            // Include non-ready files too: the <select> is hidden and only
-            // used to track the active id. Excluding processing files caused
-            // the value to snap back to the first ready file mid-poll, which
-            // looked like the UI "swapping back" to the previous dataset.
+            // Include non-ready files: the hidden <select> only tracks the active id, and excluding them
+            // snaps the value back to the first ready file mid-poll.
             const previousValue = datasetSelect.value;
             datasetSelect.innerHTML = '';
             for (const f of fileRecords) {
@@ -5764,8 +5316,7 @@
                 return;
             }
             processingOverlay.classList.remove('hidden');
-            // Blank every open panel, not just the active plot iframe, so no
-            // sibling plot/stats panel overlaps the centred progress overlay.
+            // Blank every open panel so nothing overlaps the progress overlay.
             panelHost.classList.add('gp-processing');
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
@@ -5789,10 +5340,7 @@
         async function refreshFiles({ activate = false } = {}) {
             try {
                 const res = await fetch('/api/files');
-                // On the Pi the server can be briefly saturated by the background
-                // processing worker, so the reverse proxy returns a 502 with an HTML
-                // body. Bail quietly instead of letting res.json() throw a noisy
-                // "Unexpected token '<'" on every poll.
+                // On the Pi a saturated server returns a 502 HTML body; bail quietly instead of res.json() throwing.
                 if (!res.ok) return;
                 const data = await res.json();
                 fileRecords = data.files || [];
@@ -5804,16 +5352,11 @@
             syncDatasetOptions();
             renderFilesList();
             updateTrigger();
-            // Until the first BODC scan lands, surface known live gliders (and
-            // their processing progress) in the Live list instead of leaving it blank.
+            // Until the first BODC scan lands, surface known live gliders in the Live list.
             renderLivePlaceholders();
 
-            // When the set of ready files changes (one finished processing, was
-            // added, or removed) OR a ready file's content changes (a live glider
-            // re-processed in place — same id, new fixes), tell the already-loaded
-            // globe to rebuild its context tracks. Folding mtime/size into the
-            // signature is what catches the in-place update: keying on id alone
-            // leaves the globe drawing its stale cached path for live gliders.
+            // When the ready-file set or a file's content (mtime/size) changes, tell the globe to rebuild its
+            // tracks. Keying on id alone misses live gliders re-processed in place.
             const readySig = fileRecords.filter(f => f.status === 'ready')
                 .map(f => `${f.id}:${f.mtime}:${f.size}`).sort().join(',');
             if (readySig !== _lastReadyIds) {
@@ -5823,24 +5366,9 @@
                 }
             }
 
-            // Same idea for the data plot(s) and 3D view: a live glider that
-            // re-processes in place keeps its id but gets a new mtime/size, so any
-            // open plot/3D panel showing it is now stale. Diff each ready file's
-            // content signature against the last time we saw it *ready* and
-            // re-render only the affected panels in place.
-            //
-            // We only record/compare the signature on 'ready' polls. A re-process
-            // dips through processing/pending (new mtime already on disk) before
-            // landing back on ready: if we updated the stored sig during that dip
-            // the final ready poll would match and we'd miss the change. Comparing
-            // to the *previous* ready sig also means a file seen for the first time
-            // (no prior entry) is NOT treated as a change — its initial render is
-            // handled by selectFile/layout.
-            //
-            // Skip the whole pass while a layout swap / panel restore is in flight
-            // (_suspendToolbar): the panels map and iframes are mid-mutation. We
-            // leave _lastFileSigs un-advanced so the change is re-detected on the
-            // next poll once things settle — nothing is lost.
+            // Same for plots and 3D: re-render panels whose file's content signature changed. Only record/compare
+            // sigs on 'ready' polls (a re-process dips through processing with the new mtime already on disk).
+            // Skipped during a layout swap (_suspendToolbar) without advancing _lastFileSigs, so it's re-detected.
             if (!_suspendToolbar) {
                 const changedIds = new Set();
                 for (const f of fileRecords) {
@@ -5854,9 +5382,7 @@
             }
 
             if (activate && !(await resolveSharedFile())) {
-                // No share link took over selection — fall back to the last-used
-                // file, then the first ready one. (A shared *live* glider we don't
-                // have yet stays pending; refreshLive() opens it once BODC responds.)
+                // No share link took over: fall back to the last-used file, then the first ready one.
                 const saved = getCookie(COOKIE_FILE);
                 let target = saved && fileById(saved) ? saved : null;
                 if (!target) {
@@ -5864,8 +5390,7 @@
                     target = firstReady ? firstReady.id : null;
                 }
                 if (!target) {
-                    // No ready files yet (all pending after startup reset) — select the first
-                    // pending one so pendingActivateId is set and the plot auto-loads once done.
+                    // No ready files yet: select the first pending one so the plot auto-loads once done.
                     const firstPending = fileRecords.find(f => f.status === 'pending' || f.status === 'processing');
                     target = firstPending ? firstPending.id : null;
                 }
@@ -5876,8 +5401,6 @@
 
             // Plot-area state is mutually exclusive: at most ONE of
             // {demoPrompt, processingOverlay, emptyState, plotIframe} is visible.
-            // Drive it from the active file's status here so we never end up
-            // with two overlays stacked on top of each other.
             const activeId = datasetSelect.value;
             const active = activeId ? fileById(activeId) : null;
 
@@ -5911,9 +5434,7 @@
 
             const anyProcessing = fileRecords.some(f => f.status === 'processing' || f.status === 'pending');
             if (anyProcessing) {
-                // Poll less aggressively on the Pi: each /api/files re-scans the
-                // data dir and stats every file, which contends with the processing
-                // worker. 700ms is fine on a fast local box; 2.5s on the server.
+                // Poll less aggressively on the Pi: each /api/files re-scans the data dir.
                 if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), isServerMode ? 2500 : 700);
             } else if (pollingTimer) {
                 clearInterval(pollingTimer);
@@ -5921,42 +5442,30 @@
             }
         }
 
-        // Re-render in place any open plot / 3D panel whose file just changed on
-        // disk (a live glider re-processed). The map is handled separately via the
-        // 'refreshTracks' message above. Called from refreshFiles with the set of
-        // changed file ids.
+        // Re-render in place any open plot / 3D panel whose file changed on disk (map: 'refreshTracks').
         function refreshUpdatedViews(changedIds) {
-            // Defensive: the caller already skips this whole pass during a layout
-            // swap / panel restore, but never re-render into mid-mutation panels.
+            // Defensive: never re-render into mid-mutation panels.
             if (_suspendToolbar) return;
 
             let activePlotDirty = false;
             const ap = activePlotPanel();
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot') {
-                    // Each plot panel can show its own file (multi-plot), so key off
-                    // the panel's own datasetId, not the globally-active dataset.
+                    // Key off the panel's own datasetId, not the globally-active dataset.
                     if (!p.state || !changedIds.has(p.state.datasetId)) return;
                     if (p === ap) { activePlotDirty = true; return; }
-                    // Background plot: re-drive in place only if it's already warm.
-                    // A cold/mid-load frame is skipped — its in-flight fetch already
-                    // pulls fresh data (the server keys its cache on mtime/size), so
-                    // there's nothing stale to correct.
+                    // Background plot: re-drive only if warm; a cold frame's in-flight fetch already pulls fresh data.
                     if (p._frameReady && p.iframe && p.iframe.contentWindow) renderPanel(p);
                 } else if (p.type === '3d') {
-                    // The 3D view always shows the globally-active dataset; reload it
-                    // (fresh /api/3d_data) when that file changed.
+                    // The 3D view always shows the globally-active dataset.
                     if (changedIds.has(datasetSelect.value)) renderPanel(p);
                 }
             });
-            // Route the active plot through updatePlot so the isPlotting/plotQueued
-            // guard coalesces it with any in-flight or user-triggered re-plot.
+            // Route the active plot through updatePlot so its isPlotting/plotQueued guard coalesces re-plots.
             if (activePlotDirty) updatePlot();
         }
 
-        // Tear down whatever file is currently shown and reset the plot area to
-        // its empty state. Used when the active file is deleted out from under
-        // the user (locally or as a live deployment).
+        // Tear down the shown file and reset to the empty state (active file deleted).
         function clearActiveSelection() {
             pendingActivateId = null;
             datasetSelect.value = '';
@@ -5969,9 +5478,7 @@
             plotQueued = false;
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D) iframe3D.src = '';
-            // Clear EVERY plot panel, not just the active one — they all showed
-            // the now-deleted file, so blank them all and drop their dataset ref
-            // so they don't try to reload it. Per-panel veils then show through.
+            // Clear EVERY plot panel and drop their dataset ref so they don't try to reload it.
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot' && p.iframe) {
                     blankPlotFrame(p.iframe);
@@ -6016,11 +5523,7 @@
                 hideProcessingOverlay();
                 await handleDatasetChange();
             } else {
-                // File is still processing — tear down any visualisations
-                // from the previously-loaded file so the user isn't looking
-                // at stale plot/map/3D data while waiting. The overlay only
-                // covers the plot area, so the side panels would otherwise
-                // keep showing the old file's contents.
+                // File still processing: tear down the previous file's visualisations (the overlay only covers the plot area).
                 pendingActivateId = fileId;
                 if (plotIframe) blankPlotFrame(plotIframe);
                 plotIframe?.classList.add('hidden');
@@ -6033,9 +5536,7 @@
                 gliderMap.classList.add('hidden');
                 mapEmptyText.classList.remove('hidden');
                 showProcessingOverlay(rec);
-                // Poll less aggressively on the Pi: each /api/files re-scans the
-                // data dir and stats every file, which contends with the processing
-                // worker. 700ms is fine on a fast local box; 2.5s on the server.
+                // Poll less aggressively on the Pi: each /api/files re-scans the data dir.
                 if (!pollingTimer) pollingTimer = setInterval(() => refreshFiles(), isServerMode ? 2500 : 700);
             }
         }
@@ -6050,22 +5551,14 @@
         }
 
         async function handleDatasetChange() {
-            // Abort any in-flight plot fetch from the previously selected file.
-            // Without this, swapping files while a slow request (e.g. CTD
-            // interp) is loading can leave the UI stuck on "Fetching data..."
-            // until the old fetch finishes.
+            // Abort any in-flight plot fetch from the previous file, or the UI can stick on "Fetching data...".
             if (plotIframe) blankPlotFrame(plotIframe);
             isPlotting = false;
             plotQueued = false;
 
             resetPlotState(true);
             const fileId = datasetSelect.value;
-            // Pass fileId so a reload of the same file restores its cached
-            // Navigate/Phases/Direction visibility immediately instead of
-            // blind-hiding here and re-showing a moment later once
-            // CycleProfile.loadFile()'s own fullReset(fileId) runs below —
-            // that hide-then-show flash is what shifts the floated toolbar
-            // action buttons (download/share/advanced) on reload.
+            // Pass fileId so a reload restores cached Navigate/Phases/Direction visibility immediately (no hide-then-show flash).
             CycleProfile.fullReset(fileId);
             if (!fileId) return;
 
@@ -6080,54 +5573,35 @@
                 iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
             }
 
-            // Duo's second globe shares the dataset — reload it too (its overlay
-            // reapplies via the mapReady handler once it's back up).
+            // Duo's second globe shares the dataset; reload it too.
             if (Object.values(panels).some(p => p.type === 'map2')) loadMap2Image();
 
             // Extra globes (added via the panel "+") follow the shared dataset too.
             Object.values(panels).forEach(p => { if (p.type === 'map' && !p.hostedEl && p.iframe) loadExtraMap(p); });
 
-            // Dashboard / Overview / Bio-optics choose their plot set by which
-            // variables the file actually has (see applyDashboard() etc.) — a plain
-            // dataset swap needs to re-run that same filtering, or a file with fewer
-            // variables keeps showing dead plots, and a file with MORE variables never
-            // gains the newly-available one (e.g. swapping onto a glider that carries
-            // CHLA). Re-clicking the view button already does this; do it automatically
-            // on every swap too, instead of just re-pointing the existing panels.
+            // Dashboard / Overview / Bio-optics pick plots by the file's variables, so re-run that on every dataset swap.
             const viewReappliers = { dashboard: applyDashboard, overview: applyOverview, biooptics: applyBioOptics };
             if (viewReappliers[_viewKind]) {
                 viewReappliers[_viewKind]();
                 return;
             }
 
-            // Point every panel at the newly-selected dataset (shared-dataset
-            // default). The active plot panel is rendered via updatePlot (toolbar
-            // now reflects the new file's preset); the rest keep their own
-            // variable selections and re-render against the new file.
+            // Point every panel at the new dataset. The active plot renders via updatePlot; the rest keep their variables.
             Object.values(panels).forEach(p => {
                 if (p.type === 'plot') {
                     p.state.datasetId = fileId;
-                    // A profile/cycle/phase filter is tied to the OLD file's profile
-                    // list — carrying it over makes the new file render a single
-                    // profile instead of full data. Clear it for every panel (the
-                    // active one is re-captured fresh by updatePlot below).
+                    // Profile/cycle/phase filters belong to the OLD file's profile list; clear them for every panel.
                     p.state.cycleProfile = {};
-                    // Same problem for the zoom window: it's in the OLD file's x/y
-                    // space, so applied to the new file it clips down to ~nothing (the
-                    // "1-point / low-res after swap" bug). Must clear it for the ACTIVE
-                    // panel too — otherwise it gets saved into the layout and the
-                    // restore path (_pendingRestoreSync -> applyToolbarState) re-seeds
-                    // it into currentZoomBounds, which is why a hard reload didn't help.
+                    // Same for the zoom window (old file's x/y space). Clear it for the ACTIVE panel too, or the
+                    // layout restore re-seeds it into currentZoomBounds.
                     p.state.zoomBounds = null;
                     if (p.id === activePlotPanelId) currentZoomBounds = null;
                     else renderPlotPanel(p);
                 }
             });
 
-            // First load after a layout restore: the active plot's variable
-            // selection lives in its saved state — re-sync the (now-populated)
-            // toolbar to it so loadVariables' preset doesn't clobber it. Normal
-            // file switches keep their existing preset behaviour.
+            // First load after a layout restore: re-sync the toolbar to the active plot's saved state so
+            // loadVariables' preset doesn't clobber it.
             if (_pendingRestoreSync) {
                 _pendingRestoreSync = false;
                 const ap = activePlotPanel();
@@ -6181,9 +5655,7 @@
                     const wasActive = datasetSelect.value === id || pendingActivateId === id;
                     if (wasActive) clearActiveSelection();
                     await refreshFiles();
-                    // After refresh, if we just cleared the active file try to
-                    // fall back to the first ready file rather than leaving the
-                    // user on an empty screen.
+                    // If we just cleared the active file, fall back to the first ready file.
                     if (wasActive && !datasetSelect.value) {
                         const nextReady = fileRecords.find(f => f.status === 'ready' && f.id !== id);
                         if (nextReady) await selectFile(nextReady.id);
@@ -6277,18 +5749,14 @@
 
         addFromPromptBtn.addEventListener('click', () => pickAndAddFiles());
 
-        // Renders the ACTIVE panel from the live toolbar. The toolbar always
-        // mirrors the active panel, so capturing it into the panel's state and
-        // re-rendering keeps the two in sync.
+        // Renders the ACTIVE panel from the live toolbar (which always mirrors it).
         async function updatePlot() {
             if (_suspendToolbar) return;   // ignore widget writes done while restoring a panel
-            // Stamp the click time at the earliest point we control (handlers call
-            // updatePlot synchronously). renderPanel forwards it to the plot iframe.
+            // Stamp the click time; renderPanel forwards it to the plot iframe.
             _interactionTs = window.gpNow ? window.gpNow() : (performance.timeOrigin + performance.now());
             if (isPlotting) { plotQueued = true; return; }
 
-            // The toolbar drives the active PLOT panel (which may differ from the
-            // highlighted panel when a globe/3D/vars panel is selected).
+            // The toolbar drives the active PLOT panel (may differ from the highlighted panel).
             const p = activePlotPanel();
             if (!p) { setLoading(false); return; }
 
@@ -6320,10 +5788,7 @@
         function setLoading(isLoading) {
             isPlotting = isLoading;
             datasetTrigger.disabled = isLoading;
-            // presetContainer is display:contents (its chips are flattened into
-            // .toolbar-row's own flex-wrap, see CSS), so it renders no box of its
-            // own — opacity/pointer-events set on it wouldn't paint. Toggle each
-            // chip directly instead.
+            // presetContainer is display:contents (no box), so opacity/pointer-events must be set on each chip.
             presetContainer.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.classList.toggle('opacity-50', isLoading);
                 btn.classList.toggle('pointer-events-none', isLoading);
@@ -6336,13 +5801,10 @@
             }
             if (e.key === 'Enter' && !cmapMenu.classList.contains('hidden')) return;
             
-            // Enter re-plots from the toolbar, but NOT when typing in the Jelly
-            // chat (its own form handles submit) — otherwise every prompt would
-            // reload the active plot and flash "Fetching data...".
+            // Enter re-plots from the toolbar, but not while typing in the Jelly panel.
             if (e.key === 'Enter' && !e.target.closest('#qcDropdown') && !e.target.closest('#jellyPanel')) updatePlot();
                 
-            // 'x' anywhere clears the globe pin and every plot marker (the inverse of
-            // the per-frame X buttons). Ignored while typing into a field.
+            // 'x' anywhere clears the globe pin and every plot marker. Ignored while typing.
             if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
                 && !e.target.closest('input, textarea, select, [contenteditable="true"]')) {
                 forEachMapFrame(w => w.postMessage({ type: 'clearPin' }, '*'));
@@ -6350,8 +5812,7 @@
             }
 
             if (e.key === 'Escape') {
-                // Esc dismisses transient UI only — it must NOT blank the active
-                // plot (that was a single-plot-era leftover that wiped a panel).
+                // Esc dismisses transient UI only; it must NOT blank the active plot.
                 let handled = false;
                 if (!cmapMenu.classList.contains('hidden')) { cmapMenu.classList.add('hidden'); handled = true; }
                 if (_addMenuEl) { closeAddMenu(); handled = true; }
@@ -6363,9 +5824,7 @@
         });
 
 
-        // A fresh start: clear filters, zoom, colour trim, and the saved layout —
-        // back to the default thermal preset. Used by every View selector button
-        // before it lays out its panels.
+        // A fresh start: clear filters, zoom, colour trim and the saved layout. Used by every View button.
         function fullResetState() {
             currentPreset = DEFAULT_PRESET;
             applyPreset(currentPreset);
@@ -6378,24 +5837,21 @@
             clearSavedLayout();
         }
 
-        // A view's identity = its plots' presets/cmaps/profile-sidebar + the active
-        // filters. Deliberately dataset- and zoom-independent, so loading a file or
-        // panning doesn't count as "customised" — only preset/filter/layout changes do.
+        // A view's identity = its plots' presets/cmaps/profile-sidebar + active filters.
+        // Deliberately dataset- and zoom-independent.
         function viewSettingsSignature() {
             const plots = Object.values(panels)
                 .filter(p => p.type === 'plot')
                 .map(p => {
                     const s = p.state || {};
-                    // Per-plot filters (not the live CycleProfile module) so a reloaded
-                    // filtered plot reads as customised, matching what's on screen.
+                    // Per-plot filters (not the live CycleProfile module), matching what's on screen.
                     return [s.preset || '', s.cmap || '', !!s.profileSidebar, JSON.stringify(s.cycleProfile || {})].join('|');
                 })
                 .sort();
             return JSON.stringify(plots);
         }
 
-        // The signature captured at the moment a canonical view was last built; the
-        // selector highlights that view only while the live state still matches it.
+        // Signature captured when a canonical view was built; the selector highlights it only while it matches.
         let _viewSnapshot = null;
 
         function markViewApplied() {
@@ -6403,9 +5859,7 @@
             refreshViewSelector();
         }
 
-        // Which view button (if any) reflects the current state: the layout must be an
-        // un-edited canonical kind (_viewKind set) AND the settings must still match
-        // the snapshot taken when it was built. 'default' layout shows as "classic".
+        // Which view button matches: _viewKind set AND settings match the snapshot. 'default' shows as "classic".
         function currentViewSelection() {
             if (!_viewKind || _viewSnapshot === null) return null;
             if (viewSettingsSignature() !== _viewSnapshot) return null;
@@ -6452,10 +5906,7 @@
             btn.addEventListener('click', () => { if (!btn.disabled) selectView(btn.dataset.view); });
         });
 
-        // ===== Jelly 🪼 — passive notification icon =====
-        // Jelly no longer chats. It's a quiet notification icon next to Settings:
-        // hidden until there's something worth showing (a new release, or
-        // Copernicus overlay setup help), then it reveals a dot and lists the notes.
+        // ===== Jelly — passive notification icon =====
         const jellyBubble = document.getElementById('jellyBubble');
         const jellyToggle = document.getElementById('jellyToggle');
         const jellyPanel = document.getElementById('jellyPanel');
@@ -6486,9 +5937,7 @@
             jellyBubble.classList.add('hidden');
         });
 
-        // Build one notification card: an icon plus body text. The panel header
-        // already carries the title (see notifyJelly), so the card itself is
-        // just icon + text — no nested heading repeating what the header says.
+        // One notification card: icon + body text (the panel header carries the title).
         function addJellyCard(kind, icon, text) {
             const div = document.createElement('div');
             div.className = 'jelly-card jelly-card-' + kind;
@@ -6507,10 +5956,7 @@
             return body;
         }
 
-        // Reveal the bubble (with a notification dot) and add a card to the panel.
-        // Returns the card's body element so callers can append command/download
-        // blocks. open=true pops the panel straight away (used for first-seen
-        // update notices and Copernicus setup help).
+        // Reveal the bubble (with dot) and add a card. Returns the card body; open=true pops the panel.
         function notifyJelly(kind, icon, title, text, { open = false } = {}) {
             jellyBubble.classList.remove('hidden');
             const body = addJellyCard(kind, icon, text);
@@ -6525,9 +5971,7 @@
         // De-dupe Copernicus setup notes so repeated overlay failures don't stack.
         let _copernicusNotified = false;
 
-        // The globe iframe posts {type:'overlaySetup'} when a Copernicus overlay
-        // fails because copernicusmarine isn't installed / logged in. Surface it
-        // once through Jelly with the copyable setup command.
+        // The globe posts {type:'overlaySetup'} when Copernicus isn't installed / logged in; surface it once.
         function notifyCopernicusSetup(msg, hint, command, setup) {
             if (_copernicusNotified) return;
             _copernicusNotified = true;
@@ -6538,11 +5982,8 @@
             else if (body && command) appendCommandBlock(body, command);
         }
 
-        // In-app Copernicus Marine sign-in, for users who'd rather not run
-        // `copernicusmarine login` in a terminal themselves. Collect their
-        // account details here and POST them to the backend, which validates them
-        // online and persists them to ~/.copernicusmarine. On success overlays work
-        // immediately (no restart) — the user just re-toggles the layer to retry.
+        // In-app Copernicus Marine sign-in: POST credentials to the backend, which validates and persists
+        // them to ~/.copernicusmarine. Overlays then work without a restart.
         function appendCopernicusLoginForm(parent) {
             if (!parent) return;
             const form = document.createElement('form');
@@ -6601,8 +6042,7 @@
         initPanels();
         init();
 
-        // ---- Generic hover tooltip for anything with data-tip (or data-tip-rows,
-        // for a one-row-per-item table instead of a paragraph — see QC/Phase info-dots) ----
+        // ---- Generic hover tooltip for anything with data-tip (or data-tip-rows for a table) ----
         document.addEventListener('mouseover', (e) => {
             const t = e.target.closest && e.target.closest('[data-tip], [data-tip-rows]');
             if (!t) return;

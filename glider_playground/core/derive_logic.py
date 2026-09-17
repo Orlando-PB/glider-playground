@@ -48,12 +48,8 @@ _TRANSITION = 7
 
 _PROF_DERIVED_COLUMNS = ["SCI_PHASE", "PROFILE_NUMBER", "PROFILE_DIRECTION", "CYCLE", "GRADIENT"]
 
-# Order-of-magnitude sanity bounds for the GSW inputs — NOT quality control.
-# Real files occasionally carry a single corrupt sample (e.g. CNDC of 5.3e6
-# mS/cm, PSAL of 1.0e16) that overflows inside gsw.CT_from_t and poisons every
-# derived CTD variable for that row with inf/NaN. Anything outside these is
-# physically impossible by many orders of magnitude, so it is dropped from the
-# derivation only; the raw values are left untouched everywhere else.
+# Order-of-magnitude sanity bounds for GSW inputs (not QC): one corrupt sample (CNDC 5e6 mS/cm)
+# overflows inside gsw and poisons the row. Dropped from the derivation only; raw values untouched.
 _CTD_SANE_RANGE = {
     "CNDC": (-1e3, 1e3),      # mS/cm; seawater is ~1-70
     "TEMP": (-1e2, 1e2),      # degC; seawater is ~-2-40
@@ -142,12 +138,7 @@ def _compute_time_qc(filepath, log, names, existing, time_var):
 
     valid = ~nat_mask
     min_time = np.datetime64(pd.Timestamp("1990-01-01"))
-    # TIME is naive UTC (see module docstring) — comparing it against
-    # pd.Timestamp.now() (naive LOCAL walltime) silently shifted the "is this
-    # timestamp in the future" cutoff by the server's UTC offset, so on a
-    # machine behind UTC the most recent hours of genuinely-valid live data
-    # could get flagged QC=4 ("bad") and then hard-excluded by the default
-    # QC-flag filter (which excludes 4) everywhere TIME is plotted.
+    # TIME is naive UTC, so the 'in the future' cutoff must use UTC now, never local now().
     now_time = np.datetime64(pd.Timestamp.utcnow().tz_localize(None))
     t_vals = t.to_numpy()
     with np.errstate(invalid="ignore"):
@@ -235,13 +226,8 @@ def _compute_ctd(filepath, log, names, existing, time_var):
         return arr
     lat, lon = _fit(lat), _fit(lon)
 
-    # GPS fixes are surface-only and sparse, so lat/lon are NaN at virtually every
-    # CTD sample row. SA_from_SP needs a position at each row, so without this the
-    # GSW outputs (ABS_SALINITY/CONS_TEMP/DENSITY) only land on the GPS rows —
-    # disjoint from where TEMP/PRES actually have data — and any plot combining a
-    # derived var with a raw one yields zero points. Carry position to the CTD rows
-    # by the same time interpolation already used for CNDC/TEMP/PRES (position
-    # varies slowly, so a time-linear fill is well within GPS error).
+    # GPS fixes are surface-only, so lat/lon are NaN on CTD rows. Time-interpolate position onto them,
+    # or the GSW outputs land only on GPS rows and never overlap TEMP/PRES.
     lat = _interp_over_time(lat, tvals)
     lon = _interp_over_time(lon, tvals)
 
@@ -369,12 +355,8 @@ def _prof_classify_ascent_descent(smoothed_velocity, time_seconds, chunk_id, vel
 def _prof_classify_propelled_surfacing(phase, depth, time_seconds, chunk_id,
                                         surfacing_depth_threshold, min_duration_seconds,
                                         min_transect_duration_seconds, transect_phase):
-    # Applied only to what ascent/descent left unknown. A flat, undulating stretch
-    # away from the surface, gated by a much longer minimum duration than surfacing
-    # so a turnaround isn't mistaken for one (a turn also sits near-zero velocity
-    # briefly, but only for seconds, not minutes), is either propelled (ALR-class
-    # platforms, which actually have thrusters) or parking (everything else, which
-    # can only be drifting) - see `transect_phase`.
+    # Remaining unknowns: a long flat stretch away from the surface is propelled (ALR-class) or
+    # parking (everything else); the long minimum duration keeps turnarounds out. See `transect_phase`.
     for rs, re in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
         duration = time_seconds[re - 1] - time_seconds[rs]
         if np.median(depth[rs:re]) <= surfacing_depth_threshold:
@@ -385,12 +367,8 @@ def _prof_classify_propelled_surfacing(phase, depth, time_seconds, chunk_id,
 
 
 def _prof_classify_inflection(phase, depth, chunk_id, surfacing_depth_threshold):
-    # The single apex of a turn between a descent and an ascent (or vice versa,
-    # for a mid-water W-cast). Only the one deepest/shallowest sample is marked,
-    # unless that apex itself is shallow, in which case it's surfacing instead.
-    # The run's leading edge may be missing entirely (record starts mid-turn,
-    # e.g. no descent ever sampled) as long as the trailing edge confirms the
-    # turn; a missing trailing edge is genuinely ambiguous and always skipped.
+    # Inflection: the one deepest/shallowest sample of a turn (surfacing instead if shallow). The leading
+    # edge may be missing (record starts mid-turn); a missing trailing edge is ambiguous and skipped.
     n = len(phase)
     for s, e in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
         if e == n or chunk_id[e] != chunk_id[e - 1]:
@@ -410,13 +388,8 @@ def _prof_classify_inflection(phase, depth, chunk_id, surfacing_depth_threshold)
 
 
 def _prof_classify_transition(phase, depth, chunk_id, surfacing_depth_threshold):
-    # Whatever's still unknown immediately either side of a turn - the shoulder
-    # between an inflection/surfacing point and the ascent/descent it leads into
-    # or out of. Shallow, it's surfacing instead, same backstop as above. Same
-    # leading/trailing asymmetry as the inflection pass: the shoulder heading
-    # into a turn can have nothing before it at all (the turn point itself
-    # confirms it), but the shoulder coming out always needs a real ascent/descent
-    # after it, or it's left unknown.
+    # Transition shoulders either side of a turn (surfacing if shallow). Same asymmetry: the shoulder
+    # coming out of a turn needs a real ascent/descent after it.
     n = len(phase)
     for s, e in _prof_runs_by_chunk(phase == _UNKNOWN, chunk_id):
         if e == n or chunk_id[e] != chunk_id[e - 1]:
@@ -432,22 +405,9 @@ def _prof_classify_transition(phase, depth, chunk_id, surfacing_depth_threshold)
 
 
 def _prof_assign_profile_and_cycle(phase, chunk_id):
-    # Each ascent/descent run is its own profile - no pairing required, so an
-    # upcast with no downcast is still a valid, numbered profile. A profile also
-    # claims its adjacent transition shoulders, and - only on its leading edge -
-    # the single bottom inflection point that marks where it started. It never
-    # reaches past surfacing/propelled/a top inflection: those always belong to
-    # whatever comes after them, so a bottom turn is never claimed by both the
-    # descent before it and the ascent after.
-    #
-    # Cycle: a new one starts as soon as a descent begins (from the same
-    # extended point PROFILE_NUMBER gives it), running up to but not including
-    # the start of the next descent - so it carries through the bottom
-    # inflection, the ascent, its trailing transition, and surfacing, all as one
-    # cycle. An ascent with nothing directly adjacent before its own extended
-    # start (upcast-only) starts a fresh cycle the same way a descent would -
-    # which is also what makes a mostly-propelled platform start a new cycle
-    # each time it actually goes underwater.
+    # PROFILE_NUMBER: each ascent/descent run is a profile (no pairing needed), plus its adjacent
+    # shoulders and, on its leading edge only, the bottom inflection. CYCLE: starts at each descent
+    # (or an upcast with nothing before it) and runs until the next descent begins.
     n = len(phase)
     core_mask = (phase == _ASCENT) | (phase == _DESCENT)
     padded = np.concatenate(([False], core_mask, [False]))
@@ -577,25 +537,13 @@ def _compute_profiles(filepath, log, names, existing, time_var):
     if n_orig < 2:
         return [], {}, {}
 
-    # A clock reset/backward jump (NaT or a timestamp earlier than everything
-    # before it) must be excluded before classification, not just sorted into
-    # place: sort_values() below would otherwise interleave the reordered
-    # samples with their new chronological neighbours at a near-zero time
-    # delta, which sends np.gradient's velocity computation to +/-inf/NaN -
-    # silently misclassifying a real (and sometimes huge) stretch of genuine
-    # dives as one long "unknown" run that then gets swept into propelled/
-    # parking. Same hard rule as the general plot pipeline (see
-    # plot_logic._hard_time_valid_mask).
+    # Drop NaT/backward TIME before classifying (not just sort): near-zero time deltas send the
+    # velocity gradient to inf/NaN and misclassify whole stretches. Same rule as plot_logic._hard_time_valid_mask.
     time_ok = plot_logic._hard_time_valid_mask(t_arr)
     t_masked = np.asarray(t_parsed).copy()
     t_masked[~time_ok] = np.datetime64("NaT")
 
-    # An exact-duplicate timestamp (e.g. two overlapping recording segments
-    # after a clock reset) is just as fatal here - a zero time delta between
-    # adjacent samples divides by zero in np.gradient - but isn't "backward,"
-    # so the hard-drop above doesn't catch it. Keep only the first occurrence.
-    # Scoped to profiling only: elsewhere (a plain scatter plot) two points
-    # sharing a timestamp are harmless.
+    # Duplicate timestamps divide by zero in np.gradient too: keep the first. Profiling only.
     dup = pd.Series(t_masked).duplicated(keep="first").to_numpy() & ~pd.isnull(t_masked)
     t_masked[dup] = np.datetime64("NaT")
 

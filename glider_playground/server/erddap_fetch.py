@@ -27,7 +27,7 @@ from urllib.parse import urljoin
 
 import requests
 
-from . import cache_logic
+from ..core import cache_logic
 
 SERVER_FILES_URL = "https://linkedsystems.uk/erddap/files/"
 DAYS_ACTIVE = 7

@@ -1,9 +1,10 @@
 """Argo float explorer (experimental, self-contained).
 
-Everything Argo lives here + ``static/argo_layer.js``; the rest of the app only
-touches it through two ``/api/argo/*`` routes in ``app.py`` and three one-line
-hooks in ``map_view.html``. Delete those and this file and the playground is
-back to gliders-only.
+Everything Argo lives here + ``static/map_view/argo_layer.js``; the rest of the
+app only touches it through three ``/api/argo/*`` routes in ``app.py``, three
+one-line hooks in ``map_view.html``, and the 3D view's ``/api/argo/profiles``
+fetch (floats surfacing near the glider). Delete those and this file and the
+playground is back to gliders-only.
 
 Two upstream sources, both read-only:
 
@@ -12,7 +13,8 @@ Two upstream sources, both read-only:
   ``INDEX_TTL`` into ``~/.glider_playground/argo/`` and reduced in a background
   thread to one record per float (last position/date, first date, profile
   count). The reduced table is persisted as ``floats.json`` so a restart
-  serves instantly.
+  serves instantly; per-profile lat/lon/date/WMO are kept as mmapped ``.npy``
+  arrays for box + time queries.
 * Euro-Argo fleet monitoring (``fleetmonitoring.euro-argo.eu/floats/<wmo>``)
   for the per-float detail card: platform/deployment/PI/last cycle etc. Proxied
   and trimmed here so the browser never talks to a third-party host directly;
@@ -36,7 +38,7 @@ from typing import Optional
 import numpy as np
 import requests
 
-from . import cache_logic
+from ..core import cache_logic
 
 log = logging.getLogger(__name__)
 

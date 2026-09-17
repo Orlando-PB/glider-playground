@@ -1,15 +1,19 @@
 """Per-file processing cache.
 
-Each registered NetCDF file is processed once per content signature
-(size, mtime). Processing pre-computes everything the map, 3D view,
-variable / attribute panels and profile selector need, and pre-loads
-the file's variable arrays into RAM so subsequent plot requests don't
-re-open the netCDF.
+Each registered NetCDF file is processed once per content signature (size,
+mtime) and CACHE_VERSION. Processing pre-computes what the map, 3D view,
+variable panels and profile selector need, and pre-loads the file's variable
+arrays so plot requests don't re-open the NetCDF. The arrays go to ~/.glider_playground/preload/ as .npy and are memory-mapped per
+request (only the variables asked for), so RAM stays flat as files are added
+and a restart is warm. Same locally and on the server. Disk cost is roughly
+the file's uncompressed size.
 
-A file's identity is the SHA-256 of its absolute path. Changing the
-file on disk (or moving it) invalidates the cache. The lightweight
-record (status, signature) is persisted to ~/.glider_playground/registry.json
-so registered files survive a restart; payloads are rebuilt on demand.
+Also holds the plot-response cache (small RAM LRU over a per-file disk store)
+and the default-plot prewarm driven by plot_presets.json.
+
+A file's id is the SHA-256 of its absolute path. The registry persists to
+~/.glider_playground/registry.json and finished payloads to a per-file
+sidecar, so a restart resumes rather than reprocesses.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from . import plot_logic
 from . import spatial_logic
 from . import derive_logic
 from . import presets_logic
-from . import server_config
+from ..server import server_config
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ def _resolve_data_dir() -> Path:
     if env:
         return Path(env).expanduser()
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parents[2]
     if (repo_root / ".git").is_dir():
         return repo_root / "data"
 
@@ -75,55 +79,9 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 
-# Bump this whenever processing logic changes and cached results should be
-# invalidated (e.g. new QC algorithm, changed map generation, etc.).
-# v9: Backscatter
-# v10: binary plot payloads + on-demand plot-payload cache
-# v11: revert datetime x to string format (epoch-ms caused timezone display bugs)
-# v12: lower render cap 200k -> 100k (invalidate old 200k-decimated plot payloads)
-# v14: LATITUDE_GPS/LONGITUDE_GPS position fallback (re-derive CTD on GPS-only files)
-# v15: fix profile classifier crash on all-NaN PRES inflection bins (pandas>=3);
-#      SCI_PHASE/PROFILE_NUMBER now derive on multi-sensor NaN-heavy-PRES files
-# v16: derive BBP per beta channel (BBP700 + BBP532 + ...), not just the first
-# v17: new profile classifier (pelagos_py port) - per-sample run-length phase
-#      detection instead of binned/peak-based; no more platform-specific (ALR)
-#      transect-phase hack, phase 4 (parking) never emitted
-# v18: "Clean" no longer auto-scales/range-filters CNDC (removed median-based
-#      S/m->mS/cm heuristic + [20,50] mS/cm cross-flagging); the salinity/
-#      density derivation now converts CNDC units->mS/cm itself, keyed off the
-#      file's actual CNDC units string rather than a value-based guess
-# v19: Interpolate/Clean/Filter Time are no longer separate toggles - CTD
-#      gap-fill (now capped at 5 min, flag 8 not 5) and zero-fill flagging
-#      (flag 9) always run; new derived TIME QC (flag 4 bad / 9 missing) lets
-#      TIME be filtered by the QC chips; NaT/non-monotonic TIME is now an
-#      unconditional hard drop instead of a filter_time-gated one
-# v20: dataset_info now flags the TIME variable's row with a "time_warning"
-#      (dropped NaT/non-monotonic counts) when the hard TIME drop is actually
-#      removing samples for this file
-# v21: restored ALR-vs-non-ALR detection for long flat non-surface "unknown"
-#      stretches (filename-based, as before the pelagos_py port): ALR platforms
-#      still get propelled (6), everything else now gets parking (4) instead
-#      of always propelled
-# v22: profile classifier now excludes NaT/non-monotonic/duplicate TIME
-#      samples before classifying (previously only sort_values()'d them) - a
-#      clock reset/backward jump was silently sending np.gradient's velocity
-#      computation to NaN/inf via a near-zero post-sort time delta, sweeping
-#      a large stretch of genuine dives into one long propelled/parking blob
-# v23: derived TIME QC's "is this timestamp in the future" cutoff now uses
-#      UTC now() instead of naive LOCAL now() - TIME is naive UTC, so on a
-#      server whose local timezone is behind UTC, live data from the last
-#      few hours could be wrongly flagged QC=4 (bad) and hard-excluded
-# v24: CTD derivation now drops samples whose CNDC/TEMP/PRES are physically
-#      impossible by orders of magnitude (corrupt single samples, e.g. CNDC
-#      5.3e6 mS/cm) - they overflowed inside GSW and poisoned the derived
-#      salinity/density outputs; raw values are untouched
-# v25: 3D view payload gains per-point epoch-ms times (position slider)
-# v26: 3D view payload gains per-point pitch/roll (degrees) for the vehicle model
-# v27: 3D view track cap raised (MAX_POINTS_3D) now it carries no temperature colouring
-# v28: 3D view attitude interpolated onto track rows (was all-missing when logged
-#      sparsely), radians mislabelled as "deg" detected, compass heading added
-# v29: 3D view compass heading bridged across gaps and smoothed
-CACHE_VERSION = "29"
+# Part of every cache key: bump when a processing change alters cached output
+# (history: OVERVIEW.md, "Cache version history").
+CACHE_VERSION = "30"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -317,15 +275,8 @@ def _load_once():
             data = json.loads(REGISTRY_FILE.read_text())
         except Exception:
             return
-        # If the processing code has changed, drop all cached results so every
-        # file gets reprocessed with the new logic. Just bump CACHE_VERSION.
-        # The records themselves are kept: a bump invalidates cached results,
-        # not the user's list of files. Only files under DATA_DIR/UPLOADS_DIR
-        # are recoverable by _scan_data_dir, so dropping the records used to
-        # silently forget every file registered by path (the folder picker).
-        # Nothing stale survives — the payload sidecars carry their own
-        # cache_version and are rejected below, so each record reprocesses
-        # from scratch.
+        # CACHE_VERSION changed: drop cached results but keep the records (the user's file list,
+        # including files registered by path, which a rescan could not recover).
         stale_version = data.get("_cache_version") != CACHE_VERSION
         if stale_version:
             _wipe_plotcache()   # stale binary payloads keyed by the old version
@@ -340,9 +291,7 @@ def _load_once():
                 rec["_done_steps"] = list(done_steps)
                 # Re-register the disk-backed preload sentinel so plot
                 # endpoints find variables fast without a fresh xarray open.
-                # Only meaningful in LOW_MEMORY mode — in RAM mode the
-                # arrays are gone and plots fall back to opening NetCDF.
-                if STEP_PRELOAD in done_steps and plot_logic._LOW_MEMORY:
+                if STEP_PRELOAD in done_steps:
                     try:
                         d = plot_logic._preload_dir(rec.get("path", ""))
                         if (d / "_names.json").exists():
@@ -453,8 +402,8 @@ def _ensure_platform_kind(rec: dict):
 def _public_view(rec: dict) -> dict:
     last_time = rec.get("last_time")
     try:
-        from . import live_logic
-        is_managed = live_logic.is_managed(rec.get("path", ""))
+        from ..server import erddap_fetch
+        is_managed = erddap_fetch.is_managed(rec.get("path", ""))
     except Exception:
         is_managed = False
     return {
@@ -511,12 +460,8 @@ def _refresh(rec: dict):
     """Detect on-disk changes / restart pending work."""
     p = Path(rec["path"])
     if not p.exists():
-        # The file was deleted from the data folder — drop the record (and its
-        # caches) automatically rather than leaving a dead "File no longer
-        # exists" card in the list. We only forget our own state here: the file
-        # is already gone, so there's nothing to unlink, and we leave the live
-        # marker/suppress lists untouched (that's remove_file's job for a
-        # user-initiated delete).
+        # File deleted on disk: drop the record and its caches. Live marker/suppress lists are
+        # left alone (that's remove_file's job for a user-initiated delete).
         with _lock:
             if _registry.pop(rec["id"], None) is None:
                 return
@@ -573,12 +518,8 @@ def _scan_data_dir():
                     pass
 
 
-# The on-disk sweep (rglob the data dir + stat every registered file) only needs
-# to detect externally-added/changed files, which doesn't need sub-second latency.
-# The frontend polls list_files() every 700ms-2.5s while a file is processing, so
-# without this guard each poll re-scans the disk and contends with the worker on
-# the Pi. Live status still updates instantly: _public_view reads the rec dicts
-# the worker mutates in place, so we keep returning fresh progress between sweeps.
+# Throttle the on-disk sweep: the frontend polls list_files() every ~1 s while processing, and a
+# full rescan per poll starves the worker on the Pi. Progress still updates live between sweeps.
 _SCAN_INTERVAL_S = 3.0
 _last_scan = 0.0
 
@@ -671,35 +612,31 @@ def remove_file(file_id: str, *, delete_upload: bool = True) -> bool:
         _drop_payload_sidecar(file_id)
         clear_plot_binary(file_id)
         _persist_locked()
-    # Delete the upload file *after* releasing the lock so the worker's
-    # open file handle can close cleanly before the path disappears.
-    # Also delete from data/ when it's a file we ourselves downloaded —
-    # otherwise it would just get re-scanned and re-processed on the next
-    # `list_files()` call. Files a user manually placed in data/ are left
-    # alone (only their cache record is dropped).
+    # Delete after releasing the lock so the worker's file handle closes first. Files we downloaded are
+    # removed from data/ too (else they'd be rescanned); files the user placed there are kept.
     if delete_upload:
         should_delete = path.startswith(str(UPLOADS_DIR))
         if not should_delete:
             try:
-                from . import live_logic
-                if live_logic.is_managed(path):
+                from ..server import erddap_fetch
+                if erddap_fetch.is_managed(path):
                     fname = Path(path).name
                     should_delete = True
                     # Also forget it in the live marker so the next scan
                     # treats it as "available to download" rather than
                     # "already managed".
                     try:
-                        marker = live_logic._load_marker()
+                        marker = erddap_fetch._load_marker()
                         if fname in marker:
                             marker.pop(fname, None)
-                            live_logic._save_marker(marker)
+                            erddap_fetch._save_marker(marker)
                     except Exception:
                         pass
                     # Suppress it so the auto-downloader doesn't immediately
                     # re-fetch the glider the user just deleted (binning =
                     # "stop auto-downloading this one").
                     try:
-                        live_logic._add_suppressed(fname)
+                        erddap_fetch._add_suppressed(fname)
                     except Exception:
                         pass
             except Exception:
@@ -739,20 +676,12 @@ def _is_removed(rec: dict) -> bool:
     return rec.get("_removed", False)
 
 
-_LOW_MEMORY = server_config.LOW_MEMORY
-
-
 # ---------- binary plot-payload cache ----------
-#
-# A hit skips the whole get_plot_data_json pipeline (NetCDF read, CTD overlay,
-# QC filter, downsample, pack) and returns the exact bytes we'd send. Two tiers:
-# a small in-RAM LRU (hottest entries) over a per-file disk store that survives
-# restarts. The disk key folds in the file signature + CACHE_VERSION, so a
-# changed file or a version bump can never serve stale bytes.
+# Exact response bytes, in a small RAM LRU over a per-file disk store. Keys fold in the file
+# signature + CACHE_VERSION, so a changed file or version bump never serves stale bytes.
 
-# Keep RAM modest on the Pi (disk read of ~1.5 MB is only a few ms there); a
-# roomier budget on a normal machine where repeated view loads benefit most.
-_PLOTCACHE_MEM_MAX = (24 * 1024 * 1024) if _LOW_MEMORY else (256 * 1024 * 1024)
+# Modest on purpose: a miss is only a disk read of ~1.5 MB (a few ms, even on the Pi).
+_PLOTCACHE_MEM_MAX = 64 * 1024 * 1024
 _PLOTCACHE_MEM: "OrderedDict[str, bytes]" = OrderedDict()
 _PLOTCACHE_MEM_BYTES = 0
 _PLOTCACHE_MEM_LOCK = threading.Lock()
@@ -841,8 +770,8 @@ def clear_plot_binary(file_id: str):
         _PLOTCACHE_MEM.clear()
         _PLOTCACHE_MEM_BYTES = 0
     # The overlay prefetch store lives in this dir too — drop its bookkeeping.
-    from . import overlay_prefetch   # lazy: it imports this module
-    overlay_prefetch.forget(file_id)
+    from ..maps import copernicus_prefetch   # lazy: it imports this module
+    copernicus_prefetch.forget(file_id)
 
 
 def _wipe_plotcache():
@@ -865,19 +794,9 @@ def _mark_step_done(rec: dict, step: str):
         _save_payload_sidecar(rec)
 
 
-# --- Default-plot prewarm -----------------------------------------------------
-#
-# These mirror the frontend's default first request so the prewarmed binary
-# lands under the exact key the browser will ask for. They MUST track the
-# index.html defaults:
-#   - x/y/c come from static/plot_presets.json (every preset with prewarm: true,
-#     via presets_logic) + findBest (prefer the _ADJUSTED variant).
-#   - QC flags, CTD gap-fill/clean, and the hard TIME-validity drop are always
-#     applied now — no toggles left to mirror.
-#   - cycle_var is the auto-detected cycle variable (CycleProfile / /api/cycles).
-# A mismatch is harmless: the entry just won't be hit and the request computes
-# live, exactly as before. So this can never serve wrong data — worst case it's
-# wasted work.
+# --- Default-plot prewarm ---
+# Must mirror the frontend's first request (presets with prewarm: true, _ADJUSTED preferred,
+# auto-detected cycle var) so the cached key matches. A mismatch only wastes work; it can't serve wrong data.
 
 
 def _resolve_first(candidates, var_set):
@@ -983,55 +902,28 @@ def _process(file_id: str):
         return step in done_steps
 
     try:
-        # 1. Preload variable arrays. The preload cache is on disk in
-        # LOW_MEMORY mode, so it survives a crash; we only redo it if the
-        # sidecar says the step never finished.
+        # 1. Preload variable arrays to disk (.npy). They survive a crash or
+        # restart; we only redo it if the sidecar says the step never finished
+        # or the preload dir has been wiped.
         _set(rec, status=STATUS_PROCESSING, progress=15,
              stage="loading variables" if not _is_done(STEP_PRELOAD) else "resuming",
              error="")
-        if not _is_done(STEP_PRELOAD):
-            if _LOW_MEMORY:
-                try:
-                    plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
-                except Exception as e:
-                    raise RuntimeError(f"Failed to read NetCDF: {e}") from e
-            else:
-                all_vars: dict = {}
-                try:
-                    with plot_logic.NETCDF_LOCK, xr.open_dataset(p) as ds:
-                        for name in ds.variables:
-                            if _is_removed(rec):
-                                return
-                            try:
-                                arr = ds.variables[name].values
-                                all_vars[name] = arr.copy().ravel() if hasattr(arr, "ravel") else arr
-                            except Exception:
-                                pass
-                    if _is_removed(rec):
-                        return
-                    plot_logic.set_preloaded(p, all_vars)
-                    del all_vars
-                except Exception as e:
-                    raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+        preload_on_disk = (plot_logic._preload_dir(p) / "_names.json").exists()
+        if _is_done(STEP_PRELOAD) and preload_on_disk:
+            with plot_logic._PRELOADED_LOCK:
+                plot_logic._PRELOADED[p] = True
+        else:
+            done_steps.discard(STEP_PRELOAD)
+            rec["_done_steps"] = [s for s in (rec.get("_done_steps") or []) if s != STEP_PRELOAD]
+            try:
+                plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
+            except Exception as e:
+                raise RuntimeError(f"Failed to read NetCDF: {e}") from e
+            if _is_removed(rec):
+                return
             _release_memory()
             _mark_step_done(rec, STEP_PRELOAD)
             done_steps.add(STEP_PRELOAD)
-        else:
-            # Make sure preload is registered in the in-RAM sentinel map even
-            # though the actual arrays are still on disk from the previous run.
-            if _LOW_MEMORY:
-                d = plot_logic._preload_dir(p)
-                if (d / "_names.json").exists():
-                    with plot_logic._PRELOADED_LOCK:
-                        plot_logic._PRELOADED[p] = True
-                else:
-                    # Disk preload was wiped between runs - redo it.
-                    done_steps.discard(STEP_PRELOAD)
-                    rec["_done_steps"] = [s for s in (rec.get("_done_steps") or []) if s != STEP_PRELOAD]
-                    plot_logic.stream_preload_to_disk(p, lambda: _is_removed(rec))
-                    _release_memory()
-                    _mark_step_done(rec, STEP_PRELOAD)
-                    done_steps.add(STEP_PRELOAD)
 
         if is_server:
             time.sleep(THROTTLE_PI_STAGES)
@@ -1120,8 +1012,8 @@ def _process(file_id: str):
             done_steps.add(STEP_3D)
 
         # 6. Pre-warm CTD overlays - each combo is its own resumable step.
-        # The overlay arrays themselves are cached to disk by plot_logic in
-        # low-memory mode, so re-calling _ctd_processed_arrays after a
+        # The overlay arrays themselves are cached to disk by plot_logic,
+        # so re-calling _ctd_processed_arrays after a
         # successful run is a cheap disk read.
         if _is_removed(rec):
             return
@@ -1173,8 +1065,8 @@ def _process(file_id: str):
         # network time never holds up the next file's processing).
         if not _is_removed(rec):
             try:
-                from . import overlay_prefetch
-                overlay_prefetch.ensure(file_id)
+                from ..maps import copernicus_prefetch
+                copernicus_prefetch.ensure(file_id)
             except Exception:
                 traceback.print_exc()
     except Exception as e:

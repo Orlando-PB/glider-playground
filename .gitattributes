@@ -1,2 +1,7 @@
-# Auto detect text files and perform LF normalization
+# Normalise line endings (keeps diffs clean if anyone commits from Windows).
 * text=auto
+
+# Vendored / generated files: no text diffs, and keep them out of GitHub's language stats.
+glider_playground/static/vendor/** -diff linguist-vendored
+glider_playground/static/3d_view/models/*.json -diff linguist-generated
+glider_playground/static/3d_view/scenery/*.json -diff linguist-generated

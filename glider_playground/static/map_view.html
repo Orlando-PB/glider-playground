@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Glider Globe View</title>
-    <script src="/static/console_log.js"></script>
+    <script src="/static/js/console_log.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="/static/tailwind.css">
+    <link rel="stylesheet" href="/static/vendor/tailwind.css">
     <link rel="preload" as="style"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0"
           onload="this.onload=null;this.rel='stylesheet'">
@@ -15,14 +15,12 @@
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0">
     </noscript>
     <script src="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
-    <!-- Standalone THREE (matches globe.gl 2.46.1's bundled three ≥0.154) for every
-         surface layer drawn here (tracks, arrows, overlays, currents, ruler).
-         Loaded AFTER globe.gl so globe.gl initialises untouched. -->
+    <!-- Standalone THREE for all surface layers; loaded AFTER globe.gl so globe.gl initialises untouched. -->
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <!-- Argo float layer (experimental, self-contained; see argo_layer.js) -->
-    <script src="/static/argo_layer.js"></script>
+    <script src="/static/map_view/argo_layer.js"></script>
     <!-- Research-ship layer (experimental, self-contained; see ships_layer.js) -->
-    <script src="/static/ships_layer.js"></script>
+    <script src="/static/map_view/ships_layer.js"></script>
     <style>
         :root, :root[data-theme="dark"] {
             --bg-globe: #121420;
@@ -48,9 +46,7 @@
         #layer-panel {
             display: none; position: absolute; bottom: 10px; right: 10px; z-index: 60;
             flex-direction: column-reverse; gap: 4px; padding: 6px; max-width: 168px;
-            /* Cap total height to the viewport so a long overlay list can't push the
-               top of the panel (it grows upward from the pinned bottom header) off
-               screen on short/small viewports — #layer-body scrolls instead. */
+            /* Cap height to the viewport; #layer-body scrolls instead. */
             max-height: calc(100vh - 20px); box-sizing: border-box;
             border-radius: 10px; background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
             box-shadow: 0 1px 8px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
@@ -97,10 +93,7 @@
             font-size: 10px; font-weight: 500; color: var(--text-primary);
             background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
             box-shadow: 0 1px 6px rgba(0,0,0,0.25); backdrop-filter: blur(4px);
-            /* The width cap is set in JS (fitColourBar) since it depends on whether
-               the bottom-right layers panel is open. overflow:hidden is only a
-               safety net — fitColourBar drops the title, then the date, then hides
-               the whole bar rather than ever clipping text mid-character. */
+            /* Width cap is set in JS (fitColourBar); overflow:hidden is only a safety net. */
             max-width: calc(100vw - 140px); overflow: hidden; box-sizing: border-box;
         }
         #chla-bar.visible { display: flex; }
@@ -112,9 +105,7 @@
             flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 5px;
             font-size: 9px; line-height: 1.3; white-space: nowrap;
             max-width: calc(100vw - 140px); overflow: hidden; text-overflow: ellipsis;
-            /* White text with difference blending: inverts against whatever is
-               underneath (dark ocean → light text, bright land/overlay → dark
-               text) so it stays legible over the globe in both themes. */
+            /* White text + difference blending stays legible over dark ocean and bright overlays. */
             color: #fff; mix-blend-mode: difference; opacity: 0.9;
             user-select: none; pointer-events: none;
         }
@@ -133,8 +124,7 @@
         }
         #chla-bar-hi, #chla-bar-lo { font-size: 9px; white-space: nowrap; }
         #chla-bar-date { font-size: 9px; opacity: 0.55; margin-left: 4px; white-space: nowrap; }
-        /* Narrow panels are handled in JS (fitColourBar): drop the title, then the
-           date, then hide the bar — see the script below. */
+        /* Narrow panels are handled in JS (fitColourBar). */
 
         /* CHL-a error toast */
         #chla-err {
@@ -171,9 +161,7 @@
         #chla-err-cmd .material-symbols-outlined { font-size: 14px; }
 
         /* Clicked-coordinate bubble — top-centre, for piloting hand-off. */
-        /* Top-centre readout stack: the live coord-bubble (current pick/ruler)
-           followed by any pinned measurements, in normal document flow so the
-           stack collapses upward automatically when the live bubble is hidden. */
+        /* Top-centre readout stack: live coord-bubble, then pinned measurements. */
         #coord-overlay-stack {
             position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
             z-index: 70; display: flex; flex-direction: column; align-items: center;
@@ -189,11 +177,7 @@
         #coord-bubble.visible { display: flex; }
         #coord-bubble .coord-pin { font-size: 15px; color: #3b82f6; flex: 0 0 auto; }
         #coord-textwrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
-        /* On a narrow bubble, _fitCoordText() (below) re-renders these at fewer
-           decimal places until the text fits; this ellipsis is only the very
-           last resort if even 0 decimals doesn't fit. Either way the copy
-           button is unaffected — it copies the full, untruncated value via
-           _lastCoord/_rulerStart/_rulerEnd (see _coordCopyText()). */
+        /* _fitCoordText() drops decimals until the text fits; ellipsis is the last resort. */
         #coord-text {
             display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 11px; white-space: nowrap; user-select: text;
@@ -213,14 +197,11 @@
         #coord-bubble button:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
         #coord-bubble button.copied { color: #34d399; }
         #coord-bubble .material-symbols-outlined { font-size: 15px; }
-        /* Ruler mode: orange accent instead of the blue pin, distance takes the
-           primary line, the two endpoint coords sit underneath. */
+        /* Ruler mode: orange accent, distance on the primary line. */
         #coord-bubble.ruler-mode .coord-pin { color: #f97316; }
         #coord-bubble.ruler-mode #coord-text { font-weight: 600; }
 
-        /* Narrow screens/panels: shrink the type a touch and drop the action
-           buttons to a second row so the coord text keeps enough room to stay
-           legible instead of getting squeezed to a sliver. */
+        /* Narrow screens: smaller type, action buttons on a second row. */
         @media (max-width: 420px) {
             #coord-overlay-stack { max-width: calc(100vw - 12px); }
             #coord-bubble { flex-wrap: wrap; row-gap: 4px; padding: 6px 8px; }
@@ -229,8 +210,7 @@
             #coord-bubble-actions { flex-basis: 100%; justify-content: flex-end; }
         }
 
-        /* Pinned measurements: compact rows stacked under the live bubble,
-           one per pinned point/ruler, each removable independently. */
+        /* Pinned measurements: compact rows under the live bubble. */
         #coord-pinned-stack {
             display: none; flex-direction: column; align-items: center; gap: 4px;
             max-width: 100%;
@@ -295,8 +275,7 @@
     
     <div id="globe-container"></div>
 
-    <!-- Layers sidebar (collapsible). Surface-overlay rows are generated by JS
-         into #layer-body, above Currents. Whole panel hidden until map loads. -->
+    <!-- Layers sidebar (collapsible); overlay rows are generated by JS into #layer-body. -->
     <div id="layer-panel" class="collapsed">
         <button id="layer-header" title="Show layers">
             <span class="material-symbols-outlined lyrIcon">layers</span>
@@ -304,8 +283,7 @@
             <span class="material-symbols-outlined chev">expand_more</span>
         </button>
         <div id="layer-body">
-            <!-- Overlay-mesh smoothing toggle. Applies to whichever surface overlay
-                 or currents mesh is active; default on. -->
+            <!-- Overlay-mesh smoothing toggle (default on). -->
             <button id="smoothToggle" class="on" title="Toggle overlay smoothing">
                 <span class="material-symbols-outlined ovSwatch" style="font-size:14px;">blur_on</span>
                 Smooth
@@ -333,8 +311,7 @@
     <!-- Hover tooltip for waypoint/glider markers, follows the cursor. -->
     <div id="marker-tooltip"></div>
 
-    <!-- Clicked-coordinate readout (top-centre): the live pick/ruler, plus any
-         measurements pinned out of it below (see coord-pinned-stack). -->
+    <!-- Clicked-coordinate readout (top-centre) plus pinned measurements. -->
     <div id="coord-overlay-stack">
         <div id="coord-bubble">
             <span class="material-symbols-outlined coord-pin">location_on</span>
@@ -376,9 +353,7 @@
         }
 
         const CONFIG = {
-            // Line widths are screen pixels (constant at any zoom). The active
-            // track thickens and brightens from its oldest point to its newest;
-            // grey context tracks stay near-constant so they're easy to hit.
+            // Line widths are screen pixels; the active track thickens/brightens oldest -> newest.
             pathThicknessMin: 1.1,
             pathThicknessMax: 3.6,
             pathBrightnessMin: 0.22,
@@ -391,13 +366,9 @@
             maxAltitude: 2.5,
         };
 
-        // Depth-averaged current (DAC) arrows. Each glider dive yields one
-        // current vector; we draw it as a short arrow at the surfacing point so
-        // pilots can see where the flow is strong (NRT piloting).
+        // Depth-averaged current (DAC) arrows: one per dive, drawn at the surfacing point.
         const DAC_CONFIG = {
-            // Arrows fade with age like the track: oldest are faint/thin grey,
-            // newest are solid black and a touch thicker. greyOld is the grey
-            // level (0-255) of the oldest arrow; the newest is pure black.
+            // Arrows fade with age; greyOld is the grey level (0-255) of the oldest arrow.
             greyOld: 150,
             alphaOld: 0.45,
             strokeMin: 1.2,       // oldest arrow (px)
@@ -410,10 +381,7 @@
             headAngleDeg: 25,
         };
 
-        // Build arrow polylines from DAC vectors. Each arrow is two polylines
-        // (the shaft, and the two barbs meeting at the tip) drawn together in the
-        // DAC ribbon mesh. spanKm is the track's extent, used to keep arrows
-        // proportionate to the view so they don't dominate a small deployment.
+        // Build arrow polylines (shaft + barbs) from DAC vectors; spanKm scales arrows to the track extent.
         function buildDacArrows(vectors, spanKm, trackId) {
             const out = [];
             if (!Array.isArray(vectors)) return out;
@@ -476,8 +444,7 @@
             return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
         }
 
-        // Thin a track to at most CONFIG.maxPoints vertices (always keeping the
-        // last fix) and stamp each with its age t: 0 = oldest, 1 = newest.
+        // Thin a track to at most CONFIG.maxPoints (keeping the last fix); stamp age t: 0 oldest, 1 newest.
         function thinPath(points) {
             const stride = Math.max(1, Math.ceil((points.length - 1) / CONFIG.maxPoints));
             const sampled = [];
@@ -495,10 +462,7 @@
         });
 
         let myGlobe = null;
-        // Every processed glider is drawn at once: the active one in the accent
-        // colour, the rest as grey context lines. allTracks holds the prebuilt
-        // geometry for each so switching the active one is a pure recolour +
-        // recentre (no refetch, no iframe reload) — see setActiveTrack.
+        // All processed gliders are drawn at once; allTracks holds prebuilt geometry so switching is a recolour + recentre.
         let allTracks = [];      // [{id, name, formattedPath, view, isNrt, lastLat, lastLon, dacArrows}]
         let activeId = null;     // id of the active (accent-coloured) track
         let hoverId = null;      // id of the grey track under the cursor, or null
@@ -506,38 +470,20 @@
         let showDac = false;   // DAC arrows default to off, even when available; user toggles them on
         let _trackView = null;   // active track's {centreLat, centreLng, maxSpan} for re-fitting the camera
 
-        // The single blue "pinned point" — a clicked location on this globe, or one
-        // pushed in from another globe / a clicked plot point (see showPin/clearPin).
-        // Drawn as an HTML marker (like the live-glider dot, but blue and a touch
-        // smaller) in the same html layer as the position dots, plus the coord-bubble
-        // readout. Kept in sync across every open globe by the parent.
+        // The single blue pinned point, kept in sync across every open globe by the parent.
         let _pinDot = null;   // null or {lat, lng, pin:true}
 
-        // Ruler measurement — press and hold (or shift-drag) to lay a great-circle
-        // line between two points (see attachCoordPicker). `_rulerStart`/`_rulerEnd`
-        // are the endpoints (drawn as orange dots via dotEl's `ruler` case);
-        // `_rulerLine` is the three.js ribbon mesh itself, rebuilt on every drag
-        // frame from _greatCirclePoints so it follows the globe's curvature
-        // rather than cutting a straight chord through the sphere.
+        // Ruler measurement: endpoints plus the great-circle ribbon mesh (rebuilt every drag frame).
         let _rulerStart = null;
         let _rulerEnd = null;
         let _rulerLine = null;
 
-        // Pinned measurements — the "push_pin" button in the coord bubble moves
-        // whatever's currently live (a point pick or a finished ruler) into this
-        // list so it survives the next click/ruler instead of being overwritten.
-        // Each entry: {id, type:'point', lat, lng} or {id, type:'ruler', a, b, km}.
-        // Point dots ride the same html marker layer as the live pin (buildPositionDots);
-        // ruler lines get their own persistent three.js mesh, keyed by id, since
-        // there can be several on screen at once (unlike the single live _rulerLine).
+        // Pinned measurements: {id, type:'point', lat, lng} or {id, type:'ruler', a, b, km}; each ruler has its own mesh keyed by id.
         let _pinnedItems = [];
         let _pinIdSeq = 1;
         const _pinnedRulerLines = {};
 
-        // Manually curated target points (planned stations etc.), managed from
-        // the admin panel — see waypoint_logic.py. Filtered client-side to the
-        // active track by a case-insensitive substring match of `glider`
-        // against the track's filename (there's no canonical glider id).
+        // Curated waypoints (see waypoint_logic.py), filtered to the active track by substring match of `glider` against the filename.
         let allWaypoints = [];   // [{id, glider, tag, lat, lon, notes}]
 
         function activeTrack() { return allTracks.find(t => t.id === activeId) || null; }
@@ -559,16 +505,11 @@
             }
         }
 
-        // ── Surface overlay state (chla / temp / salinity / o2 / ph / biomass / ssh) ──
-        // Only one surface field is shown at a time; turning one on replaces the
-        // other. Currents (DAC arrows) are separate and coexist.
+        // ── Surface overlay state: one surface field at a time; currents/DAC coexist ──
         const OVERLAY_HALF_DEG_DEFAULT = 0.054; // ~12 km cell fallback if server omits it
         const overlayCache = {};   // key -> fetched {points, p10, p90, date, half_deg, units}
 
-        // Server-side prefetch state per layer for the active glider (see
-        // overlay_prefetch.py): key -> {state: 'pending'|'ready'|'error', date}.
-        // Layers stay greyed out until the field is on the server's disk; the
-        // header icon spins while any is still pending.
+        // Server prefetch state per layer (copernicus_prefetch.py): key -> {state: 'pending'|'ready'|'error', date}.
         let layerState = {};
         let layerStatusTimer = 0;
         let layerStatusSeq = 0;
@@ -586,9 +527,7 @@
             icon.classList.toggle('spin', anyPending);
         }
 
-        // Poll /api/overlay_status for the active glider: fast while layers are
-        // still being fetched, slow (1 min) for a live glider so a field the
-        // server refreshed to a newer day gets picked up, and stopped otherwise.
+        // Poll /api/overlay_status: fast while pending, 1 min for a live glider, stopped otherwise.
         async function pollOverlayStatus() {
             clearTimeout(layerStatusTimer);
             const fileId = activeId;
@@ -602,8 +541,7 @@
                 if (seq !== layerStatusSeq || fileId !== activeId) return;
                 const prev = layerState;
                 layerState = st.layers || {};
-                // A live layer the server refreshed to a newer day: drop our
-                // copy so the next click (or the open overlay) reloads it.
+                // Server refreshed this layer to a newer day: drop our copy so it reloads.
                 for (const k in layerState) {
                     const was = prev[k] && prev[k].date;
                     const now = layerState[k].date;
@@ -634,9 +572,7 @@
         let overlayReqSeq = 0;     // ticket counter — only the latest loadOverlay() call may apply
         let overlaySmooth = true;  // Smooth toggle in the layer panel; rebuilds the active mesh
 
-        // Each overlay: ramp colour stops (0–1 → [r,g,b]), log/linear scaling,
-        // label and units for the legend. `log` suits values spanning orders of
-        // magnitude (chlorophyll, biomass); the rest read better linearly.
+        // Each overlay: ramp colour stops (0–1 → [r,g,b]), log/linear scaling, legend label and units.
         const OVERLAYS = [
             { key: 'chla', label: 'Chl-a', units: 'mg/m³', log: true, stops: [
                 [0,[237,254,237]],[0.2,[178,228,158]],[0.45,[78,178,68]],[0.7,[18,98,18]],[0.9,[4,48,8]],[1,[0,13,0]] ] },
@@ -691,37 +627,23 @@
         }
 
         // ── Surface layers ─────────────────────────────────────────────
-        // Everything drawn on the globe's surface here — tracks, DAC arrows,
-        // scalar overlays, the currents backdrop and streaks, ruler lines — is
-        // rendered with depth testing OFF and sits exactly on the sphere. Nothing
-        // is lifted above the surface, so nothing can z-fight with the ocean
-        // tiles or with each other at any zoom, and there's no parallax between
-        // layers when rotating. Stacking is decided purely by renderOrder, and
-        // the far hemisphere is hidden in the fragment shader instead of by the
-        // depth buffer (a surface point is visible iff its outward normal faces
-        // the camera).
+        // Everything sits exactly on the sphere with depth testing OFF: stacking is by renderOrder only,
+        // and the far hemisphere is culled in the fragment shader.
         const LAYER_ORDER = { overlay: 10, flow: 11, track: 12, hoverTrack: 12.5, activeTrack: 13, dac: 14, ruler: 20 };
 
-        // GLSL shared by every surface shader: `vWorld` is the fragment's world
-        // position, SURFACE_CULL the horizon test.
+        // GLSL shared by every surface shader: `vWorld` is world position, SURFACE_CULL the horizon test.
         const SURFACE_VARYING = 'varying vec3 vWorld;';
         const SURFACE_CULL = 'if (dot(vWorld, cameraPosition - vWorld) < 0.0) discard;';
 
-        // Viewport size in CSS px, shared by every ribbon material (line widths
-        // are screen pixels); refreshed on resize.
+        // Viewport size in CSS px, shared by every ribbon material; refreshed on resize.
         const _uRes = { value: null };
         function updateSurfaceResolution() {
             if (!_uRes.value) _uRes.value = new THREE.Vector2(1, 1);
             _uRes.value.set(window.innerWidth || 1, window.innerHeight || 1);
         }
 
-        // Screen-space ribbon material. Each path vertex is duplicated to both
-        // sides (`side` ±1) and pushed out by half the pixel width along the
-        // screen perpendicular of its tangent, so a line keeps the same on-screen
-        // thickness at any zoom. Colour and width interpolate from A (age 0, the
-        // oldest point) to B (age 1, the newest) — every style this view uses is
-        // linear in age, so restyling is a uniform write, never a rebuild. The
-        // outermost pixel is feathered so edges don't alias.
+        // Screen-space ribbon material: constant pixel width at any zoom; colour and width
+        // interpolate linearly from A (age 0, oldest) to B (age 1, newest), so restyling is a uniform write.
         function ribbonMaterial() {
             return new THREE.ShaderMaterial({
                 transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
@@ -764,12 +686,8 @@
 
         function setRGBA(v, r, g, b, a) { v.set(r / 255, g / 255, b / 255, a); }
 
-        // One BufferGeometry for a set of surface polylines. Each polyline is
-        // [{lat, lng, t}, ...] (or {x, y, z, t} for points already in globe
-        // space); consecutive points become a quad strip whose vertices are
-        // shared between neighbouring quads (mitred with the average tangent),
-        // so there are no gaps or double-blended overlaps at joints. Per-vertex
-        // `age` drives colour and width in ribbonMaterial.
+        // One BufferGeometry for a set of polylines ([{lat, lng, t}] or [{x, y, z, t}] in globe space),
+        // built as mitred quad strips; per-vertex `age` drives colour and width.
         function buildRibbonGeometry(polylines) {
             let nPts = 0, nQuads = 0;
             for (const pl of polylines) if (pl.length >= 2) { nPts += pl.length; nQuads += pl.length - 1; }
@@ -791,8 +709,7 @@
                 const n = pl.length;
                 let px = 0, py = 0, pz = 1;   // last usable tangent, for degenerate steps
                 for (let i = 0; i < n; i++) {
-                    // Tangent = chord from the previous point to the next one,
-                    // i.e. the mitre direction at this joint.
+                    // Tangent = chord from previous to next point (the mitre direction).
                     const i0 = Math.max(0, i - 1) * 3, i1 = Math.min(n - 1, i + 1) * 3;
                     let tx = xyz[i1] - xyz[i0], ty = xyz[i1 + 1] - xyz[i0 + 1], tz = xyz[i1 + 2] - xyz[i0 + 2];
                     const len = Math.hypot(tx, ty, tz);
@@ -836,21 +753,12 @@
             m.material.dispose();
         }
 
-        // ── Tracks ─────────────────────────────────────────────────────
-        // One ribbon mesh per glider, whatever its role: the active one draws in
-        // the accent colour, the rest as grey context lines, the hovered grey one
-        // brighter. Switching roles (hover, selection, theme) only rewrites the
-        // mesh's uniforms — see restyleTracks — so it's instant.
+        // ── Tracks: one ribbon mesh per glider; role changes only rewrite uniforms (restyleTracks) ──
         const _trackMeshes = {};   // track id -> ribbon mesh
         let _dacMesh = null;       // the active track's DAC arrows, only while showDac
 
-        // Glider overlays (track/DAC ribbons and the HTML position dots) stay
-        // hidden until the globe is ready AND its intro tween has finished.
-        // globe.gl fires onGlobeReady as it *starts* a 1200ms rotate/zoom-in,
-        // and the CSS2D dots sit at the screen centre until their first
-        // projection — so without this gate the dots pop up mid-screen on a
-        // fresh load and everything visibly slides into place as the globe
-        // rotates in. Any mesh/dot built before the reveal is created hidden.
+        // Tracks/DAC/dots stay hidden until the globe is ready AND its 1200ms intro tween has finished,
+        // otherwise dots pop up mid-screen and slide into place.
         let _sceneRevealed = false;
         const GLOBE_INTRO_MS = 1300;   // globe.gl animateIn tween (1200ms) + slack
 
@@ -861,8 +769,7 @@
             document.querySelectorAll('.gp-dot').forEach(el => { el.style.display = ''; });
         }
 
-        // (Re)build every track's ribbon from allTracks. One geometry per track,
-        // a few ms in total, so it's simply redone after each fetch.
+        // (Re)build every track's ribbon from allTracks.
         function rebuildTrackMeshes() {
             if (!myGlobe) return;
             for (const id in _trackMeshes) { disposeMesh(_trackMeshes[id]); delete _trackMeshes[id]; }
@@ -876,11 +783,7 @@
             syncDacMesh();
         }
 
-        // Push each track's current role into its material. The active track
-        // keeps the accent age-fade (darker and fainter toward its oldest point);
-        // the rest are grey — a light theme needs a darker grey to read against
-        // the white globe, a dark theme a lighter one — and hover lifts both
-        // brightness and opacity and draws that track above the other grey ones.
+        // Push each track's role (active / grey / hovered) into its material; greys depend on theme.
         function restyleTracks() {
             if (!myGlobe) return;
             const dark = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -908,9 +811,7 @@
             }
         }
 
-        // The active track's DAC arrows as one ribbon mesh (the other tracks
-        // never show DAC). Arrows fade with age like the track: oldest faint,
-        // thin grey; newest solid black and a touch thicker.
+        // The active track's DAC arrows as one ribbon mesh, fading with age.
         function syncDacMesh() {
             disposeMesh(_dacMesh);
             _dacMesh = null;
@@ -931,14 +832,8 @@
             myGlobe.scene().add(_dacMesh);
         }
 
-        // Position dots, one per glider so it's obvious where each one is:
-        //  • live (NRT) gliders → a red dot at the last fix, always shown;
-        //  • everyone else → a grey dot at its end position, shown only while NOT
-        //    selected (the active track is already obvious in the accent colour).
-        // Was the glider heading west over its last stretch? true / false, or
-        // null when there's no usable movement (icon keeps its default, east-
-        // facing orientation). Compares the marker position with a point a few
-        // fixes back so a single noisy surfacing doesn't flip it.
+        // Was the glider heading west over its last stretch? true / false, or null when there's no
+        // usable movement. Compares against a point a few fixes back to ignore a noisy surfacing.
         function headingWest(t, lat, lng) {
             const path = t.formattedPath;
             if (!path || path.length < 2) return null;
@@ -961,16 +856,13 @@
                     const lng = t.lastLon != null ? Number(t.lastLon) : end.lng;
                     pts.push({ lat, lng, trackId: t.id, name: t.name, live: true, active: t.id === activeId, lastTime: t.lastTime, kind: t.platformKind, west: headingWest(t, lat, lng) });
                 } else {
-                    // Recovered tracks: end-of-data marker. The selected one is
-                    // drawn too so its platform icon sits at the end.
+                    // Recovered tracks: end-of-data marker (selected one included).
                     pts.push({ lat: end.lat, lng: end.lng, trackId: t.id, name: t.name, live: false, active: t.id === activeId, kind: t.platformKind, west: headingWest(t, end.lat, end.lng) });
                 }
             }
-            // Research ships (when that layer is on) share this marker layer so
-            // they render exactly like the glider end markers.
+            // Research ships share this marker layer.
             if (window.ShipsLayer) pts.push(...ShipsLayer.dots());
-            // The blue pinned point rides in the same html layer so it re-applies
-            // automatically whenever the dots are refreshed (track switch, etc.).
+            // The blue pinned point rides in the same html layer.
             if (_pinDot) pts.push(_pinDot);
             if (_rulerStart) pts.push({ lat: _rulerStart.lat, lng: _rulerStart.lng, ruler: true });
             if (_rulerEnd) pts.push({ lat: _rulerEnd.lat, lng: _rulerEnd.lng, ruler: true });
@@ -994,8 +886,7 @@
             myGlobe.htmlElementsData(buildPositionDots());
         }
 
-        // Tell the parent app whether DAC arrows exist for this file and whether
-        // they're currently shown, so Jelly can answer/act on "show currents".
+        // Tell the parent app whether DAC arrows exist and are shown.
         function reportDacStatus() {
             try {
                 window.parent && window.parent.postMessage({
@@ -1020,9 +911,7 @@
                 ` depth-averaged currents (${dacArrows.length} dives)`;
         }
 
-        // Turn one raw track ({id,name,path,dac,last_lat,last_lon,is_nrt}) from
-        // /api/map_all into the shape the rest of this file works from (clean
-        // path, DAC arrow polylines, bounds). Done once per fetch.
+        // Turn one raw /api/map_all track into the shape this file works from (clean path, DAC arrows, bounds).
         function buildTrack(raw) {
             const formattedPath = (raw.path || [])
                 .filter(c => Array.isArray(c) && c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
@@ -1057,8 +946,7 @@
             };
         }
 
-        // Point the camera at the active track. instant=true for the first
-        // frame; otherwise a short ease so switching gliders glides over.
+        // Point the camera at the active track; instant=true skips the ease.
         function recentreOnActive(instant) {
             const at = activeTrack();
             if (!myGlobe || !at) return;
@@ -1110,9 +998,7 @@
                     .backgroundColor(tc.bg)
                     .showAtmosphere(true)
                     .atmosphereColor(tc.atmosphere)
-                    // Hover/click picking is done here in screen space (see
-                    // nearestTrackAtScreen and attachCoordPicker), so globe.gl's
-                    // own per-pointer-move raycast is switched off.
+                    // Picking is done in screen space here, so globe.gl's own raycast is off.
                     .enablePointerInteraction(false)
                     .htmlElementsData(buildPositionDots())
                     .htmlLat('lat')
@@ -1123,8 +1009,7 @@
                 updateSurfaceResolution();
                 rebuildTrackMeshes();
 
-                // Clamp camera distance: prevents zooming out so far the globe
-                // shrinks, and zooming in past the tile resolution.
+                // Clamp camera distance.
                 try {
                     const radius = myGlobe.getGlobeRadius();
                     const controls = myGlobe.controls();
@@ -1156,10 +1041,7 @@
             }
         }
 
-        // Hover highlighting uses the same forgiving radius as click selection
-        // (nearestTrackAtScreen) rather than globe.gl's exact on-line pick, so a
-        // grey track lights up as soon as the cursor is close to it — and the
-        // cursor becomes a pointer to signal it's clickable.
+        // Hover uses the same forgiving radius as click selection (nearestTrackAtScreen).
         let _coordAimOn = false;   // crosshair pick mode (after picking a coord)
         let _hoverRAF = 0, _hoverXY = null;
 
@@ -1179,8 +1061,7 @@
             return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         }
 
-        // Small cursor-following tooltip for waypoint/glider markers — same box
-        // for both, content built from nearestMarkerAtScreen()'s result.
+        // Cursor-following tooltip for waypoint/glider markers.
         function showMarkerTooltip(info, cx, cy) {
             const el = document.getElementById('marker-tooltip');
             if (!el) return;
@@ -1189,10 +1070,7 @@
             if (info.detail) lines.push(_escHtml(info.detail));
             el.innerHTML = lines.join('<br>');
             el.classList.add('visible');
-            // Default offset is down-right of the cursor; flip to whichever side
-            // keeps it inside this frame instead of letting it run under the
-            // globe panel's border (this iframe's own viewport is the bound —
-            // there's no scroll to reveal the clipped part).
+            // Default offset is down-right of the cursor; flip to stay inside this iframe.
             const margin = 6;
             const w = el.offsetWidth, h = el.offsetHeight;
             const vw = window.innerWidth, vh = window.innerHeight;
@@ -1237,12 +1115,10 @@
             setHover(null);
         }
 
-        // The dot marking a glider's position — red (with a stronger glow) for a
-        // live deployment, grey for a historical one.
+        // Position dot: red for a live deployment, grey for a historical one.
         function dotEl(d) {
             const el = document.createElement('div');
-            // globe.gl toggles the dot's `visibility` per frame (far-side
-            // occlusion), so the pre-reveal hide uses `display` instead.
+            // globe.gl toggles `visibility` per frame, so the pre-reveal hide uses `display`.
             el.className = 'gp-dot';
             if (!_sceneRevealed) el.style.display = 'none';
             // Blue pinned point: same look as the live dot, blue and a touch smaller.
@@ -1255,8 +1131,7 @@
                 el.style.cssText = 'width:9px;height:9px;border-radius:50%;background:#f97316;border:2px solid #fff;box-shadow:0 0 10px rgba(249,115,22,0.85);pointer-events:none;transform:translate(-50%,-50%);';
                 return el;
             }
-            // Waypoint (station) marker: small green dot, its tag renders separately
-            // via the labels layer.
+            // Waypoint marker: small green dot (tag renders via the labels layer).
             if (d.waypoint) {
                 el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 8px rgba(34,197,94,0.85);pointer-events:none;transform:translate(-50%,-50%);';
                 return el;
@@ -1264,14 +1139,11 @@
             // Ships: orange (gold when selected), same icon treatment as gliders.
             const c = d.ship ? (d.active ? '#FFD700' : '#fb923c') : d.live ? '#ef4444' : (d.active ? '#FFD700' : '#9ca3af');
             const glowRgb = d.ship ? (d.active ? '255,215,0' : '251,146,60') : d.live ? '239,68,68' : (d.active ? '255,215,0' : '156,163,175');
-            // Known platform: MARS's map icon (static/icons/), glowing red when
-            // live, grey otherwise. Falls back to the plain dot if the image
-            // fails to load or the kind is unknown.
+            // Known platform: icon from static/icons/; falls back to the plain dot.
             if (d.kind) {
                 const strong = d.live || d.active || d.ship;
                 const w = strong ? 36 : 28;
-                // Live / ships / the selected track: the icon as-is (its own white
-                // outline already stands out). Everything else: faded and greyed.
+                // Live / ships / selected: icon as-is. Everything else: faded and greyed.
                 const look = strong
                     ? 'filter:drop-shadow(0 0 1.5px #fff);opacity:1;'
                     : 'filter:drop-shadow(0 0 1px #fff) grayscale(1);opacity:0.4;';
@@ -1297,14 +1169,10 @@
             return el;
         }
 
-        // Switch the active (accent) track without refetching or reloading: clear
-        // the active-only overlays/currents (they belong to the old glider's
-        // region), repoint DAC at the new track, recolour, refresh the live
-        // markers, and recentre. This is what makes selection feel instant.
+        // Switch the active track without refetching: clear active-only layers, repoint DAC, recolour, recentre.
         function setActiveTrack(id) {
             if (!allTracks.some(t => t.id === id)) {
-                // Unknown id (e.g. a file that just finished processing) — refetch
-                // the track set, then apply once it's present.
+                // Unknown id: refetch the track set, then apply.
                 fetchAllTracks().then(() => {
                     if (allTracks.some(t => t.id === id)) setActiveTrack(id);
                 });
@@ -1312,8 +1180,7 @@
             }
             if (id === activeId) { recentreOnActive(false); return; }
 
-            // Remember whichever layer was open so we can re-fetch it for the new
-            // glider's time/location (overlays/currents are mutually exclusive).
+            // Remember the open layer so it can be re-fetched for the new glider.
             const prevOverlayKey = activeOverlay;
             const prevCurrents = currentsActive;
 
@@ -1321,9 +1188,7 @@
             hoverId = null;
             applyHoverCursor();
 
-            // Tear down the old glider's overlay/currents: their data is for a
-            // different region/date, and the caches are keyed only by variable —
-            // so drop the meshes AND the cached payloads before refetching.
+            // Caches are keyed only by variable, so drop meshes AND cached payloads.
             if (activeOverlay) { activeOverlay = null; applyOverlay(); }
             if (currentsActive) deactivateCurrents();
             for (const k in overlayCache) delete overlayCache[k];
@@ -1339,14 +1204,12 @@
             recentreOnActive(false);
             reportDacStatus();
 
-            // Re-open the same layer for the new glider — fetches its own
-            // time/location, showing the loading state meanwhile.
+            // Re-open the same layer for the new glider.
             if (prevOverlayKey) loadOverlay(prevOverlayKey);
             else if (prevCurrents) loadCurrents();
         }
 
-        // Ask the parent app to make `id` the active dataset (drives the top
-        // menu); it echoes back a setActive message which runs setActiveTrack.
+        // Ask the parent to make `id` active; it echoes back setActive, which runs setActiveTrack.
         function selectTrack(id) {
             try { window.parent.postMessage({ type: 'requestActivate', id }, '*'); } catch (_) {}
         }
@@ -1364,9 +1227,7 @@
             applyCurrents();  // rebuilds the currents mesh, if active
         });
 
-        // Re-centre the camera on the track. With opts.whole the camera frames the
-        // whole globe (with edge space); otherwise it fits the track tightly plus
-        // opts.padding extra altitude.
+        // Re-centre on the track: opts.whole frames the whole globe, else a tight fit plus opts.padding.
         function fitView(opts) {
             if (!myGlobe || !_trackView) return;
             opts = opts || {};
@@ -1383,13 +1244,10 @@
 
         // ── Surface overlays: buttons, fetch, render ───────────────────
 
-        // Build ONE mesh holding every cell as a coloured quad. A single
-        // geometry (a few thousand triangles) keeps this fast — a per-cell
-        // globe.gl polygon layer froze the tab at ~2500 cells.
+        // ONE mesh for all cells (a per-cell polygon layer froze the tab at ~2500 cells).
         const OVERLAY_OPACITY = 0.72;
 
-        // Flat vertex-coloured surface material for the scalar overlay / currents
-        // backdrop — same depth-test-off, horizon-culled scheme as the ribbons.
+        // Flat vertex-coloured surface material (depth-test off, horizon-culled like the ribbons).
         function overlayMaterial(opacity) {
             return new THREE.ShaderMaterial({
                 transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
@@ -1411,10 +1269,7 @@
         function buildOverlayMesh(data, ov, opacity = OVERLAY_OPACITY) {
             const H = (typeof data.half_deg === 'number' && data.half_deg > 0)
                 ? data.half_deg : OVERLAY_HALF_DEG_DEFAULT;
-            // Two input shapes: scalar overlays arrive as parallel Float32Arrays
-            // (lat/lon/val) from the binary payload; currents still pass an array
-            // of [lat,lng,val] triples via currentsSpeedData. Read cell k from
-            // whichever is present.
+            // Two input shapes: parallel Float32Arrays (lat/lon/val) or an array of [lat,lng,val] triples.
             const flat = !!data.val;
             const latA = data.lat, lonA = data.lon, valA = data.val;
             const pts = data.points;
@@ -1431,10 +1286,7 @@
                 if (lng < lonMin) lonMin = lng;
             }
 
-            // Snap cells onto their (row, col) in the regular source grid so
-            // adjacent cells can share corner vertices instead of each getting
-            // 4 independent, identically-coloured corners — that's what was
-            // producing the hard block edges.
+            // Snap cells onto the regular source grid so neighbours can share corner vertices.
             const rowOf = new Int32Array(n), colOf = new Int32Array(n);
             let nRows = 0, nCols = 0;
             for (let k = 0; k < n; k++) {
@@ -1449,8 +1301,7 @@
 
             const nVX = nCols + 1;
             const vertexIndex = new Int32Array((nRows + 1) * nVX).fill(-1);
-            // Smooth: every cell shares corner vertices with its neighbours.
-            // Blocky: each cell gets its own private, unshared quad.
+            // Smooth: shared corner vertices. Blocky: a private quad per cell.
             const maxVerts = overlaySmooth ? (nRows + 1) * nVX : n * 4;
             const positions = new Float32Array(maxVerts * 3);
             const colors = new Float32Array(maxVerts * 3);
@@ -1469,12 +1320,7 @@
                 return idx;
             }
 
-            // Shared, smoothed corner — averaged over whichever of the up-to-4
-            // cells touching this vertex actually have data. Missing cells
-            // (bbox edge, land, cloud) contribute nothing and never emit a
-            // quad, so the outline stays geometrically crisp: edge cells are
-            // smoothed *along* the boundary without any colour bleeding
-            // *across* it.
+            // Shared corner averaged over the touching cells that have data; missing cells never emit a quad.
             function sharedVertex(i, j) {
                 const key = i * nVX + j;
                 let idx = vertexIndex[key];
@@ -1536,10 +1382,7 @@
             document.getElementById('chla-bar-date').textContent = date || '';
         }
 
-        // The legend shares the bottom row with the bottom-right layers panel. When
-        // the contents don't fit the available width we drop pieces in priority
-        // order — first the leading title ("Currents"/"Chl-a"/…), then the date,
-        // then hide the bar entirely — rather than truncating text mid-character.
+        // When the legend doesn't fit: drop the title, then the date, then hide the bar.
         function fitColourBar() {
             const bar = document.getElementById('chla-bar');
             if (!bar.classList.contains('visible')) return;
@@ -1560,14 +1403,11 @@
             if (fits()) return;
             date.style.display = 'none';
             if (fits()) return;
-            // Genuinely no room left → hide the whole bar (kept laid out so it
-            // reappears automatically once there's space again).
+            // No room left: hide the bar (kept laid out so it reappears).
             bar.style.visibility = 'hidden';
         }
 
-        // Pull a runnable command out of a hint string, e.g.
-        //   "Run: pip install copernicusmarine"            -> "pip install copernicusmarine"
-        //   "Run 'copernicusmarine login' in your terminal" -> "copernicusmarine login"
+        // Pull a runnable command out of a hint string, e.g. "Run: pip install x" -> "pip install x".
         function extractCommand(hint) {
             if (!hint) return '';
             const quoted = hint.match(/['"`]([^'"`]+)['"`]/);
@@ -1582,8 +1422,7 @@
             document.getElementById('chla-err-msg').textContent = msg || 'Could not load overlay';
             document.getElementById('chla-err-hint').textContent = hint || '';
 
-            // If the hint names a command (pip install / copernicusmarine login),
-            // surface it as a copyable row so the user doesn't have to retype it.
+            // Surface a named command as a copyable row.
             const cmd = extractCommand(hint);
             const cmdRow = document.getElementById('chla-err-cmd');
             const copyBtn = document.getElementById('chla-err-cmd-copy');
@@ -1614,15 +1453,12 @@
                 };
             }
 
-            // A command in the hint (install) or a login-required signal means this
-            // is a one-time Copernicus setup issue rather than a transient failure.
+            // A command or login-required signal means one-time Copernicus setup, not a transient failure.
             const setupAction = cmd || setup === 'login';
             clearTimeout(showOverlayError._t);
 
             if (setupAction) {
-                // Setup help is surfaced through Jelly (with an in-app sign-in form)
-                // so it's noticeable and actionable even with the globe closed —
-                // don't also show the in-globe toast, which only doubles up on it.
+                // Setup help is surfaced through Jelly, so skip the in-globe toast.
                 box.classList.remove('visible');
                 try {
                     window.parent && window.parent.postMessage({
@@ -1640,10 +1476,7 @@
             }
         }
 
-        // ── Click-to-pick coordinates (for piloting hand-off) ──────────
-        // globe.gl gives {lat, lng} for the clicked point on the globe. Show it
-        // top-centre with copy + close. High precision (6 dp ≈ 0.1 m) so the
-        // value is usable as a waypoint in piloting software.
+        // ── Click-to-pick coordinates (6 dp, usable as a piloting waypoint) ──
         let _lastCoord = null;
 
         // Normalise longitude into (-180, 180] for a canonical readout.
@@ -1653,31 +1486,17 @@
             return x;
         }
 
-        // globe.gl's built-in onGlobeClick uses a very tight move tolerance, so a
-        // click with the faintest drift — common right after rotating, before the
-        // hand fully settles — gets treated as a drag and swallowed. We track
-        // pointer down/up ourselves with a forgiving threshold and raycast the
-        // pointer onto the globe sphere, which is far more reliable.
+        // Own pointer down/up tracking with a forgiving move threshold; globe.gl's onGlobeClick is too strict.
         let _coordDown = null;   // {x, y} at pointerdown, screen px
         const _COORD_MOVE_TOL = 6;   // px; a release within this of the press = a click
 
-        // ── Ruler (press-and-hold, or shift-drag) ───────────────────────
-        // Holding the pointer still for _RULER_HOLD_MS, or pressing with shift
-        // held, arms the ruler: a start point drops, orbit controls are
-        // disabled so the drag can't also spin the globe, and every further
-        // move redraws the line to the current pointer position with a live
-        // distance. Releasing drops the end point and leaves the measurement
-        // on screen. Moving past _COORD_MOVE_TOL before the hold fires is a
-        // normal rotate instead — the timer gets cancelled and nothing about
-        // the ruler engages.
+        // ── Ruler: hold still for _RULER_HOLD_MS (or shift-press) to arm; orbit controls are disabled while dragging ──
         let _rulerHoldTimer = null;
         let _rulerArmed = false;
         let _rulerAnchor = null;   // {lat, lng} — where the hold landed
         const _RULER_HOLD_MS = 380;
 
-        // Great-circle distance between two lat/lng points, in km (mean
-        // Earth radius) — this is what's shown in the coord bubble, kept
-        // independent of the globe's render radius/altitude.
+        // Great-circle distance in km (mean Earth radius), independent of render radius.
         function _haversineKm(lat1, lon1, lat2, lon2) {
             const R = 6371;
             const toRad = d => d * Math.PI / 180;
@@ -1690,9 +1509,7 @@
         const RULER_COLOR = [249, 115, 22];   // orange, matches the endpoint dots
         const RULER_WIDTH_PX = 2;
 
-        // Great-circle arc between two lat/lng points as a polyline of globe-space
-        // points, slerping between their unit vectors so the line follows the
-        // globe's curvature instead of cutting a straight chord through the sphere.
+        // Great-circle arc as globe-space points (slerp between unit vectors).
         function _greatCirclePoints(a, b) {
             const r = myGlobe.getGlobeRadius();
             const pa = myGlobe.getCoords(a.lat, a.lng, 0);
@@ -1753,14 +1570,7 @@
             return `${Math.abs(la).toFixed(precision)}°${la >= 0 ? 'N' : 'S'}, ${Math.abs(lo).toFixed(precision)}°${lo >= 0 ? 'E' : 'W'}`;
         }
 
-        // Render text into el at decreasing decimal precision until it fits the
-        // element's own box (it's stretched to the bubble's available width by
-        // the flex column it sits in). Only kicks in on a narrow panel/screen —
-        // at full width the first (highest-precision) pass already fits. If
-        // even 0 decimals overflows, the CSS ellipsis on #coord-text/#coord-time
-        // is the last-resort fallback. The copy button is unaffected — it always
-        // builds from the raw _lastCoord/_rulerStart/_rulerEnd values, never
-        // from this rendered text.
+        // Render text at decreasing precision until it fits; the copy button always uses the raw values.
         const _COORD_PRECISIONS = [6, 4, 3, 2, 1, 0];
         function _fitCoordText(el, buildFn) {
             let text = '';
@@ -1771,9 +1581,7 @@
             }
         }
 
-        // Re-render whatever's currently shown in the bubble at its best-fit
-        // precision — called after a resize, since the panel/screen width (and
-        // therefore how many decimals fit) can change without a new click.
+        // Re-render the bubble at its best-fit precision (called after a resize).
         function _refitCoordBubble() {
             const bubble = document.getElementById('coord-bubble');
             if (!bubble || !bubble.classList.contains('visible')) return;
@@ -1787,8 +1595,7 @@
             }
         }
 
-        // Show the ruler's live/final readout in the same top-centre bubble the
-        // single-point pin uses — distance as the headline, both endpoints below.
+        // Ruler readout in the same bubble: distance headline, endpoints below.
         function showRulerBubble(a, b, km) {
             document.getElementById('coord-bubble').classList.add('visible', 'ruler-mode');
             document.getElementById('coord-text').textContent = `${km.toFixed(km < 10 ? 3 : 2)} km`;
@@ -1797,8 +1604,7 @@
             _fitCoordText(el, p => `${_fmtLatLng(a.lat, a.lng, p)}  →  ${_fmtLatLng(b.lat, b.lng, p)}`);
         }
 
-        // Pointer released (or left the globe) while the ruler was armed: drop
-        // the end point, leave the line + bubble showing, restore orbiting.
+        // Ruler released: drop the end point, keep line + bubble, restore orbiting.
         function finishRuler(clientX, clientY) {
             clearTimeout(_rulerHoldTimer);
             _rulerArmed = false;
@@ -1808,8 +1614,7 @@
             if (!anchor) return;
             const end = _snapPickCoords(clientX, clientY) || anchor;
             const km = _haversineKm(anchor.lat, anchor.lng, end.lat, end.lng);
-            // A hold released without any real drag isn't a measurement — treat
-            // it like a plain click and just drop the usual pin.
+            // A hold with no real drag is treated as a plain click.
             if (km < 0.01) {
                 _rulerStart = null; _rulerEnd = null;
                 clearRulerLine();
@@ -1825,10 +1630,7 @@
             showRulerBubble(anchor, end, km);
         }
 
-        // Once the user has picked a point, switch the globe to a crosshair so the
-        // next point is easier to aim. Any drag (rotate) or closing the bubble
-        // drops back to the grab hand (clearing the inline cursor lets the CSS
-        // grab/grabbing rules take over again).
+        // After a pick, use a crosshair cursor; any drag or closing the bubble reverts to the grab hand.
         function setCoordAim(on) {
             _coordAimOn = on;
             applyHoverCursor();   // a track under the cursor (pointer) still wins
@@ -1838,13 +1640,11 @@
             const el = document.getElementById('globe-container');
             if (!el || el._coordPickerWired) return;
             el._coordPickerWired = true;
-            // Drop the ruler's start point at a screen position and take over
-            // the drag from the orbit controls.
+            // Drop the ruler's start point and take over the drag from the orbit controls.
             function armRuler(x, y) {
                 const geo = _snapPickCoords(x, y);
                 if (!geo) return;
-                // A real ruler start — clear any previous pin/measurement so
-                // the bubble isn't showing two things.
+                // Clear any previous pin/measurement.
                 clearPin();
                 _rulerArmed = true;
                 _rulerAnchor = geo;
@@ -1876,9 +1676,7 @@
                     }
                     return;
                 }
-                // A press that turns into a drag means the user is rotating —
-                // cancel any pending ruler-hold, leave aim mode right away, and
-                // stop highlighting so the cursor reads as a grab.
+                // A press that becomes a drag is a rotate: cancel the ruler-hold and aim mode.
                 if (_coordDown && Math.hypot(e.clientX - _coordDown.x, e.clientY - _coordDown.y) > _COORD_MOVE_TOL) {
                     clearTimeout(_rulerHoldTimer);
                     setCoordAim(false);
@@ -1906,9 +1704,7 @@
                 // Argo float dots (when that layer is on) take priority: fixed targets.
                 if (window.ShipsLayer && ShipsLayer.handleClick(e.clientX, e.clientY)) return;
                 if (window.ArgoLayer && ArgoLayer.handleClick(e.clientX, e.clientY)) return;
-                // A click on (or very near) a waypoint snaps straight to its exact
-                // coordinates, taking priority over track selection/path snapping —
-                // it's a fixed target point, not something to approximate.
+                // A click near a waypoint snaps to its exact coordinates (highest priority).
                 const wpHit = nearestWaypointAtScreen(e.clientX, e.clientY, 20);
                 if (wpHit) {
                     showPin(wpHit.lat, wpHit.lng);
@@ -1916,8 +1712,7 @@
                     try { window.parent.postMessage({ type: 'coordPicked', lat: wpHit.lat, lng: _wrapLon(wpHit.lng), onPath: false }, '*'); } catch (_) {}
                     return;
                 }
-                // Same priority for a pinned marker (point pin or ruler endpoint) —
-                // also a fixed target, so a click near one snaps to it exactly.
+                // Same priority for a pinned marker.
                 const pinnedHit = nearestPinnedAtScreen(e.clientX, e.clientY, 20);
                 if (pinnedHit) {
                     showPin(pinnedHit.lat, pinnedHit.lng);
@@ -1925,34 +1720,25 @@
                     try { window.parent.postMessage({ type: 'coordPicked', lat: pinnedHit.lat, lng: _wrapLon(pinnedHit.lng), onPath: false }, '*'); } catch (_) {}
                     return;
                 }
-                // A click on (or near) a grey context track selects it as the
-                // active glider, driven from the top menu. The nearest-track
-                // fallback adds a forgiving hit radius so a slightly-off click
-                // still lands. Clicking the active track or open ocean reads
-                // coordinates, as before.
+                // A click on/near a grey context track selects it; otherwise read coordinates.
                 const pick = (hoverId && hoverId !== activeId)
                     ? hoverId
                     : nearestTrackAtScreen(e.clientX, e.clientY, 14);
                 if (pick) { selectTrack(pick); return; }
-                // A click on (or very near) the ACTIVE glider's path snaps to that
-                // point: the parent then resolves its TIME (shown in the bubble) and
-                // marks the matching point on every open plot. An open-ocean click is
-                // position-only (onPath false) and leaves the plots alone.
+                // A click near the ACTIVE path snaps to it (parent resolves its time and marks the plots);
+                // an open-ocean click is position-only (onPath false).
                 const snap = nearestActivePointAtScreen(e.clientX, e.clientY, 14);
                 const geo = snap || pickGlobeCoords(e.clientX, e.clientY);
                 if (geo) {
                     showPin(geo.lat, geo.lng);
                     setCoordAim(true);
-                    // Mirror the pin onto every other open globe (and clear any plot
-                    // point popup, since this is a new selection) via the parent.
+                    // Mirror the pin onto every other open globe via the parent.
                     try { window.parent.postMessage({ type: 'coordPicked', lat: geo.lat, lng: _wrapLon(geo.lng), onPath: !!snap }, '*'); } catch (_) {}
                 }
             });
         }
 
-        // Screen pixel → {lat, lng} by raycasting the pointer onto the globe
-        // sphere (centred at the scene origin, radius = globe radius). Returns
-        // null when the click misses the globe (i.e. lands on empty space).
+        // Screen pixel → {lat, lng} by raycasting onto the globe sphere; null on a miss.
         function pickGlobeCoords(clientX, clientY) {
             if (!myGlobe) return null;
             try {
@@ -1972,10 +1758,7 @@
             } catch (_) { return null; }
         }
 
-        // Same snap priority a normal click uses (waypoint, then a pinned
-        // marker, then the active track's path, then raw globe coords) —
-        // shared by the ruler so its endpoints land on the same fixed points
-        // a single click would.
+        // Snap priority shared with plain clicks: waypoint, pinned marker, active path, raw globe coords.
         function _snapPickCoords(clientX, clientY) {
             return nearestWaypointAtScreen(clientX, clientY, 20)
                 || nearestPinnedAtScreen(clientX, clientY, 20)
@@ -1983,12 +1766,7 @@
                 || pickGlobeCoords(clientX, clientY);
         }
 
-        // Nearest grey (non-active) track whose line passes within `tolPx` of the
-        // point, or null. Gives hover/click a forgiving hit area so you don't have
-        // to land dead-on a thin line. Only points on the camera-facing hemisphere
-        // count, so a track on the far side of the globe can't be picked through it.
-        // Cartesian coords are cached per track (globe radius is fixed) and thinned
-        // to a bounded sample, so this is cheap enough to run every hover frame.
+        // Nearest grey track within `tolPx`, or null. Camera-facing hemisphere only; cartesian coords cached per track.
         const _tmpV = new THREE.Vector3();
         function ensureCart(t) {
             if (t.cart) return t.cart;
@@ -2020,11 +1798,7 @@
             let best = null, bestD = tolPx * tolPx;
             for (const t of allTracks) {
                 if (t.id === activeId) continue;
-                // Measure distance to the LINE (each visible segment), not just to the
-                // sampled vertices, so the hit area is the continuous track — no gaps
-                // between samples, and two close tracks are judged by which line is
-                // actually nearer. prevOk breaks the polyline where it dips behind the
-                // globe/camera so no false chord is drawn across the horizon.
+                // Distance is to each visible SEGMENT, not vertices; prevOk breaks the polyline behind the horizon.
                 let prevX = 0, prevY = 0, prevOk = false;
                 for (const c of ensureCart(t)) {
                     let sx = 0, sy = 0, ok = false;
@@ -2055,10 +1829,7 @@
             return best;
         }
 
-        // Nearest waypoint (station) to a screen click, returned as its exact
-        // {lat, lng}, or null when the click is further than `tolPx` from any
-        // visible waypoint. Same camera-facing / projection maths as the track
-        // pickers above, just against single points instead of a polyline.
+        // Nearest waypoint within `tolPx` as exact {lat, lng}, or null.
         function nearestWaypointAtScreen(clientX, clientY, tolPx) {
             if (!myGlobe) return null;
             const wps = waypointsForActiveTrack();
@@ -2082,11 +1853,7 @@
             return best;
         }
 
-        // Nearest pinned marker (a point pin or either end of a pinned ruler) to
-        // a screen click, returned as its exact {lat, lng}, or null when nothing
-        // pinned is within `tolPx`. Same camera-facing / projection maths as
-        // nearestWaypointAtScreen — pinned markers are fixed targets too, so
-        // clicks/ruler drags should snap to them the same way.
+        // Nearest pinned marker (point pin or ruler endpoint) within `tolPx` as {lat, lng}, or null.
         function nearestPinnedAtScreen(clientX, clientY, tolPx) {
             if (!myGlobe || !_pinnedItems.length) return null;
             const rect = document.getElementById('globe-container').getBoundingClientRect();
@@ -2112,11 +1879,7 @@
             return best;
         }
 
-        // Nearest marker (waypoint or a glider's position dot) to a screen point,
-        // returned as tooltip content {title, subtitle, detail}, or null when
-        // nothing visible is within `tolPx`. Reuses buildPositionDots() so the
-        // hit set always matches what's actually drawn (dots update on track
-        // switch, waypoints filtered to the active glider, etc.).
+        // Nearest marker within `tolPx` as tooltip content {title, subtitle, detail}, or null; reuses buildPositionDots().
         function nearestMarkerAtScreen(clientX, clientY, tolPx) {
             if (!myGlobe) return null;
             const rect = document.getElementById('globe-container').getBoundingClientRect();
@@ -2157,11 +1920,7 @@
             return `${days} day${days === 1 ? '' : 's'} ago`;
         }
 
-        // Nearest point ON THE ACTIVE track to a screen click, returned as snapped
-        // {lat, lng}, or null when the click is further than `tolPx` from the path.
-        // Same camera-facing / projection maths as nearestTrackAtScreen, but it
-        // walks the active track at full-ish resolution (this runs once per click,
-        // not per hover frame) so the snap lands on a real fix.
+        // Nearest point ON THE ACTIVE track within `tolPx` as snapped {lat, lng}, or null.
         function nearestActivePointAtScreen(clientX, clientY, tolPx) {
             if (!myGlobe) return null;
             const at = activeTrack();
@@ -2194,10 +1953,7 @@
             _lastCoord = { lat: la, lng: lo };
             const hemiLat = la >= 0 ? 'N' : 'S';
             const hemiLon = lo >= 0 ? 'E' : 'W';
-            // Show (and drop ruler-mode) BEFORE measuring for best-fit precision —
-            // a display:none element (and its children) always measures 0, which
-            // would make the very first render look like it already fits at full
-            // precision even when it doesn't.
+            // Show BEFORE measuring for best-fit precision: a display:none element measures 0.
             document.getElementById('coord-bubble').classList.remove('ruler-mode');
             document.getElementById('coord-bubble').classList.add('visible');
             _fitCoordText(document.getElementById('coord-text'),
@@ -2208,9 +1964,7 @@
             copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
         }
 
-        // Show (or clear, when ms is null) the TIME line under the coords. Set when
-        // the click landed on the active glider's path and the parent has resolved
-        // the moment the glider was at that spot.
+        // Show (or clear, when ms is null) the TIME line under the coords.
         function setCoordTime(ms) {
             const el = document.getElementById('coord-time');
             if (!el) return;
@@ -2223,9 +1977,7 @@
             el.style.display = '';
         }
 
-        // Drop (or move) the blue pin: draw the dot + show the coord readout.
-        // A plain click always wins over a leftover ruler measurement — same as
-        // it already overrides any previous pin.
+        // Drop (or move) the blue pin; overrides any leftover ruler measurement.
         function showPin(lat, lng) {
             if (typeof lat !== 'number' || typeof lng !== 'number') return;
             _pinDot = { lat, lng, pin: true };
@@ -2236,9 +1988,7 @@
             showCoordBubble({ lat, lng });
         }
 
-        // Remove the blue pin and its readout from THIS globe (local only — the
-        // parent fans the clear out to the other globes / the plot popup). Also
-        // wipes any ruler measurement, since both share the one top-centre bubble.
+        // Remove the pin, readout and any ruler from THIS globe only (the parent fans the clear out).
         function clearPin() {
             _pinDot = null;
             _rulerStart = null;
@@ -2252,9 +2002,7 @@
             setCoordAim(false);
         }
 
-        // Move whatever's currently live (a point pick or a finished ruler) into
-        // the pinned stack, so the next click/ruler no longer overwrites it. The
-        // live ruler's three.js line is handed off intact rather than rebuilt.
+        // Move the live pick/ruler into the pinned stack; the ruler's line mesh is handed off intact.
         function pinCurrent() {
             if (_rulerStart && _rulerEnd) {
                 const id = _pinIdSeq++;
@@ -2316,9 +2064,7 @@
             wrap.classList.toggle('visible', _pinnedItems.length > 0);
         }
 
-        // Swing the camera to a pinned item: a point is centred and zoomed to at
-        // most PIN_FLY_ALT (never zooming back out if already closer); a ruler is
-        // centred on its great-circle midpoint at an altitude that frames it.
+        // Fly to a pinned item: a point zooms to at most PIN_FLY_ALT; a ruler is framed on its midpoint.
         const PIN_FLY_ALT = 0.15;
         function flyToPinned(item) {
             if (!myGlobe) return;
@@ -2337,8 +2083,7 @@
             myGlobe.pointOfView({ lat: geo.lat, lng: geo.lng, altitude: alt }, 700);
         }
 
-        // The string handed to the clipboard — plain signed decimal "lat, lon",
-        // a format most piloting/GIS tools accept. Tweak once we know the target.
+        // Clipboard string: plain signed decimal "lat, lon".
         function _coordCopyText() {
             if (_rulerStart && _rulerEnd) {
                 const km = _haversineKm(_rulerStart.lat, _rulerStart.lng, _rulerEnd.lat, _rulerEnd.lng);
@@ -2349,8 +2094,7 @@
             return `${_lastCoord.lat.toFixed(6)}, ${_lastCoord.lng.toFixed(6)}`;
         }
 
-        // Pressing 'x' anywhere clears the pin/marker everywhere — clear locally and
-        // tell the parent to fan the clear out to the other globes and the plots.
+        // 'x' clears the pin locally and tells the parent to clear it everywhere.
         window.addEventListener('keydown', (e) => {
             if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey
                 && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) {
@@ -2364,8 +2108,7 @@
             if (!bubble) return;
             document.getElementById('coord-close').addEventListener('click', () => {
                 clearPin();
-                // Tell the parent so the pin clears on every other globe and on the
-                // plot point popup too.
+                // Tell the parent so the pin clears on every other globe and the plot popup.
                 try { window.parent.postMessage({ type: 'coordCleared' }, '*'); } catch (_) {}
             });
             document.getElementById('coord-pin-toggle').addEventListener('click', () => {
@@ -2398,8 +2141,7 @@
             });
         })();
 
-        // Build the overlay rows in the sidebar (above Currents). Mutually
-        // exclusive: clicking one replaces the active field. Styling is in CSS.
+        // Build the overlay rows in the sidebar (mutually exclusive).
         function buildOverlayButtons() {
             const dac = document.getElementById('dacToggle');
             const body = document.getElementById('layer-body');
@@ -2451,24 +2193,18 @@
             }
         }
 
-        // ── Data-source attribution ──────────────────────────────────────
-        // One line per active third-party source (Copernicus overlays/currents,
-        // Argo floats). setAttrib(key, html|null) adds/removes a line; the strip
-        // hides itself when empty. Exposed on window so layer scripts can use it.
+        // ── Data-source attribution: setAttrib(key, html|null); exposed on window for layer scripts ──
         const _attribLines = {};
         function setAttrib(key, html) {
             if (html) _attribLines[key] = html; else delete _attribLines[key];
             const el = document.getElementById('attrib');
-            // Always one line: sources joined with a separator so the strip never
-            // grows tall enough to collide with the colourbar above it.
+            // Always one line so the strip never collides with the colourbar.
             el.innerHTML = Object.values(_attribLines).map(h => `<span>${h}</span>`).join('<span class="sep">·</span>');
             document.body.classList.toggle('hasAttrib', el.innerHTML !== '');
         }
         window.setAttrib = setAttrib;
-        // Copernicus Marine licence (§2.4, derivative works): credit must read
-        // "Generated using E.U. Copernicus Marine Service Information" followed by
-        // the DOI of every product used. Product DOIs per overlay key (the server
-        // falls back NRT → MY for chla/ssh, so both products are cited for those).
+        // Copernicus Marine licence (§2.4): credit text must be followed by the DOI of every product used
+        // (NRT → MY fallback means both products are cited for chla/ssh).
         const COPERNICUS_DOI = {
             'moi-00016': 'Global Ocean Physics Analysis and Forecast',
             'moi-00015': 'Global Ocean Biogeochemistry Analysis and Forecast',
@@ -2497,9 +2233,7 @@
                 + (links ? '; ' + links : ''));
         }
 
-        // Draw whatever activeOverlay points at (rebuilding the mesh), or nothing.
-        // Returns the mesh-build time in ms (0 if nothing was drawn) so callers
-        // can fold the draw cost into the unified overlay timing log.
+        // Draw whatever activeOverlay points at; returns the mesh-build time in ms.
         function applyOverlay() {
             let drawMs = 0;
             if (myGlobe && activeOverlay && overlayCache[activeOverlay]) {
@@ -2529,11 +2263,7 @@
             return drawMs;
         }
 
-        // One collapsed, expandable log for a full overlay load: header shows the
-        // total click→drawn time; expand for the phase breakdown (locate region,
-        // download, maths, transfer, parse, draw). Reuses the plot-timing renderer.
-        //   T       — marks gathered in loadOverlay (perf.now() timestamps + server _timing)
-        //   drawMs  — mesh-build time from applyOverlay
+        // One expandable log per overlay load. T = perf.now() marks + server _timing; drawMs from applyOverlay.
         function logOverlayTiming(key, T, drawMs) {
             const toMs = (s) => (typeof s === 'number' ? s * 1000 : 0);
             const sp = T.serverPhases || {};
@@ -2542,8 +2272,7 @@
             const network = Math.max(0, (T.fetched - T.start) - serverMs);
             const parse = Math.max(0, T.parsed - T.fetched);
 
-            // Server-side phases nest under one "server" bar (= X-Process-Time);
-            // logPlotTiming adds an "·other" child for the gzip/serialise remainder.
+            // Server-side phases nest under one "server" bar (= X-Process-Time).
             const children = [];
             if (sp.locate != null) children.push({ name: 'locate region', ms: toMs(sp.locate), color: '#c4a8f5' });
             if (sp.prep != null)   children.push({ name: 'prepare bbox · date', ms: toMs(sp.prep), color: '#c4a8f5' });
@@ -2552,8 +2281,7 @@
                 children.push({ name: 'extract · maths', ms: toMs(sp.extract), color: '#7ec8f7' });
             }
 
-            // >1 server-side open attempt means a dataset/date miss fell back —
-            // its cost is folded into "download"; flag it so a fat bar reads right.
+            // >1 server-side open attempt means a dataset/date fallback, folded into "download".
             const dl = children.find((c) => c.name === 'download field');
             if (dl && sp.attempts > 1) dl.name = `download field (${sp.attempts} attempts)`;
 
@@ -2568,9 +2296,8 @@
                 { badge: 'OVERLAY', badgeBg: '#3b1f6e', badgeColor: '#c4a8f5' });
         }
 
-        // Decode the packed overlay payload (see overlay_logic.pack_overlay_response):
+        // Decode the packed payload (copernicus_fetch.pack_overlay_response):
         // uint32 LE header length, JSON header, then lat/lon/val as raw LE float32.
-        // Mirrors parsePlotBinary in main_plot.html.
         function decodeOverlayBinary(buf) {
             const dv = new DataView(buf);
             const headerLen = dv.getUint32(0, true);
@@ -2580,8 +2307,7 @@
             let off = 4 + headerLen;
             for (const name of Object.keys(layout)) {
                 const { dtype, len } = layout[name];
-                // slice() copies into a fresh aligned buffer, so the typed view is
-                // valid regardless of the header's byte length (still a memcpy, not a parse).
+                // slice() copies into a fresh aligned buffer, so the typed view is always valid.
                 if (dtype === 'f32') { meta[name] = new Float32Array(buf.slice(off, off + len * 4)); off += len * 4; }
                 else if (dtype === 'f64') { meta[name] = new Float64Array(buf.slice(off, off + len * 8)); off += len * 8; }
             }
@@ -2592,21 +2318,14 @@
             const fileId = activeId;   // overlays always target the active glider
             if (!fileId) return;
 
-            // Ticket for this call. setActiveTrack re-fetches the open overlay
-            // directly (bypassing selectOverlay's mid-fetch guard) whenever the
-            // user switches gliders, so several loadOverlay calls can genuinely
-            // be in flight together — whichever HTTP response happens to land
-            // last would otherwise win, even if it was requested first. Only
-            // the call still holding the newest ticket when its response lands
-            // is allowed to touch state or render.
+            // Request ticket: several loadOverlay calls can be in flight; only the newest may touch state.
             const seq = ++overlayReqSeq;
             overlayLoading = key;
             updateOverlayButtons();
             // Marks for the unified OVERLAY timing log (see logOverlayTiming).
             const T = { start: performance.now(), cells: 0 };
             try {
-                // The full breakdown is logged below, so skip the generic
-                // "API /api/overlay" one-liner to keep it to a single log.
+                // Skip the generic API one-liner; the full breakdown is logged below.
                 if (window.gpSkipNextApiLog) window.gpSkipNextApiLog();
                 const res = await fetch(`/api/overlay?id=${encodeURIComponent(fileId)}&var=${key}`);
                 T.fetched = performance.now();
@@ -2618,8 +2337,7 @@
                     ? await res.json()
                     : decodeOverlayBinary(await res.arrayBuffer());
                 T.parsed = performance.now();
-                // A newer request has since superseded this one — drop this
-                // response rather than let a slow, stale fetch clobber it.
+                // Superseded by a newer request: drop this response.
                 if (seq !== overlayReqSeq) return;
                 if (!res.ok || data.error) {
                     showOverlayError(data.error || `Request failed (${res.status})`, data.hint, data.setup);
@@ -2639,8 +2357,7 @@
             } finally {
                 if (seq === overlayReqSeq) {
                     overlayLoading = null;
-                    // The server may have fetched this on demand — re-sync the
-                    // button state now rather than on the next scheduled poll.
+                    // The server may have fetched this on demand: re-sync button state now.
                     if (layerPending(key)) pollOverlayStatus();
                     const drawMs = applyOverlay();
                     if (T.cells) {
@@ -2668,9 +2385,7 @@
             }
         }
 
-        // Explicit setter for Jelly: show `key` (no toggling), or 'none'/unknown
-        // to hide. Unlike selectOverlay, asking for the already-active field is
-        // a no-op rather than turning it off.
+        // Explicit setter: show `key` (no toggling), or 'none'/unknown to hide.
         function setOverlayByKey(key) {
             if (overlayLoading) return;
             if (!key || key === 'none' || !overlayByKey[key]) {
@@ -2684,11 +2399,7 @@
         }
 
         // ── Copernicus surface currents: speed mesh + animated particle flow ──
-        // The flow field (uo, vo grid) is interpolated bilinearly; thousands of
-        // short line "streaklets" are advected through it each frame and fade in
-        // and out, giving the moving look of the My Ocean / nullschool viewers.
-        // Speed ramp: cream (slow) → olive → deep green (fast), matching the
-        // My Ocean "speed" colormap the user supplied.
+        // Streaklets are advected through the bilinearly-interpolated (uo, vo) grid each frame.
         const CURRENTS_DEF = { key: 'currents', label: 'Currents', units: 'm/s', log: false, stops: [
             [0,[255,253,205]],[0.12,[235,219,143]],[0.25,[214,195,91]],[0.38,[187,179,50]],
             [0.50,[150,165,16]],[0.62,[104,149,9]],[0.74,[57,131,28]],[0.85,[24,115,40]],
@@ -2712,9 +2423,7 @@
         let flowState = null;        // per-particle sim arrays
         let flowRAF = 0, flowLastT = 0;
 
-        // Bilinear sample of the flow at (lat, lng) → [u, v] m/s, or null off-grid.
-        // Cells touching land hold null; we fill from the valid corners so flow
-        // doesn't stall against coastlines, and bail only when all four are land.
+        // Bilinear flow sample at (lat, lng) → [u, v] m/s, or null off-grid; land corners are filled from valid ones.
         function sampleFlow(d, lat, lng) {
             const fx = (lng - d.lon0) / d.dlon;
             const fy = (lat - d.lat0) / d.dlat;
@@ -2756,8 +2465,7 @@
                      p90: Math.max(d.speed_p90, 0.05), date: d.date, units: d.units };
         }
 
-        // Random position on flowing water, biased toward faster currents so the
-        // strong areas stay denser — but slower areas still get seeded.
+        // Random spawn on flowing water, biased toward faster currents.
         function spawnFlow(d) {
             let best = null, bestSpeed = -1, anyValid = null;
             for (let i = 0; i < 6; i++) {
@@ -2775,9 +2483,7 @@
                     d.lon0 + Math.random() * (d.nlon - 1) * d.dlon];
         }
 
-        // Minimal shader so each streaklet vertex carries its own fade alpha —
-        // standard line materials only do a single global opacity. Surface
-        // layer like the rest: no depth test, far hemisphere culled in-shader.
+        // Minimal shader so each streaklet vertex carries its own fade alpha (no depth test, horizon-culled).
         function flowMaterial() {
             return new THREE.ShaderMaterial({
                 transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
@@ -2797,8 +2503,7 @@
             });
         }
 
-        // Set every point of particle i's trail to one cartesian spot (used on
-        // spawn so a fresh particle is a dot, not a line streaking from nowhere).
+        // Collapse particle i's whole trail to one point (used on spawn).
         function fillTrail(s, i, x, y, z) {
             const base = i * CUR_TRAIL * 3;
             for (let k = 0; k < CUR_TRAIL; k++) {
@@ -2813,9 +2518,7 @@
             const lat = new Float32Array(n), lng = new Float32Array(n);
             const age = new Float32Array(n), life = new Float32Array(n);
             const trail = new Float32Array(n * L * 3);   // cartesian history per particle
-            // Adaptive advection: scale flow so a p90-strength current sweeps about
-            // CUR_DEG_PER_SEC of arc each second, whatever the field's magnitude.
-            // dtFrames is in ~60fps frame units, so divide the per-second target by 60.
+            // Scale flow so a p90-strength current sweeps CUR_DEG_PER_SEC of arc per second; dtFrames is in 60fps units.
             const degPerStep = (CUR_DEG_PER_SEC / Math.max(d.speed_p90, 0.05)) / 60;
             flowState = { d, n, L, lat, lng, age, life, degPerStep, trail };
 
@@ -2884,8 +2587,7 @@
                 const lt = s.age[i] / s.life[i];
                 const lifeFade = lt < 0.12 ? lt / 0.12 : (lt > 0.7 ? (1 - lt) / 0.3 : 1);
 
-                // Emit (L-1) line segments; alpha ramps tail→head, but sits on a
-                // floor so the whole streak reads bold rather than wispy.
+                // Emit (L-1) line segments; alpha ramps tail→head above a floor.
                 const segs = L - 1;
                 const sb = i * segs * 2;
                 for (let j = 0; j < segs; j++) {
@@ -2930,8 +2632,7 @@
             currentsMesh = null;
         }
 
-        // Returns the build time in ms (speed mesh + flow-particle setup, not the
-        // per-frame animation) so loadCurrents can fold it into the timing log.
+        // Returns the build time in ms (speed mesh + particle setup).
         function applyCurrents() {
             let drawMs = 0;
             disposeCurrents();
@@ -2972,8 +2673,7 @@
         async function loadCurrents() {
             const fileId = activeId;   // currents always target the active glider
             if (!fileId) return;
-            // Same stale-response race as loadOverlay: setActiveTrack calls this
-            // directly on every glider switch, so only the newest ticket may apply.
+            // Same stale-response ticket as loadOverlay.
             const seq = ++currentsReqSeq;
             currentsLoading = true;
             updateCurrentsButton();
@@ -3087,9 +2787,7 @@
         buildCurrentsButton();
         initMap();
 
-        // Resizing the globe's WebGL renderer is expensive, and a window drag
-        // fires many raw 'resize' events per second — coalesce to at most one
-        // update per animation frame instead of doing this work on every tick.
+        // Coalesce resize events to one update per animation frame.
         let _mapResizeRaf = null;
         window.addEventListener('resize', () => {
             if (_mapResizeRaf !== null) return;
@@ -3115,8 +2813,7 @@
                     restyleTracks();   // grey level / accent are theme-dependent
                 }
             } else if (event.data.type === 'pinCoord') {
-                // Another globe was clicked, or a plot point was picked — drop the
-                // blue pin here too so every globe shows the same spot.
+                // Another globe or a plot point was picked: mirror the pin here.
                 if (typeof event.data.lat === 'number' && typeof event.data.lng === 'number') {
                     showPin(event.data.lat, event.data.lng);
                 }
@@ -3134,12 +2831,10 @@
             } else if (event.data.type === 'queryDac') {
                 reportDacStatus();
             } else if (event.data.type === 'setActive') {
-                // Parent switched the active dataset — recolour/recentre in place
-                // (no reload) so the swap is instant.
+                // Parent switched the active dataset: recolour/recentre in place.
                 if (event.data.id) setActiveTrack(event.data.id);
             } else if (event.data.type === 'refreshTracks') {
-                // The set of processed files changed (added / removed / finished).
-                // Rebuild the context tracks, keeping the current active glider.
+                // The set of processed files changed: rebuild tracks, keep the active glider.
                 fetchAllTracks().then(() => {
                     if (!activeTrack() && allTracks.length) activeId = allTracks[0].id;
                     dacArrows = activeTrack() ? activeTrack().dacArrows : [];
@@ -3159,8 +2854,7 @@
                     setOverlayByKey(key);
                 }
             } else if (event.data.type === 'collapseLayers') {
-                // Parent (e.g. the Duo view) tucking the Layers panel away after
-                // programmatically setting an overlay.
+                // Parent tucking the Layers panel away after setting an overlay.
                 const panel = document.getElementById('layer-panel');
                 if (panel && !panel.classList.contains('collapsed')) {
                     panel.classList.add('collapsed');

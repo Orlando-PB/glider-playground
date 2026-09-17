@@ -1,23 +1,4 @@
-/**
- * cycle_profile.js
- *
- * Self-contained module managing profile, cycle, SCI_PHASE and direction
- * filtering state + UI for Glider Playground.
- *
- * Usage in index.html:
- *   CycleProfile.init(domElements, onChangeFn);
- *   CycleProfile.loadFile(fileId);
- *   CycleProfile.setZoomBounds(bounds, isXDateTime);
- *   const extra = CycleProfile.getParams();   // add to plot URL
- *   CycleProfile.resetState();                // clear filters (keep lists)
- *   CycleProfile.fullReset();                 // clear everything on file change
- *
- * Cross-linking:
- *   - Profile arrows constrain to profiles within the selected cycle.
- *   - Cycle arrows, when a profile is selected, jump to the cycle containing
- *     that profile (clearing the profile selection), then step normally.
- *   - Prev/next arrows are disabled at list boundaries.
- */
+/** Profile / cycle / SCI_PHASE / direction filter state + UI. getParams() feeds the plot URL. */
 
 const CycleProfile = (() => {
     'use strict';
@@ -55,14 +36,7 @@ const CycleProfile = (() => {
     let _els          = {};
     let _onChange     = null;
 
-    // ── Load-time visibility cache ──────────────────────────────────────────
-    // The Navigate/Phases/Direction toolbar groups only know whether they
-    // apply to a file once /api/profiles and /api/cycles come back, so on
-    // every loadFile() (including reloading the exact same file) they'd
-    // otherwise flash hidden-then-shown while those fetch. Remembering the
-    // last file's capabilities lets a reload of the same file render the
-    // right shape immediately; a genuinely different/unknown file just falls
-    // back to the old hide-then-reveal behaviour.
+    // ── Load-time visibility cache (avoids toolbar flicker on same-file reload) ──
     const _CAPS_KEY = 'gp_cp_caps';
     function _readCachedCaps(fileId) {
         try {
@@ -75,9 +49,7 @@ const CycleProfile = (() => {
     function _writeCachedCaps(fileId, caps) {
         try { localStorage.setItem(_CAPS_KEY, JSON.stringify({ fileId, ...caps })); } catch (_) {}
     }
-    // _loadProfiles and _loadCycles resolve independently (Promise.all), so
-    // merge onto whatever the other one already wrote for this file rather
-    // than clobbering it.
+    // Merge, don't overwrite: _loadProfiles and _loadCycles write independently.
     function _mergeCachedCaps(fileId, partial) {
         const existing = _readCachedCaps(fileId) || {};
         _writeCachedCaps(fileId, { ...existing, ...partial });
@@ -157,9 +129,7 @@ const CycleProfile = (() => {
         _hasDirection = false;
         resetState();
 
-        // Reload of the same file: apply last-known visibility right away
-        // instead of hiding everything and waiting for the fetches to redo
-        // the same reveal a moment later.
+        // Same-file reload: apply last-known visibility immediately.
         const cached = fileId ? _readCachedCaps(fileId) : null;
         if (cached) {
             cached.hasProfiles ? _showElement(_els.profileContainer) : _hideElement(_els.profileContainer);
@@ -243,8 +213,7 @@ const CycleProfile = (() => {
         if (total <= 0) {
             prevBtn.disabled = nextBtn.disabled = true;
         } else if (idx < 0) {
-            // Nothing selected yet: next (→) picks the first, prev (←) the last,
-            // so both arrows must stay enabled.
+            // Nothing selected: next picks the first, prev the last — keep both enabled.
             prevBtn.disabled = nextBtn.disabled = false;
         } else {
             prevBtn.disabled = idx <= 0;
@@ -262,14 +231,8 @@ const CycleProfile = (() => {
     function _showElement(el, display) { if (el) el.style.display = display || 'flex'; }
     function _fire() { if (_onChange) _onChange(); }
 
-    // time_min/time_max (from /api/profiles, /api/cycles) and zoom bounds are
-    // naive-UTC timestamps with no timezone designator (e.g. '2026-04-25T10:08:25'
-    // or '2026-04-25 10:08:25'). `new Date(str)` on a string like that is parsed
-    // as BROWSER-LOCAL time per the JS spec (only date-only strings default to
-    // UTC), so anywhere the browser isn't UTC this silently shifted every
-    // profile/cycle time comparison by the local offset (e.g. BST = +1h) — the
-    // same class of bug main_plot.html works around for Plotly's axis strings.
-    // Force UTC by normalizing to 'T' and appending 'Z' before parsing.
+    // Backend times are naive-UTC strings; bare `new Date(str)` parses them as
+    // browser-local. Always normalise to 'T' + 'Z' via this helper.
     function _parseUTC(v) {
         if (typeof v === 'number') return v;
         if (!v) return NaN;
@@ -325,7 +288,6 @@ const CycleProfile = (() => {
             }
         }
 
-        // Update arrow states based on constrained list
         const pool = _profilesInCycle(_cycleNum);
         const nums = pool.map(p => p.number);
         const idx  = _profileNum !== null ? nums.indexOf(_profileNum) : -1;
@@ -339,16 +301,11 @@ const CycleProfile = (() => {
 
         let candidates = pool;
 
-        // Further zoom-constrain when no profile is selected. _zoomBounds comes
-        // from the plot iframe's own Plotly relayout event, NOT server data — its
-        // date strings follow Plotly's own (occasionally browser-local) format,
-        // so treating them as naive-UTC via _parseUTC would misapply the fix
-        // meant for time_min/time_max. Bare Date parsing matches what main_plot's
-        // own zoom-echo handling expects here.
+        // Zoom-constrain when no profile is selected.
         if (_profileNum === null && _zoomBounds && _isXDateTime &&
                 pool.some(p => p.time_min && p.time_max)) {
-            const zMin = new Date(_zoomBounds.xMin).getTime();
-            const zMax = new Date(_zoomBounds.xMax).getTime();
+            const zMin = _parseUTC(_zoomBounds.xMin);
+            const zMax = _parseUTC(_zoomBounds.xMax);
             const inZoom = pool.filter(p => {
                 if (!p.time_min || !p.time_max) return false;
                 return _parseUTC(p.time_max) >= zMin &&
@@ -478,9 +435,7 @@ const CycleProfile = (() => {
         if (idx === -1) idx = delta > 0 ? -1 : nums.length;
         idx = Math.max(0, Math.min(nums.length - 1, idx + delta));
         _cycleNum = nums[idx];
-        // A profile selected within the OLD cycle (e.g. profile 10 of cycle 22)
-        // doesn't necessarily belong to the new one — clear it so stepping cycles
-        // doesn't silently keep showing a single stale profile from before.
+        // A profile from the old cycle may not belong to the new one — clear it.
         if (_profileNum !== null) { _profileNum = null; _syncProfileUI(); }
         _syncCycleUI();
         _fire();

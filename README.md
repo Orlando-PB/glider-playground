@@ -1,12 +1,12 @@
 # Glider Playground
 
-<a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/NOC_logo.svg" alt="National Oceanography Centre" width="72" align="right"></a>
+<a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/readme_images/NOC_logo.svg" alt="National Oceanography Centre" width="72" align="right"></a>
 
 A fast, web-based explorer for ocean glider data. Load OG1 NetCDF files — or pull live deployments straight from BODC — and instantly plot, inspect, QC, and view them in 3D, all in your browser with no scripting required.
 
 **Live demo:** [glider-playground.co.uk](https://glider-playground.co.uk) *(running on a Raspberry Pi — may be slow)*
 
-![Glider Playground](glider_playground/static/whole_view.webp)
+![Glider Playground](glider_playground/static/readme_images/whole_view.webp)
 
 ---
 
@@ -35,7 +35,7 @@ pip install .
 
 ## Loading Data
 
-<img src="glider_playground/static/files_dropdown.webp" alt="Files panel with live BODC deployments" width="340" align="right">
+<img src="glider_playground/static/readme_images/files_dropdown.webp" alt="Files panel with live BODC deployments" width="340" align="right">
 
 Click the **file button** (top-left) to open the file panel. You can:
 
@@ -72,7 +72,7 @@ One click rebuilds the whole workspace:
 
 Presets pick sensible X/Y/Colour variables and skip anything the current file doesn't have.
 
-![Dashboard preset — globe with currents, 3D track, and stacked plots](glider_playground/static/dashboard.webp)
+![Dashboard preset — globe with currents, 3D track, and stacked plots](glider_playground/static/readme_images/dashboard.webp)
 
 ### Globe, 3D & Overlays
 
@@ -82,7 +82,7 @@ Presets pick sensible X/Y/Colour variables and skip anything the current file do
 - **Surface currents** — an animated particle-flow field of Copernicus surface currents
 - **DAC arrows** — per-dive depth-averaged current vectors, shown when the file provides them
 
-![Globe with a Copernicus chlorophyll overlay](glider_playground/static/globe_overlay.webp)
+![Globe with a Copernicus chlorophyll overlay](glider_playground/static/readme_images/globe_overlay.webp)
 
 ### Copernicus Setup
 
@@ -162,7 +162,9 @@ pip uninstall glider-playground
 
 ## Developer Docs
 
-See [OVERVIEW.md](OVERVIEW.md) for an internal reference on the architecture, data pipeline, and deployment.
+To change the default plots, dashboard views or colour palettes, edit [`glider_playground/plot_presets.json`](glider_playground/plot_presets.json) (instructions are at the top of the file) and restart.
+
+See [OVERVIEW.md](OVERVIEW.md) for the code layout, architecture, data pipeline, and deployment.
 
 ---
 
@@ -170,7 +172,7 @@ See [OVERVIEW.md](OVERVIEW.md) for an internal reference on the architecture, da
 
 Licensed under the [Apache License 2.0](LICENSE).
 
-<a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/NOC_logo.svg" alt="National Oceanography Centre" width="56" align="left"></a>
+<a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/readme_images/NOC_logo.svg" alt="National Oceanography Centre" width="56" align="left"></a>
 
 Developed by **Orlando Prugel-Bennett** at the **[National Oceanography Centre (NOC)](https://www.noc.ac.uk/)**.
 

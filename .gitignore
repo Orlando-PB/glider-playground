@@ -1,5 +1,4 @@
-/glider_playground/__pycache__
-/__pycache__
+__pycache__/
 .vscode/
 *.pyc
 *.egg-info/
@@ -8,9 +7,7 @@
 *.nc
 /dist/
 /build/
-/packaging/app_icon.ico
 .env
-/testing/
 # Private server-only deploy assets (analytics plugin, secrets). Never publish.
 /deploy/
 

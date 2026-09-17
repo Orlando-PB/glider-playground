@@ -74,7 +74,7 @@ def _detect_install() -> tuple[str, str | None]:
     editable `pip install -e .`) means git; living under site/dist-packages
     means a normal pip install; anything else is unknown.
     """
-    pkg_dir = Path(__file__).resolve().parent       # .../glider_playground
+    pkg_dir = Path(__file__).resolve().parents[1]   # .../glider_playground
     repo_root = pkg_dir.parent                       # repo root for a checkout
     try:
         if (repo_root / ".git").exists():

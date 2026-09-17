@@ -27,14 +27,14 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 
-from . import cache_logic
-from . import overlay_logic
-from . import server_config
-from . import spatial_logic
+from ..core import cache_logic
+from . import copernicus_fetch
+from ..server import server_config
+from ..core import spatial_logic
 
 logger = logging.getLogger(__name__)
 
-LAYERS: list[str] = list(overlay_logic.OVERLAYS.keys()) + ["currents"]
+LAYERS: list[str] = list(copernicus_fetch.OVERLAYS.keys()) + ["currents"]
 
 # A glider whose last fix is within this many days is treated as "live": its
 # overlay uses the most recent available Copernicus field rather than the exact
@@ -125,16 +125,16 @@ def fetch_layer(file_id: str, key: str) -> tuple[bytes | None, dict | None]:
     bbox = dict(lat_min=loc["lat_min"], lat_max=loc["lat_max"],
                 lon_min=loc["lon_min"], lon_max=loc["lon_max"])
     if key == "currents":
-        result = overlay_logic.fetch_currents(target_date=date, **bbox)
+        result = copernicus_fetch.fetch_currents(target_date=date, **bbox)
     else:
-        result = overlay_logic.fetch_overlay(key, target_date=date, **bbox)
+        result = copernicus_fetch.fetch_overlay(key, target_date=date, **bbox)
     if "error" in result:
         return None, result
     result.pop("_timing", None)
     if key == "currents":
         data = json.dumps(result).encode("utf-8")
     else:
-        data = overlay_logic.pack_overlay_response(result)
+        data = copernicus_fetch.pack_overlay_response(result)
     cache_logic.put_plot_binary(file_id, _store_key(key), data)
     # An on-demand fetch (user clicked before the worker reached this layer)
     # is just as final as a prefetched one — reflect it in the status so the
@@ -308,7 +308,7 @@ def _refresh_live() -> None:
         live_ids = [fid for fid, st in _status.items() if st["live"] and st["done"]]
     if not live_ids:
         return
-    latest = {k: overlay_logic.latest_available_date(k) for k in LAYERS}
+    latest = {k: copernicus_fetch.latest_available_date(k) for k in LAYERS}
     # Look records up before taking our lock: cache_logic calls forget() while
     # holding its own lock, so never nest theirs inside ours.
     recs = {fid: cache_logic.get_record(fid) for fid in live_ids}

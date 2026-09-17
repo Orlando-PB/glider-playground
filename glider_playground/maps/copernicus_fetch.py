@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import server_config
+from ..server import server_config
 
 logger = logging.getLogger(__name__)
 
@@ -214,15 +214,8 @@ def _fetch_cached(var, lat_min, lat_max, lon_min, lon_max, target_date, runner, 
             "setup": "install",
         }
 
-    # Fetch a ~12° (TARGET) box of latitude centred on the deployment, and a
-    # longitude span widened by 1/cos(lat) so the box covers a *physically* square
-    # area rather than a square-in-degrees one. A degree of longitude shrinks
-    # toward the poles, so without this a high-latitude box looks tall and narrow
-    # on the globe (more coverage N-S than E-W). At 1/24° (≈4 km native) a box this
-    # size stays at full resolution thanks to _MAX_CELLS_PER_SIDE=800; the payload
-    # is ~0.7 MB gzipped and the fetch is sub-second beyond the open handshake —
-    # see the overlay size audit. A larger deployment expands the box to cover
-    # itself plus a small margin; a point/small deployment still gets the full box.
+    # ~12° of latitude centred on the deployment; longitude widened by 1/cos(lat) so the box is
+    # physically square. Bigger deployments expand it to cover themselves plus a margin.
     t_prep = time.time()   # bbox padding + date defaulting (server prep)
     TARGET = 12.0   # degrees of latitude per side for a typical deployment
     MARGIN = 2.0    # extra context when the deployment already exceeds TARGET
@@ -363,17 +356,8 @@ def _try_datasets(dataset_ids, open_fn, date_str):
 
 
 # ---------- reusable dataset opens ----------
-#
-# copernicusmarine.open_dataset is expensive *before* it touches any data: it
-# validates the credentials online against the CAS server, fetches the datastore
-# config and several STAC catalogue documents, then opens the zarr store over S3
-# (all ~3s on a good connection, every call). The actual chunk read is sub-second.
-# The data read only tags requests with the username, so an already-opened lazy
-# xarray dataset can be sliced again with none of that overhead. We therefore
-# open each dataset once (full extent, surface level only), keep the lazy handle,
-# and do the bbox/date selection ourselves. Entries expire after _DS_TTL so NRT
-# products pick up newly appended days, and any error against a cached handle
-# drops it and retries once with a fresh open.
+# copernicusmarine.open_dataset costs ~3 s of auth + catalogue calls before any data, so each dataset
+# is opened once (lazy handle, _DS_TTL expiry) and sliced per request. A failing handle is reopened once.
 _DS_TTL = 3600.0
 _DS_OPEN: dict[tuple, tuple[object, float]] = {}
 _DS_LOCK = threading.Lock()

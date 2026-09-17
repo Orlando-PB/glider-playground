@@ -1,3 +1,13 @@
+"""`glider-playground` command — the front door.
+
+Picks server vs local mode (IS_SERVER env var, or a known Pi hostname) and
+sets IS_SERVER *before* the app is imported, because
+server_config resolves them once at import. Then runs uvicorn on --port
+(default 8420): 127.0.0.1 locally, 0.0.0.0 in server mode. Prints upgrade
+steps if PyPI has a newer release; locally, opens a browser tab unless
+--no-browser.
+"""
+
 import argparse
 import os
 import socket
@@ -22,26 +32,18 @@ environment variables:
   GP_DATA_DIR         directory scanned/used for NetCDF (.nc) files.
   GP_PLUGINS_DIR      directory of server-only plugin .py files
                       (default: ~/.glider_playground/plugins), IS_SERVER only.
-  LOW_MEMORY_MODE     "true" to reduce in-RAM preload / point budgets.
   DIAGNOSTICS_MODE    "true" for verbose backend DEBUG logging.
 """ % ", ".join(SERVER_HOSTNAMES)
 
 
 def _check_for_update():
-    """Print a nudge if a newer version is available on PyPI."""
+    """Print the same upgrade steps the in-app (Jelly) notice shows, tailored to git vs pip installs."""
     try:
-        import importlib.metadata
-        import urllib.request, json
-        current = importlib.metadata.version("glider-playground")
-        with urllib.request.urlopen(
-            "https://pypi.org/pypi/glider-playground/json", timeout=5
-        ) as r:
-            latest = json.loads(r.read())["info"]["version"]
-        if latest != current:
-            print(
-                f"\n  Update available: {current} → {latest}"
-                f"\n  Run: pip install --upgrade glider-playground\n"
-            )
+        from .server import update_logic
+        info = update_logic.check()
+        if info.get("outdated"):
+            steps = "".join(f"\n    {s}" for s in info.get("steps", []))
+            print(f"\n  Update available: {info['current']} → {info['latest']}\n  To update, run:{steps}\n")
     except Exception:
         pass
 
@@ -90,20 +92,20 @@ def main():
 
     if is_server:
         os.environ["IS_SERVER"] = "True"
-        os.environ["LOW_MEMORY_MODE"] = "true"
         host = "0.0.0.0"
         print(f"Running in Server Mode (0.0.0.0) on {current_hostname}")
     else:
         host = "127.0.0.1"
-        print("Running in Local Mode (127.0.0.1)")
+        print("Running in Local Mode (localhost)")
 
     print("Starting Glider Playground...")
 
     threading.Thread(target=_check_for_update, daemon=True).start()
 
     if not is_server and not args.no_browser:
-        print(f"Starting up — your browser will open shortly at http://{host}:{args.port}")
-        threading.Thread(target=open_browser, args=(host, args.port), daemon=True).start()
+        shown = "localhost" if host == "127.0.0.1" else host   # still binds 127.0.0.1; just friendlier to read
+        print(f"Starting up — your browser will open shortly at http://{shown}:{args.port}")
+        threading.Thread(target=open_browser, args=(shown, args.port), daemon=True).start()
 
     # reload=False is safer for a background service
     uvicorn.run(APP_MODULE, host=host, port=args.port, log_level=LOG_LEVEL, reload=False)

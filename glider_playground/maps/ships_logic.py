@@ -1,8 +1,8 @@
 """Research-ship positions (experimental, self-contained).
 
-Everything ship-related lives here + ``static/ships_layer.js``; the rest of
+Everything ship-related lives here + ``static/map_view/ships_layer.js``; the rest of
 the app only touches it through one ``/api/ships`` route in ``app.py`` and
-three one-line hooks in ``map_view.html``. Delete those and this file and the
+four one-line hooks in ``map_view.html``. Delete those and this file and the
 playground is back to gliders/floats-only.
 
 Two free, key-less upstream sources (no AIS provider needed):

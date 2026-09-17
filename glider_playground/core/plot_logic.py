@@ -1,16 +1,25 @@
+"""Plot data: reads variables from a NetCDF file and turns them into what the
+plot panels ask for. Produces data only — drawing is static/main_plot.html.
+
+  - Variable access: preloaded arrays (.npy on disk, memory-mapped per
+    request — see cache_logic), falling back to opening the file.
+  - Derived-variable store: where derive_logic writes salinity / density /
+    phases so they read back like native variables.
+  - CTD processing: QC, gap-fill and cleaning of PRES / TEMP / CNDC.
+  - get_plot_data_json: apply QC flags and the profile / cycle / phase /
+    direction / zoom filters, downsample, and pack (binary or JSON).
+
+All times are naive UTC.
+"""
+
 import hashlib
 import json
 import logging
 import struct
 import shutil
 import xarray as xr
-# xarray imports dask lazily the first time it decodes a CF time variable.
-# With several worker threads opening files at once (e.g. a CACHE_VERSION bump
-# reprocessing everything at startup, plus the overlay/live workers) that
-# first import can happen concurrently and deadlock on Python's per-module
-# import lock ("deadlock detected by _ModuleLock('dask.callbacks')"). Import
-# it once here, on the main thread, so it's already loaded before any worker
-# touches xarray. Optional dependency - skip quietly if it isn't installed.
+# Import dask once on the main thread: xarray imports it lazily, and concurrent first imports from
+# worker threads deadlock on the module import lock. Optional dependency.
 try:
     import dask  # noqa: F401
 except Exception:
@@ -25,7 +34,6 @@ import threading
 import time
 from pathlib import Path
 
-from . import server_config
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +43,8 @@ logger = logging.getLogger(__name__)
 MAX_RENDER_POINTS = 100000
 
 
-# Significant figures kept in the serialized plot arrays. The source sensor
-# data is float32 (~7.2 decimal digits), so anything beyond 7 sig figs is pure
-# float64 widening noise (e.g. 9.562800407409668 -> 9.5628004). Rounding it away
-# is lossless w.r.t. the instrument yet roughly halves the float text gzip ships
-# and what the browser has to JSON.parse. Bump this if a genuinely float64
-# variable ever needs more — it only trims noise, never bins or drops points.
+# Significant figures kept in serialized arrays. Sensor data is float32 (~7 digits), so this only
+# trims float64 widening noise and roughly halves the payload text.
 _PLOT_SIG_FIGS = 7
 
 
@@ -118,17 +122,15 @@ def plot_cache_params_str(*, x_var, y_var, c_var, qc_flags,
     ))
 
 
-# When LOW_MEMORY_MODE=true all preloaded arrays and CTD overlays are stored
-# on disk instead of kept permanently in RAM. Each request loads only what it
-# needs, uses it, then the memory is freed. Full prewarming still happens — it
-# just writes to the SSD rather than filling RAM.
-_LOW_MEMORY = server_config.LOW_MEMORY
+# Preloaded arrays and CTD overlays live on disk (.npy / .npz), never permanently
+# in RAM — the same on a laptop and on the Pi. Each request memory-maps only the
+# variables it needs, so RAM stays flat however many files are registered and a
+# restart is warm. Costs ~10-30 ms per request against holding everything in RAM.
 _DISK_CACHE_ROOT = Path.home() / ".glider_playground"
 _PRELOAD_CACHE_DIR = _DISK_CACHE_ROOT / "preload"
 _CTD_CACHE_DIR = _DISK_CACHE_ROOT / "ctd_cache"
-if _LOW_MEMORY:
-    _PRELOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _CTD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_PRELOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_CTD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _preload_dir(filepath: str) -> Path:
@@ -141,12 +143,9 @@ def _ctd_cache_path(filepath: str, interpolate: bool, apply_ctd_qc: bool) -> Pat
     return _CTD_CACHE_DIR / f"{h}_{int(interpolate)}_{int(apply_ctd_qc)}.npz"
 
 
-# --- Derived variable store (e.g. GSW-derived salinity / density) ------------
-# Derived variables are computed once per file during processing (see
-# derive_logic) and persisted to disk in BOTH memory modes — in RAM mode the
-# preload is dropped on restart and plots fall back to the file, which has no
-# derived vars, so we cannot rely on the preload to carry them. They are merged
-# into the file's variable list and read path so they behave like native vars.
+# --- Derived variable store (GSW salinity/density etc.) ---
+# Computed once per file by derive_logic and persisted to disk in both memory modes, then merged
+# into the variable list and read path like native vars.
 _DERIVED_CACHE_DIR = _DISK_CACHE_ROOT / "derived"
 _DERIVED_META: dict = {}            # filepath -> {name: {"units","description","type"}}
 _DERIVED_META_LOCK = threading.RLock()
@@ -234,17 +233,12 @@ def _merge_derived(filepath: str, names, result):
     return result
 
 
-# In RAM mode: maps filepath -> {varname: array, ...}
-# In disk mode: maps filepath -> True (sentinel; arrays live on SSD)
+# filepath -> True once its arrays are on disk under _preload_dir(filepath).
 _PRELOADED: dict = {}
 _PRELOADED_LOCK = threading.RLock()
 
-# The NetCDF/HDF5 C library is NOT thread-safe: concurrent opens/reads (even of
-# different files) can segfault the interpreter or return garbled data. FastAPI
-# runs sync endpoints on a threadpool and the dashboard fires many read requests
-# at once (globe + 3D + every plot panel + variables/profiles), so all NetCDF
-# access across the app is serialized through this single process-global lock.
-# Preloaded-into-RAM reads don't touch the file and so don't take this lock.
+# The NetCDF/HDF5 C library is NOT thread-safe (concurrent reads can segfault), so all NetCDF access
+# goes through this one process-global lock. Preloaded (.npy) reads don't take it.
 NETCDF_LOCK = threading.RLock()
 
 
@@ -274,7 +268,9 @@ def stream_preload_to_disk(filepath: str, is_removed_fn=None):
     d = _preload_dir(filepath)
     d.mkdir(parents=True, exist_ok=True)
     names = []
-    with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
+    # cache=False: by default xarray keeps every array it has read inside the open
+    # dataset, which quietly accumulated the whole file in RAM here.
+    with NETCDF_LOCK, xr.open_dataset(filepath, cache=False) as ds:
         for name in ds.variables:
             if is_removed_fn and is_removed_fn():
                 return
@@ -294,64 +290,81 @@ def stream_preload_to_disk(filepath: str, is_removed_fn=None):
 
 
 def set_preloaded(filepath: str, all_vars: dict):
-    if _LOW_MEMORY:
-        # Save to disk, then discard from RAM immediately.
-        d = _preload_dir(filepath)
-        d.mkdir(parents=True, exist_ok=True)
-        names = []
-        for name in list(all_vars.keys()):
-            arr = all_vars.pop(name)
-            try:
-                np.save(str(d / f"{name}.npy"), np.asarray(arr))
-                names.append(name)
-            except Exception:
-                pass
-            del arr
-        (d / "_names.json").write_text(json.dumps(names))
-        with _PRELOADED_LOCK:
-            _PRELOADED[filepath] = True
-    else:
-        with _PRELOADED_LOCK:
-            _PRELOADED[filepath] = all_vars
+    """Write an already-read {name: array} dict to the preload dir (and drop it from RAM)."""
+    d = _preload_dir(filepath)
+    d.mkdir(parents=True, exist_ok=True)
+    names = []
+    for name in list(all_vars.keys()):
+        arr = all_vars.pop(name)
+        try:
+            np.save(str(d / f"{name}.npy"), np.asarray(arr))
+            names.append(name)
+        except Exception:
+            pass
+        del arr
+    (d / "_names.json").write_text(json.dumps(names))
+    with _PRELOADED_LOCK:
+        _PRELOADED[filepath] = True
     _bust_caches()
 
 
 def clear_preloaded(filepath: str):
     with _PRELOADED_LOCK:
         _PRELOADED.pop(filepath, None)
-    if _LOW_MEMORY:
-        shutil.rmtree(_preload_dir(filepath), ignore_errors=True)
-        h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
-        for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
-            f.unlink(missing_ok=True)
+    shutil.rmtree(_preload_dir(filepath), ignore_errors=True)
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
+        f.unlink(missing_ok=True)
     clear_derived(filepath)
     _bust_caches()
-    # Unlike _bust_caches (called on every file switch), this runs only when
-    # the file at this exact path changed on disk (see cache_logic._refresh's
-    # size/mtime check) — so the (filepath, interp, clean) cache key is no
-    # longer trustworthy for this path and must be dropped too, or a stale
-    # entry (e.g. from before new dives were appended) gets compared against
-    # freshly loaded arrays of a different length and crashes.
-    _ctd_processed_arrays_cached.cache_clear()
+    # The file changed on disk, so the (filepath, interp, clean) cache key is stale for this path too;
+    # its on-disk overlays were just removed above.
+
+
+def _load_npy(path: Path):
+    """Memory-map a preloaded array: pages are pulled in on use and the OS can drop
+    them again, so nothing here pins RAM. Read-only — copy before writing to one."""
+    return np.load(str(path), mmap_mode="r", allow_pickle=False)
+
+
+class _PreloadView:
+    """Dict-like view of one file's preloaded variables that reads each array from
+    disk only when it's asked for (it used to load the whole file for callers that
+    wanted three variables)."""
+
+    def __init__(self, d: Path, names):
+        self._d = d
+        self._names = [n for n in names if (d / f"{n}.npy").exists()]
+        self._set = set(self._names)
+
+    def __contains__(self, name):
+        return name in self._set
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def keys(self):
+        return list(self._names)
+
+    def __getitem__(self, name):
+        if name not in self._set:
+            raise KeyError(name)
+        return _load_npy(self._d / f"{name}.npy")
 
 
 def _get_preloaded(filepath: str):
     with _PRELOADED_LOCK:
-        val = _PRELOADED.get(filepath)
-    if val is None:
+        if not _PRELOADED.get(filepath):
+            return None
+    d = _preload_dir(filepath)
+    names_f = d / "_names.json"
+    if not names_f.exists():
         return None
-    if _LOW_MEMORY:
-        d = _preload_dir(filepath)
-        names_f = d / "_names.json"
-        if not names_f.exists():
-            return None
-        try:
-            names = json.loads(names_f.read_text())
-            return {n: np.load(str(d / f"{n}.npy"), allow_pickle=False)
-                    for n in names if (d / f"{n}.npy").exists()}
-        except Exception:
-            return None
-    return val
+    try:
+        return _PreloadView(d, json.loads(names_f.read_text()))
+    except Exception:
+        return None
+
 
 CTD_VARS = ("PRES", "TEMP", "CNDC")
 CTD_CNDC_MSCM_UNITS = {"ms/cm", "ms cm-1", "millisiemens/cm", "milli-siemens/cm"}
@@ -433,63 +446,16 @@ def _report_ctd_stage(msg: str):
             pass
 
 
-@functools.lru_cache(maxsize=12)
-def _ctd_processed_arrays_cached(filepath, interpolate: bool, apply_ctd_qc: bool):
-    """RAM-cached CTD overlay — used in normal (non-low-memory) mode.
-
-    For the (interp=True, qc=True) combo the result is composed from the
-    already-cached clean result + a single interpolation pass, rather than
-    re-running everything from scratch. If clean changed nothing (already
-    clean data) it returns the interp-only result instantly from cache.
-    """
-    if not (interpolate or apply_ctd_qc):
-        return None
-    pre = _get_preloaded(filepath)
-    if pre is None:
-        return None
-    var_map = _resolve_ctd_var_map(filepath)
-    if not var_map:
-        return None
-
-    time_var = "TIME" if "TIME" in pre else next((v for v in pre if 'TIME' in v.upper()), None)
-    data_dict = _build_ctd_canonical_dict(pre, var_map, time_var)
-    if not any(c in data_dict for c in CTD_VARS):
-        return None
-
-    if interpolate and apply_ctd_qc:
-        clean_actual = _ctd_processed_arrays(filepath, False, True)
-        clean_canon = _overlay_to_canonical(clean_actual, var_map) if clean_actual else {}
-        clean_changed = bool(clean_canon) and any(
-            c in clean_canon and c in data_dict
-            and (clean_canon[c].shape != data_dict[c].shape
-                 or np.any(np.isnan(clean_canon[c]) != np.isnan(data_dict[c])))
-            for c in CTD_VARS
-        )
-        if not clean_changed:
-            return _ctd_processed_arrays(filepath, True, False)
-
-        for k, arr in clean_canon.items():
-            if k in data_dict:
-                data_dict[k] = arr.copy()
-        processed = _apply_ctd_processing(
-            data_dict, time_var, _get_var_units(filepath),
-            interpolate=True, apply_ctd_qc=False,
-        )
-    else:
-        processed = _apply_ctd_processing(
-            data_dict, time_var, _get_var_units(filepath),
-            interpolate=interpolate, apply_ctd_qc=apply_ctd_qc,
-        )
-
-    return _emit_overlay(processed, var_map)
-
-
 def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
-    """Disk-backed CTD overlay — used in low-memory mode.
+    """Disk-backed CTD overlay.
 
     On first call (during prewarm): compute overlay and save as .npz.
     On subsequent calls (plot requests): load .npz, return, GC'd after use.
     No arrays are kept in RAM between requests.
+
+    For the (interp=True, qc=True) combo the result is composed from the
+    already-cached clean result + a single interpolation pass rather than
+    re-running everything; if clean changed nothing it reuses interp-only.
     """
     if not (interpolate or apply_ctd_qc):
         return None
@@ -550,10 +516,8 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
 
 
 def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
-    """Public entry point — dispatches to disk or RAM cache depending on mode."""
-    if _LOW_MEMORY:
-        return _ctd_from_disk(filepath, interpolate, apply_ctd_qc)
-    return _ctd_processed_arrays_cached(filepath, interpolate, apply_ctd_qc)
+    """Public entry point for the processed-CTD overlay."""
+    return _ctd_from_disk(filepath, interpolate, apply_ctd_qc)
 
 
 def _hard_time_valid_mask(t_vals):
@@ -668,16 +632,8 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
                             .to_numpy()
                         )
 
-                        # Cap: only accept a fill whose bounding real neighbours are
-                        # within CTD_INTERP_MAX_GAP_MINUTES of each other. sub_index
-                        # is monotonically non-decreasing (valid_time already enforces
-                        # that), so a forward/backward running extreme over known
-                        # positions gives each row its nearest real neighbour on each
-                        # side; known rows trivially have gap 0 and are never capped.
-                        # asi8 assumes the index's native unit, which varies (ns
-                        # historically, us/s possible as of pandas>=2) — normalize to
-                        # ns first or the ns-based gap cap below is silently off by a
-                        # unit-dependent factor.
+                        # Cap: accept a fill only if its real neighbours are within CTD_INTERP_MAX_GAP_MINUTES.
+                        # Normalize the index to ns first: asi8 uses the index's native unit, which varies (pandas>=2).
                         idx_i8 = sub_index.astype('datetime64[ns]').astype('int64')
                         prev_known = np.maximum.accumulate(np.where(known, idx_i8, INT_MIN))
                         next_known = np.minimum.accumulate(np.where(known, idx_i8, np.iinfo(np.int64).max)[::-1])[::-1]
@@ -696,21 +652,8 @@ def _apply_ctd_processing(data_dict, time_var, units_map, interpolate=False, app
 
 @functools.lru_cache(maxsize=32)
 def _get_var_names(filepath):
-    names = None
-    if _LOW_MEMORY:
-        with _PRELOADED_LOCK:
-            is_preloaded = filepath in _PRELOADED
-        if is_preloaded:
-            names_f = _preload_dir(filepath) / "_names.json"
-            if names_f.exists():
-                try:
-                    names = json.loads(names_f.read_text())
-                except Exception:
-                    names = None
-    else:
-        pre = _get_preloaded(filepath)
-        if pre is not None:
-            names = list(pre.keys())
+    pre = _get_preloaded(filepath)
+    names = pre.keys() if pre is not None else None
     if names is None:
         if not os.path.exists(filepath):
             names = []
@@ -725,26 +668,18 @@ def _get_var_names(filepath):
         names = list(dict.fromkeys(list(names) + der))
     return names
 
-@functools.lru_cache(maxsize=4 if _LOW_MEMORY else 16)
+@functools.lru_cache(maxsize=8)
 def _read_vars_cached(filepath, var_names_tuple):
     result = None
-    if _LOW_MEMORY:
-        with _PRELOADED_LOCK:
-            is_preloaded = filepath in _PRELOADED
-        if is_preloaded:
-            d = _preload_dir(filepath)
-            result = {}
-            for name in var_names_tuple:
-                f = d / f"{name}.npy"
-                if f.exists():
-                    try:
-                        result[name] = np.load(str(f), allow_pickle=False)
-                    except Exception:
-                        pass
-    else:
-        pre = _get_preloaded(filepath)
-        if pre is not None:
-            result = {name: pre[name] for name in var_names_tuple if name in pre}
+    pre = _get_preloaded(filepath)
+    if pre is not None:
+        result = {}
+        for name in var_names_tuple:
+            if name in pre:
+                try:
+                    result[name] = pre[name]
+                except Exception:
+                    pass
     if result is None and os.path.exists(filepath):
         try:
             with NETCDF_LOCK, xr.open_dataset(filepath) as ds:
@@ -1203,13 +1138,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
         if plot_sel is not None: plot_sel = plot_sel[::step]
     _mark("downsample")
 
-    # Datetime x is emitted as epoch-ms integers (UTC) rather than formatted
-    # strings: the vectorised astype is ~10x faster than per-element strftime (~23ms
-    # -> ~2ms on 160k points) and the payload is ~35% smaller. Plotly's date axis
-    # (xaxis.type='date') consumes ms-since-epoch directly, and ms even preserves
-    # sub-second precision the old '%Y-%m-%d %H:%M:%S' format dropped. Nulls were
-    # already removed by current_mask, so a plain tolist() is safe.
-    # Colour range — needed by both serializers, independent of array encoding.
+    # Colour range: needed by both serializers, independent of array encoding.
     c_min, c_max = 0.0, 1.0
     if plot_c is not None and len(plot_c) > 0:
         c_min = float(np.nanpercentile(plot_c, 0.1))

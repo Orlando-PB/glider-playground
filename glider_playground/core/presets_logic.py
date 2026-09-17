@@ -1,11 +1,11 @@
-"""Loader for static/plot_presets.json — the single source of truth for plot
+"""Loader for glider_playground/plot_presets.json — the single source of truth for plot
 presets, dashboard views and colour palettes. The backend uses it for the
 default-plot prewarm (cache_logic); pages get it as a blocking script from
 /api/plot_presets.js so it's available synchronously at first paint."""
 import json
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).parent / "static" / "plot_presets.json"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "plot_presets.json"
 
 _cache = {"mtime": None, "cfg": None}
 
