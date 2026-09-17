@@ -1,6 +1,7 @@
 // Scenery for the 3D view: decorative low-poly life scattered over the
-// bathymetry and through the water column (kelp, seagrass, coral, fish,
-// jellyfish, whales, trees, bushes). Purely cosmetic — nothing here touches
+// bathymetry and through the water column (kelps, seagrasses, corals, fish,
+// jellyfish, whales, dolphins, sharks, rays, turtles, eels, octopuses, squid,
+// crabs, lobsters, shells, starfish, urchins, anemones, trees, bushes). Purely cosmetic — nothing here touches
 // the science. Behind the "Scenery" style toggle in 3d_view.html.
 //
 // Placement is rule-based (RULES below): each kind lists where it's plausible
@@ -20,9 +21,13 @@ window.Scenery = (() => {
     //   depth: [min, max] seabed depth (m, positive down) — stands on the seabed
     //   land: true — stands on land (bathy > 0)
     //   float: [min, max] depth (m) — hangs in the water column (needs water below)
-    // lat: |latitude| band. size: on-screen height in scene units (the
+    //     (+ surface: true — rides at the sea surface instead of a random depth in the band)
+    // lat: |latitude| band, or region: [[lonMin, lonMax, latMin, latMax], ...]
+    // signed-degree boxes (any one matching) for kinds tied to an ocean. size: on-screen height in scene units (the
     // scene is ~1 unit across; the glider is drawn 0.03 long).
     // density: fraction of eligible bathy cells that get one; max: hard cap.
+    // upright: true — seabed kind that grows straight up even on a slope (kelp,
+    //   seagrass); everything else on the seabed is tilted to sit flush with it.
     // sway: underwater motion strength (0 = rigid): plants bend from the base.
     // swim: { r, period, bob } — floating kinds cruise a fixed elliptical loop
     //   of radius ~r (scene units) around their spawn point once per `period`
@@ -37,20 +42,60 @@ window.Scenery = (() => {
     const M_PER_UNIT = 0.0043;    // scene units per metre of animal (14 m humpback → 0.06)
     // `group` caps the total across species (GROUP_MAX) so a subpolar scene
     // doesn't get every whale at once; species order is shuffled per file.
-    const whale  = (model, L, lat, float, o = {}) => ({ model, group: 'whale', lat, float, size: L * M_PER_UNIT, density: 0.01, max: 1, swim: { r: 0.25, period: 120, bob: 0.1 }, ...o });
-    const shark  = (model, L, lat, float, o = {}) => ({ model, group: 'shark', lat, float, size: L * M_PER_UNIT, density: 0.01, max: 2, swim: { r: 0.15, period: 70, bob: 0.1 }, ...o });
+    const whale  = (model, L, lat, float, o = {}) => ({ model, group: 'whale', lat, float, size: L * M_PER_UNIT, density: 0.03, max: 1, swim: { r: 0.25, period: 120, bob: 0.1 }, ...o });
+    const shark  = (model, L, lat, float, o = {}) => ({ model, group: 'shark', lat, float, size: L * M_PER_UNIT, density: 0.03, max: 2, swim: { r: 0.15, period: 70, bob: 0.1 }, ...o });
     const school = (model, lat, float, o = {}) => ({ model, group: 'school', lat, float, size: 0.02, density: 0.05, max: 25, swim: { r: 0.08, period: 45, bob: 0.2 }, ...o });
-    const jelly  = (model, lat, float, o = {}) => ({ model, group: 'jelly', lat, float, size: 0.008, density: 0.05, max: 25, swim: { r: 0.01, period: 50, bob: 0.6 }, ...o });
-    const GROUP_MAX = { whale: 4, shark: 3, school: 40, jelly: 40 };
+    const jelly  = (model, lat, float, o = {}) => ({ model, group: 'jelly', lat, float, size: 0.008, density: 0.015, max: 6, swim: { r: 0.01, period: 50, bob: 0.6 }, ...o });
+    // Everything else that swims or sits: explicit on-screen size (small animals are drawn larger than life, like the jellies).
+    const SEABED_BOOST = 1.4;     // seabed critters are drawn this much bigger again, or they vanish against the bathymetry
+    const animal = (group, model, size, lat, where, o = {}) => ({ model, group, lat, ...where, size: size * (where.depth ? SEABED_BOOST : 1), density: 0.05, max: 4, ...o });
+    const cruise = (r, period, bob = 0.15) => ({ swim: { r, period, bob } });
+    const GROUP_MAX = { whale: 6, dolphin: 9, shark: 5, school: 40, jelly: 14, ray: 7, turtle: 5, eel: 6, octopus: 8, mola: 2,
+                        squid: 9, crust: 14, shell: 16, echino: 24, anemone: 10, flatfish: 5 };
+    // Ocean boxes [lonMin, lonMax, latMin, latMax] shared by the regional species below.
+    const NE_ATLANTIC = [-30, 42, 28, 72], NW_ATLANTIC = [-80, -45, 35, 62], CARIBBEAN = [-100, -55, 5, 33];
+    const N_PACIFIC = [[-180, -115, 32, 66], [125, 180, 32, 66]], INDO_PACIFIC = [[30, 180, -30, 30], [-180, -120, -30, 30]];
+    const SOUTHERN = [-180, 180, -80, -55];
 
     const RULES = [
         // ── Standing things ──
-        // Kelp forests: rocky temperate-to-subpolar coasts, photic zone; absent from the tropics.
-        { model: 'kelp',     depth: [2, 30],  lat: [28, 72], size: 0.020, density: 0.6, max: 90,  sway: 1.0 },
-        // Seagrass meadows: sheltered shallows from the tropics to the sub-Arctic.
-        { model: 'seagrass', depth: [1, 15],  lat: [0, 65],  size: 0.008, density: 0.6, max: 90,  sway: 0.6 },
-        // Cold-water coral (Lophelia-type reefs): deep temperate/subpolar seabed, no sunlight needed.
-        { model: 'coral',    depth: [150, 1200], lat: [40, 72], size: 0.010, density: 0.3, max: 80 },
+        // Seabed plants and corals are split by biogeography, not just latitude:
+        // `region` boxes (signed degrees) say which ocean a kind belongs in.
+        // Giant kelp (Macrocystis): Pacific coast of the Americas and the cold-temperate
+        // southern hemisphere (S America, S Africa, S Australia/NZ, sub-Antarctic islands). Not in the N Atlantic.
+        { model: 'kelp_giant', upright: true,   depth: [5, 35],  region: [[-180, -105, 27, 60], [-180, 180, -58, -30]], size: 0.035, density: 0.5, max: 50, sway: 1.0 },
+        // Oarweed / tangle (Laminaria): the kelp forest of the NE & NW Atlantic and the Arctic, up to Svalbard.
+        { model: 'kelp_oarweed', upright: true, depth: [1, 25],  region: [[-80, 70, 38, 80]], size: 0.009, density: 0.6, max: 90, sway: 0.7 },
+        // Sugar kelp (Saccharina): sheltered cold coasts right round the northern hemisphere.
+        { model: 'kelp_sugar', upright: true,   depth: [1, 20],  region: [[-180, 180, 40, 80]], size: 0.009, density: 0.4, max: 60, sway: 1.0 },
+        // Ecklonia: warm-temperate southern coasts (S Africa, Australia, N New Zealand).
+        { model: 'kelp_ecklonia', upright: true, depth: [2, 30], region: [[10, 180, -45, -25]], size: 0.008, density: 0.6, max: 80, sway: 0.8 },
+        // Himantothallus: Antarctic shelf, where true kelps are absent.
+        { model: 'himantothallus', depth: [5, 40], region: [[-180, 180, -78, -58]], size: 0.0013, density: 0.5, max: 60, sway: 0.5 },
+        // Eelgrass (Zostera): temperate sheltered shallows, both hemispheres; none in polar seas.
+        { model: 'seagrass_eel', upright: true, depth: [1, 10],  region: [[-180, 180, 30, 70], [-180, 180, -48, -30]], size: 0.008, density: 0.6, max: 90, sway: 0.6 },
+        // Posidonia meadows: the Mediterranean (and deeper than eelgrass, thanks to clear water).
+        { model: 'seagrass_posidonia', upright: true, depth: [1, 35], region: [[-6, 36, 30, 46]], size: 0.008, density: 0.7, max: 90, sway: 0.6 },
+        // Turtle grass (Thalassia and tropical kin): warm shallows.
+        { model: 'seagrass_turtle', upright: true, depth: [1, 15], lat: [0, 32], size: 0.005, density: 0.6, max: 90, sway: 0.5 },
+        // Reef-building corals: warm, sunlit water only.
+        { model: 'coral_staghorn', depth: [1, 25], lat: [0, 30], size: 0.009, density: 0.4, max: 35 },
+        { model: 'coral_table',    depth: [2, 30], lat: [0, 30], size: 0.008, density: 0.3, max: 40 },
+        { model: 'coral_brain',    depth: [1, 40], lat: [0, 32], size: 0.006, density: 0.4, max: 50 },
+        // Sea fans: purple Gorgonia in the Caribbean / W Atlantic, red-orange fans across the Indo-Pacific.
+        { model: 'sea_fan_purple', depth: [3, 40], region: [[-100, -55, 5, 33]], size: 0.009, density: 0.3, max: 30, sway: 0.3 },
+        { model: 'sea_fan_red',    depth: [5, 60], region: [[30, 180, -30, 30], [-180, -120, -30, 30]], size: 0.009, density: 0.3, max: 30, sway: 0.3 },
+        // Cold-water coral reefs (Lophelia): dark slopes and banks, best developed in the N Atlantic.
+        { model: 'coral_lophelia', depth: [150, 1000], lat: [25, 72], size: 0.010, density: 0.25, max: 35 },
+        // Bubblegum coral (Paragorgia): big pink gorgonian trees on cold deep slopes.
+        { model: 'coral_bubblegum', depth: [200, 1300], lat: [35, 75], size: 0.014, density: 0.1, max: 25 },
+        // Bamboo corals: deep slopes and seamounts everywhere.
+        { model: 'coral_bamboo',   depth: [400, 3000], lat: [0, 75], size: 0.009, density: 0.1, max: 30 },
+        // Sea pens: soft mud from the shelf to the continental rise, all oceans.
+        { model: 'sea_pen',        depth: [30, 2500], lat: [0, 82], size: 0.006, density: 0.15, max: 50, sway: 0.2 },
+        // Glass sponges: deep everywhere, but shelf-depth gardens around Antarctica.
+        { model: 'sponge_glass',   depth: [400, 3000], lat: [0, 85], size: 0.008, density: 0.1, max: 30 },
+        { model: 'sponge_glass',   depth: [50, 400], region: [[-180, 180, -80, -60]], size: 0.008, density: 0.3, max: 40 },
         // Palms: tropical / subtropical shores.
         { model: 'palm',     land: true,      lat: [0, 28],  size: 0.020, density: 0.4, max: 60 },
         // Conifers: temperate and boreal land up to the Arctic treeline; snow-covered where the land is drawn white.
@@ -65,11 +110,18 @@ window.Scenery = (() => {
         whale('whale_sei',      15, [20, 65], [5, 100]),
         whale('whale_blue',     25, [0, 70],  [5, 100], { density: 0.005 }),
         whale('whale_sperm',    16, [0, 70],  [50, 800], { swim: { r: 0.2, period: 150, bob: 0.3 } }),
-        whale('whale_orca',      7, [0, 80],  [3, 50],  { max: 3, swim: { r: 0.2, period: 60, bob: 0.15 } }),
-        whale('whale_pilot',     6, [20, 65], [10, 300], { max: 3 }),
+        whale('whale_orca',      7, [0, 80],  [3, 50],  { max: 2, swim: { r: 0.2, period: 60, bob: 0.15 } }),
+        whale('whale_pilot',     6, [20, 65], [10, 300], { max: 2 }),
         whale('whale_beluga',  4.5, [60, 82], [2, 40],  { max: 3 }),
         whale('whale_narwhal', 4.5, [65, 85], [5, 300], { max: 2 }),
-        whale('dolphin_common', 2.3, [0, 60], [1, 30],  { max: 4, density: 0.02, swim: { r: 0.15, period: 40, bob: 0.3 } }),
+
+        // ── Dolphins & porpoises: small pods, quick tight loops ──
+        animal('dolphin', 'dolphin_common',      0.010, [0, 60],  { float: [1, 30] },  { ...cruise(0.15, 40, 0.3) }),
+        animal('dolphin', 'dolphin_bottlenose',  0.013, [0, 60],  { float: [1, 30] },  { ...cruise(0.15, 45, 0.3) }),
+        animal('dolphin', 'dolphin_whitebeaked', 0.012, null,     { float: [1, 40] },  { region: [[-75, 40, 45, 78]], ...cruise(0.15, 45, 0.3) }),   // cold N Atlantic only
+        animal('dolphin', 'dolphin_spinner',     0.009, [0, 30],  { float: [1, 30] },  { ...cruise(0.12, 35, 0.4) }),
+        animal('dolphin', 'dolphin_hourglass',   0.008, null,     { float: [1, 30] },  { region: [[-180, 180, -68, -45]], ...cruise(0.15, 40, 0.3) }), // Southern Ocean
+        animal('dolphin', 'porpoise_harbour',    0.007, null,     { float: [1, 40] },  { region: [[-180, 180, 32, 72]], ...cruise(0.1, 50, 0.15) }),  // shy, coastal, northern hemisphere
 
         // ── Sharks ──
         shark('shark_basking',    8, [30, 65], [5, 200], { max: 1 }),
@@ -77,6 +129,7 @@ window.Scenery = (() => {
         shark('shark_blue',       3, [0, 60],  [10, 300]),
         shark('shark_porbeagle',  2.5, [30, 70], [10, 300]),
         shark('shark_hammerhead', 3.5, [0, 40], [5, 150]),
+        shark('shark_whale',     10, [0, 35], [2, 80],  { max: 1, swim: { r: 0.2, period: 140, bob: 0.05 } }),
         shark('shark_greenland',  4, [55, 82], [200, 1200], { swim: { r: 0.1, period: 180, bob: 0.05 } }),
 
         // ── Schooling fish ──
@@ -89,17 +142,101 @@ window.Scenery = (() => {
         school('fish_tuna',       [0, 50],  [20, 300],  { size: 0.035, max: 6, swim: { r: 0.15, period: 35, bob: 0.2 } }),
         school('fish_lanternfish', [0, 70], [300, 1000], { size: 0.012, max: 30 }),
 
+        // ── Sunfish, rays, turtles ──
+        animal('mola', 'mola_mola',          0.012, [0, 62],  { float: [1, 200] }, { ...cruise(0.06, 150, 0.3) }),          // basks near the surface, summers as far north as the UK
+        animal('ray', 'ray_manta',           0.014, [0, 35],  { float: [2, 100] }, cruise(0.18, 90, 0.2)),
+        animal('ray', 'ray_eagle',           0.009, [0, 32],  { float: [1, 40] },  { ...cruise(0.12, 60, 0.2) }),
+        animal('ray', 'ray_thornback',       0.007, null,     { depth: [5, 200] }, { density: 0.05, region: [[-30, 42, 28, 70]] }),   // NE Atlantic & Med shelf
+        animal('ray', 'ray_sting',           0.008, [0, 40],  { depth: [1, 60] },  { density: 0.05 }),
+        animal('turtle', 'turtle_leatherback', 0.012, [0, 65], { float: [2, 300] }, cruise(0.12, 110)),                              // the one turtle of cold water
+        animal('turtle', 'turtle_loggerhead',  0.009, [0, 45], { float: [1, 100] }, cruise(0.1, 100)),
+        animal('turtle', 'turtle_green',       0.009, [0, 35], { float: [1, 40] },  cruise(0.08, 100)),
+        animal('turtle', 'turtle_hawksbill',   0.008, [0, 28], { float: [1, 30] },  cruise(0.06, 100)),                              // coral reefs
+
+        // ── Eels & octopuses ──
+        animal('eel', 'eel_european',  0.009, null,    { float: [200, 1000] }, { region: [[-80, 30, 20, 68]], ...cruise(0.2, 160, 0.3) }),   // silver eels crossing to the Sargasso at depth
+        animal('eel', 'eel_conger',    0.012, null,    { depth: [5, 300] },  { density: 0.04, region: [[-30, 42, 28, 68]] }),
+        animal('eel', 'eel_moray',     0.010, [0, 35], { depth: [1, 50] },   { density: 0.05 }),
+        animal('octopus', 'octopus_common',        0.004, [0, 52], { depth: [1, 150] }, { density: 0.05 }),
+        animal('octopus', 'octopus_giant_pacific', 0.007, null,    { depth: [1, 300] }, { density: 0.05, region: [[-180, -115, 32, 62], [125, 180, 32, 62]] }),
+        animal('octopus', 'octopus_dumbo',         0.0035, [0, 80], { float: [1000, 4000] }, { swim: { r: 0.02, period: 120, bob: 0.8 } }),   // hovers over the deep seabed
+        animal('octopus', 'octopus_antarctic',     0.004, null,    { depth: [20, 800] }, { region: [[-180, 180, -80, -55]] }),
+
+        // ── Squid, cuttlefish, nautilus ──
+        animal('squid', 'squid_common',   0.007, [0, 62], { float: [10, 300] },   { ...cruise(0.12, 50, 0.3) }),
+        animal('squid', 'squid_humboldt', 0.010, null,    { float: [100, 700] },  { region: [[-130, -70, -45, 45]], ...cruise(0.12, 60, 0.4) }),   // E Pacific only
+        animal('squid', 'squid_giant',    0.012, [0, 70], { float: [300, 1000] }, { max: 1, ...cruise(0.1, 200, 0.3) }),
+        animal('squid', 'squid_colossal', 0.014, null,    { float: [1000, 2200] }, { max: 1, region: [[-180, 180, -78, -50]], ...cruise(0.08, 220, 0.3) }),  // Antarctic deep water
+        // Cuttlefish: NE Atlantic/Med/W Africa and the Indo-West Pacific — there are none in the Americas.
+        animal('squid', 'cuttlefish',     0.007, null,    { float: [2, 80] },     { region: [[-20, 42, -35, 60], [42, 180, -40, 40]], ...cruise(0.03, 90, 0.2) }),
+        animal('squid', 'nautilus',       0.006, null,    { float: [100, 500] },  { region: [[90, 180, -30, 20]], swim: { r: 0.02, period: 120, bob: 0.8 } }),
+
+        // ── On the seabed: crabs & lobsters ──
+        animal('crust', 'crab_brown',       0.005, null, { depth: [3, 100] },  { region: [NE_ATLANTIC] }),
+        animal('crust', 'crab_spider',      0.005, null, { depth: [2, 60] },   { region: [[-15, 36, 30, 56]] }),
+        animal('crust', 'crab_snow',        0.004, null, { depth: [50, 600] }, { region: [[-180, -120, 50, 75], [-75, -40, 43, 75], [15, 70, 68, 80], [130, 180, 40, 70]] }),
+        animal('crust', 'crab_king',        0.007, null, { depth: [20, 400] }, { region: [[-180, -130, 50, 66], [140, 180, 45, 66], [15, 50, 68, 75]] }),   // N Pacific + (introduced) Barents Sea
+        animal('crust', 'lobster_european', 0.007, null, { depth: [5, 80] },   { region: [NE_ATLANTIC] }),
+        animal('crust', 'lobster_american', 0.007, null, { depth: [5, 200] },  { region: [[-78, -50, 35, 55]] }),
+        animal('crust', 'lobster_norway',   0.005, null, { depth: [20, 800] }, { region: [NE_ATLANTIC] }),                                                   // langoustine, on mud
+        animal('crust', 'lobster_spiny',    0.007, [0, 35], { depth: [2, 60] }),
+        // (No crabs or lobsters on the Antarctic shelf — it really is too cold for them.)
+
+        // ── Shells ──
+        animal('shell', 'scallop_king',      0.004, null, { depth: [10, 110] }, { region: [NE_ATLANTIC] }),
+        animal('shell', 'scallop_sea',       0.004, null, { depth: [15, 110] }, { region: [NW_ATLANTIC] }),
+        animal('shell', 'scallop_antarctic', 0.004, null, { depth: [5, 100] },  { region: [SOUTHERN] }),
+        animal('shell', 'clam_giant',        0.007, null, { depth: [1, 20] },   { region: [[30, 180, -25, 25], [-180, -130, -25, 25]] }),                    // Indo-Pacific reefs only
+        animal('shell', 'mussels',           0.005, [30, 70], { depth: [1, 12] }),
+
+        // ── Starfish, urchins, sea cucumbers ──
+        animal('echino', 'starfish_common',    0.004, null, { depth: [1, 200] }, { region: [[-80, 42, 35, 72]] }),
+        animal('echino', 'starfish_sunflower', 0.006, null, { depth: [1, 120] }, { region: [[-180, -115, 30, 62]] }),
+        animal('echino', 'starfish_crown',     0.005, null, { depth: [1, 40] },  { region: INDO_PACIFIC }),
+        animal('echino', 'starfish_blue',      0.004, null, { depth: [1, 40] },  { region: INDO_PACIFIC }),
+        animal('echino', 'starfish_cushion',   0.005, null, { depth: [1, 30] },  { region: [CARIBBEAN] }),
+        animal('echino', 'starfish_antarctic', 0.004, null, { depth: [5, 500] }, { region: [SOUTHERN] }),
+        animal('echino', 'brittle_star',       0.005, [0, 85], { depth: [100, 4000] }),
+        animal('echino', 'urchin_edible',      0.004, null, { depth: [2, 50] },  { region: [NE_ATLANTIC] }),
+        animal('echino', 'urchin_diadema',     0.0025, [0, 32], { depth: [1, 30] }),
+        animal('echino', 'urchin_antarctic',   0.003, null, { depth: [5, 300] }, { region: [SOUTHERN] }),
+        animal('echino', 'sea_pig',            0.005, [0, 85], { depth: [1000, 6000] }),                                                                // something for the abyssal plains
+
+        // ── Anemones & flatfish ──
+        animal('anemone', 'anemone_plumose',   0.003, null, { depth: [3, 100] },  { sway: 0.3, region: [[-180, 180, 35, 72]] }),
+        animal('anemone', 'anemone_reef',      0.005, [0, 30], { depth: [1, 30] }, { sway: 0.2 }),
+        animal('anemone', 'anemone_antarctic', 0.004, null, { depth: [10, 400] }, { sway: 0.2, region: [SOUTHERN] }),
+        animal('flatfish', 'plaice',           0.006, null, { depth: [5, 120] },  { region: [NE_ATLANTIC] }),
+        animal('flatfish', 'halibut',          0.012, null, { depth: [50, 800] }, { region: [[-180, 180, 45, 75]] }),
+
         // ── Jellyfish ──
-        jelly('jelly_moon',      [0, 70],  [1, 50]),
-        jelly('jelly_lionsmane', [40, 80], [5, 100],  { size: 0.016, max: 10 }),
-        jelly('jelly_compass',   [20, 60], [2, 40]),
-        jelly('jelly_barrel',    [30, 60], [2, 40],   { size: 0.012, max: 10 }),
-        jelly('jelly_blue',      [30, 65], [2, 30]),
+        // size = bell diameter on screen. Coastal species are boxed to their home seas.
+        jelly('jelly_moon',       [0, 70],  [1, 40],   { size: 0.006 }),                                              // Aurelia: near-global coastal
+        jelly('jelly_lionsmane',  null,     [2, 80],   { size: 0.011, max: 4, region: [[-180, 180, 42, 80]] }),      // cold boreal/Arctic waters only
+        jelly('jelly_compass',    null,     [2, 40],   { size: 0.006, region: [[-20, 40, 30, 62]] }),                 // NE Atlantic & Mediterranean
+        jelly('jelly_barrel',     null,     [2, 40],   { size: 0.010, max: 4, region: [[-15, 42, 30, 60]] }),        // NE Atlantic, Med, Black Sea
+        jelly('jelly_blue',       null,     [2, 30],   { size: 0.005, region: [[-25, 30, 45, 68]] }),                 // North Sea / NE Atlantic shelf
+        jelly('jelly_friedegg',   null,     [1, 30],   { size: 0.006, region: [[-6, 36, 30, 46]] }),                  // Mediterranean
+        jelly('jelly_mauve',      [0, 55],  [2, 150],  { size: 0.004 }),                                              // Pelagia: warm/temperate open ocean
+        jelly('jelly_nettle',     null,     [2, 60],   { size: 0.008, region: [[-180, -110, 25, 60]] }),              // NE Pacific
+        jelly('jelly_cannonball', null,     [1, 30],   { size: 0.005, region: [[-100, -60, 8, 40], [-60, -30, -30, 8]] }), // Gulf of Mexico, US SE coast to Brazil
+        jelly('jelly_box',        null,     [1, 15],   { size: 0.005, max: 8, region: [[95, 160, -25, 20]] }),        // Chironex: N Australia / Indo-West Pacific shallows
+        jelly('jelly_antarctic',  null,     [2, 150],  { size: 0.007, region: [[-180, 180, -78, -55]] }),             // Diplulmaris: Southern Ocean
+        jelly('jelly_helmet',     [0, 80],  [200, 1500], { size: 0.006, max: 5, swim: { r: 0.01, period: 80, bob: 1.5 } }),  // Periphylla: deep, migrates vertically
+        jelly('jelly_atolla',     [0, 75],  [500, 3000], { size: 0.005, max: 5 }),                                   // deep-sea crown jelly
+        // Man o' war: drifts AT the surface (sail above, tentacles below), warm and temperate seas.
+        jelly('manowar',          [0, 50],  [0, 1],    { size: 0.006, max: 5, surface: true, swim: { r: 0.05, period: 200, bob: 0 } }),
     ];
     const SNOW_COLOUR = '#e9eef2';  // the view's snowGradientEnd
     const SIZE_JITTER = 0.25;       // ±fraction of `size`
     const SWAY_AMP = 0.12;        // fraction of a plant's height at the tip
     const SWAY_PERIOD_S = 6;      // seconds per sway cycle (wall clock)
+    const ABUNDANCE = 0.5;         // one dial for how busy the scene is: scales every density, per-kind max and group cap
+    const groupCap = g => Math.ceil(GROUP_MAX[g] * ABUNDANCE);
+    const TRIES_PER_INSTANCE = 12; // cells drawn per wanted instance before giving up
+    const MIN_LOOP_SCALE = 0.2;    // tightest a swim loop may be squeezed to fit (fraction of its rule radius)
+    const PATH_SAMPLES = 16;      // points checked round a swimmer's loop for seabed clearance
+    const MAX_TILT = 65 * Math.PI / 180;   // seabed things lean with the slope up to this; on anything steeper they stick out from the wall
 
     // Tallest thing that can stand on land (scene units): the view adds this
     // much headroom above the highest ground so nothing is clipped.
@@ -110,6 +247,7 @@ window.Scenery = (() => {
 
     let models = null;            // name -> merged model (from the view's loadModel)
     let state = null;             // last built geometry, for sway()
+    let counts = {};              // model -> instances in the last build (Scenery.counts() in the console)
 
     // Small seeded RNG (mulberry32) so placement is stable across re-renders.
     function rng(seedStr) {
@@ -166,26 +304,36 @@ window.Scenery = (() => {
         const order = RULES.slice();
         for (let q = order.length - 1; q > 0; q--) { const r = Math.floor(rand() * (q + 1)); [order[q], order[r]] = [order[r], order[q]]; }
         const groupCount = {};
+        counts = {};
         for (const rule of order) {
             const M = models[rule.model];
             if (!M || (!bathyZ && !rule.float)) continue;   // nothing to stand on
-            if (rule.group && (groupCount[rule.group] || 0) >= GROUP_MAX[rule.group]) continue;
+            if (rule.group && (groupCount[rule.group] || 0) >= groupCap(rule.group)) continue;
             const zSpan = (Math.max(...M.z) - Math.min(...M.z)) / M.length;   // vertical extent per unit of `size` (1 for upright things)
             // Eligible cells (cell centres; the instance is jittered within the cell).
             const cells = [];
             for (let iy = 0; iy < ny; iy++) {
                 const alat = Math.abs(by[iy]);
-                if (alat < rule.lat[0] || alat > rule.lat[1]) continue;
+                if (rule.lat && (alat < rule.lat[0] || alat > rule.lat[1])) continue;
                 for (let ix = 0; ix < nx; ix++) {
+                    if (rule.region) {
+                        const lon = ((bx[ix] + 540) % 360) - 180;
+                        if (!rule.region.some(b => lon >= b[0] && lon <= b[1] && by[iy] >= b[2] && by[iy] <= b[3])) continue;
+                    }
                     const z = bathyZ ? bathyZ[iy][ix] : floorZ;
                     if (z == null || !isFinite(z)) continue;
                     const ok = rule.land ? z > 0 : rule.float ? -z > rule.float[0] : (-z >= rule.depth[0] && -z <= rule.depth[1]);
                     if (ok) cells.push(iy * nx + ix);
                 }
             }
-            let want = Math.min(rule.max, Math.round(cells.length * rule.density));
-            if (rule.group) want = Math.min(want, GROUP_MAX[rule.group] - (groupCount[rule.group] || 0));
-            for (let q = 0; q < want; q++) {
+            // At least one wherever there's any suitable ground at all: a thin strip of
+            // shelf in a mostly-deep scene still gets its crab.
+            let want = Math.min(Math.ceil(rule.max * ABUNDANCE), Math.ceil(cells.length * rule.density * ABUNDANCE));
+            if (rule.group) want = Math.min(want, groupCap(rule.group) - (groupCount[rule.group] || 0));
+            // A pick can fail (slid off its patch, no room for its loop, seabed in the
+            // way…), so keep drawing cells until `want` are actually placed.
+            let placed = 0;
+            for (let q = 0; q < cells.length && placed < want && q < want * TRIES_PER_INSTANCE; q++) {
                 // Partial Fisher-Yates: pick without replacement.
                 const pick = q + Math.floor(rand() * (cells.length - q));
                 [cells[q], cells[pick]] = [cells[pick], cells[q]];
@@ -203,7 +351,10 @@ window.Scenery = (() => {
                 // Anchor height: the ground for things that stand; a random
                 // depth in the band (clear of both surface and seabed) for floaters.
                 let anchor = ground;
-                if (rule.float) {
+                if (rule.surface) {
+                    if (-ground < h * zSpan * S.kz) continue;   // too shallow for what hangs below
+                    anchor = 0;
+                } else if (rule.float) {
                     const half = (h * zSpan * 0.5 + (rule.swim ? rule.swim.bob * h * 0.5 : 0)) * S.kz;
                     const dMin = Math.max(rule.float[0], half), dMax = Math.min(rule.float[1], -ground - half);
                     if (dMax <= dMin) continue;
@@ -211,7 +362,15 @@ window.Scenery = (() => {
                 }
                 // Keep the whole footprint inside the box: the axis range slices
                 // any mesh crossing it open. Footprint ≈ half the height each way.
-                const reach = h * 0.5 + (rule.swim ? rule.swim.r * 1.3 : 0);   // furthest the mesh gets from the spawn point
+                // Swimmers near the edge get a tighter loop rather than no spawn at all
+                // (a whale's full loop only fits in the middle third of the box).
+                let loopScale = 1;
+                if (rule.swim) {
+                    const room = Math.min((lon - lon0) / S.kx, (lon1 - lon) / S.kx, (lat - lat0) / S.ky, (lat1 - lat) / S.ky) - h * 0.5;
+                    loopScale = Math.min(1, room / (rule.swim.r * 1.3) * 0.98);
+                    if (loopScale < MIN_LOOP_SCALE) continue;
+                }
+                const reach = h * 0.5 + (rule.swim ? rule.swim.r * loopScale * 1.3 : 0);   // furthest the mesh gets from the spawn point
                 const padX = reach * S.kx, padY = reach * S.ky;
                 if (lon - padX < lon0 || lon + padX > lon1 || lat - padY < lat0 || lat + padY > lat1) continue;
                 const k = h / M.length, phase = rand() * 2 * Math.PI;
@@ -219,20 +378,69 @@ window.Scenery = (() => {
                 const base = out.x.length;
                 if (rule.swim) {
                     const sw = rule.swim;
-                    const mv = { base, n: M.x.length, k, M, c, rx: sw.r * (0.7 + rand() * 0.6), ry: sw.r * (0.7 + rand() * 0.6),
+                    // Fit the loop to the water it's in: walk the whole circuit (out to the
+                    // nose/tail sweep) against the seabed; if any of it runs aground, first
+                    // tighten the loop, then swim shallower, and failing that don't spawn.
+                    let rx = sw.r * loopScale * (0.7 + rand() * 0.6), ry = sw.r * loopScale * (0.7 + rand() * 0.6);
+                    if (bathyZ) {
+                        const halfV = (h * zSpan * 0.5 + sw.bob * h * 0.5) * S.kz;      // body + bob, data units
+                        const shallowest = (ax, ay) => {                                  // highest seabed under the loop
+                            let top = -Infinity;
+                            for (let s = 0; s < PATH_SAMPLES; s++) {
+                                const t = 2 * Math.PI * s / PATH_SAMPLES;
+                                for (const rr of [1, 0.5]) top = Math.max(top, zAt((c[0] + (ax + h * 0.5) * rr * Math.cos(t)) * S.kx, (c[1] + (ay + h * 0.5) * rr * Math.sin(t)) * S.ky));
+                            }
+                            return top;
+                        };
+                        const clearance = halfV * 1.6;                                    // keep this much water under the keel
+                        let top = shallowest(rx, ry);
+                        for (let tries = 0; tries < 5 && anchor - clearance < top; tries++) { rx *= 0.65; ry *= 0.65; top = shallowest(rx, ry); }
+                        if (anchor - clearance < top) {
+                            const lifted = top + clearance;                               // swim above the shoal instead
+                            if (rule.surface || top >= 0 || -lifted < Math.max(rule.float[0], halfV)) continue;
+                            anchor = lifted; c[2] = anchor / S.kz;
+                        }
+                    }
+                    const mv = { base, n: M.x.length, k, M, c, rx, ry,
                                  w: 2 * Math.PI / sw.period * (rand() < 0.5 ? 1 : -1), phase, bob: sw.bob * h };
                     movers.push(mv);
                     ({ c, cy, sy } = pose(mv, 0));
                 } else {
                     const yaw = rand() * 2 * Math.PI; cy = Math.cos(yaw); sy = Math.sin(yaw);
                 }
+                // Seabed things follow the slope: tilt the model's up-axis onto the
+                // local surface normal (measured across its own footprint, in scene
+                // units so vertical exaggeration counts) and sink the base a touch,
+                // so nothing hangs off a drop-off with half its foot in mid-water.
+                // `upright` kinds (kelp, seagrass) grow straight up regardless.
+                let tilt = null;
+                if (rule.depth && bathyZ && !rule.upright) {
+                    const e = Math.max(h * 0.5, 1e-4);
+                    const gx = (zAt(lon + e * S.kx, lat) - zAt(lon - e * S.kx, lat)) / (2 * e * S.kz);
+                    const gy = (zAt(lon, lat + e * S.ky) - zAt(lon, lat - e * S.ky)) / (2 * e * S.kz);
+                    const g = Math.hypot(gx, gy);
+                    if (g > 0.02) {
+                        const th = Math.min(Math.atan(g), MAX_TILT);
+                        // Rodrigues rotation about the horizontal axis k = z × n (n points up-slope-away).
+                        tilt = { kx: gy / g, ky: -gx / g, cos: Math.cos(th), sin: Math.sin(th) };
+                    }
+                    c[2] -= h * (0.04 + 0.08 * Math.min(g, 2));   // bury the foot a little, more on steeper ground
+                }
                 const swayDir = rand() * 2 * Math.PI;
                 const amp = (rule.sway || 0) * SWAY_AMP * h;
                 for (let v = 0; v < M.x.length; v++) {
                     const mx = M.x[v] * k, my = M.y[v] * k, mz = M.z[v] * k;
-                    out.x.push((c[0] + mx * cy - my * sy) * S.kx);
-                    out.y.push((c[1] + mx * sy + my * cy) * S.ky);
-                    out.z.push((c[2] + mz) * S.kz);
+                    let px = mx * cy - my * sy, py = mx * sy + my * cy, pz = mz;
+                    if (tilt) {
+                        const kd = (tilt.kx * px + tilt.ky * py) * (1 - tilt.cos);
+                        const rx = px * tilt.cos + tilt.ky * pz * tilt.sin + tilt.kx * kd;
+                        const ry = py * tilt.cos - tilt.kx * pz * tilt.sin + tilt.ky * kd;
+                        pz = pz * tilt.cos + (tilt.kx * py - tilt.ky * px) * tilt.sin;
+                        px = rx; py = ry;
+                    }
+                    out.x.push((c[0] + px) * S.kx);
+                    out.y.push((c[1] + py) * S.ky);
+                    out.z.push((c[2] + pz) * S.kz);
                     const w = amp * (mz / h);   // plants bend toward the tip
                     sway.x.push(w * Math.cos(swayDir) * S.kx); sway.y.push(w * Math.sin(swayDir) * S.ky); sway.ph.push(phase);
                 }
@@ -240,6 +448,7 @@ window.Scenery = (() => {
                 const coat = rule.snow === 'coat' ? 0.8 * snow : 0;
                 const map = M.colorscale.map(([, col]) => colorIdx(coat ? lerpHex(col, SNOW_COLOUR, coat) : col));
                 out.cell.push(...M.cell.map(ci => map[ci]));
+                placed++; counts[rule.model] = (counts[rule.model] || 0) + 1;
                 if (rule.group) groupCount[rule.group] = (groupCount[rule.group] || 0) + 1;
             }
         }
@@ -285,5 +494,5 @@ window.Scenery = (() => {
         return { x: xs, y: ys, z: zs };
     }
 
-    return { load, build, sway, maxHeight, RULES };
+    return { load, build, sway, maxHeight, RULES, counts: () => counts };
 })();

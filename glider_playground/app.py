@@ -21,6 +21,7 @@ from . import live_logic
 from . import overlay_logic
 from . import overlay_prefetch
 from . import plot_logic
+from . import presets_logic
 from . import spatial_logic
 from . import update_logic
 from . import waypoint_logic
@@ -581,6 +582,14 @@ def api_nearest_fix_by_coord(id: str, lat: float, lon: float):
     there, so the matching point can be marked on every open plot. Not cached:
     the position varies per click."""
     return spatial_logic.get_nearest_fix_by_coord(_resolve_path(id), lat, lon)
+
+
+@app.get("/api/plot_presets.js")
+def api_plot_presets_js():
+    # static/plot_presets.json as a blocking script (window.GP_PLOT_PRESETS) so the
+    # pages have presets/palettes synchronously — no toolbar reflow after first paint.
+    return Response(presets_logic.as_script(), media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/variables")

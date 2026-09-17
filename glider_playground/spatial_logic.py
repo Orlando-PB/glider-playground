@@ -723,31 +723,103 @@ def generate_3d_data(filepath):
     # Vehicle attitude (degrees, None where missing) so the 3D view can pose
     # the model with the measured pitch/roll instead of the track tangent.
     # Files vary in naming; OG1 uses PITCH/ROLL, others GLIDER_PITCH/GLIDER_ROLL.
-    pitch = roll = None
+    pitch = roll = heading = None
     try:
         idx = get_core_spatial_index(filepath, MAX_POINTS_3D)
         if idx is not None and len(idx) == len(lat):
-            arrs = _read_named_arrays(filepath, ['GLIDER_PITCH', 'PITCH', 'GLIDER_ROLL', 'ROLL'])
+            arrs = _read_named_arrays(filepath, ['GLIDER_PITCH', 'PITCH', 'GLIDER_ROLL', 'ROLL',
+                                                 'GLIDER_HEADING', 'HEADING'])
             units = plot_logic._get_var_units(filepath)
 
-            def _attitude(*names):
+            def _first(*names):
                 for nm in names:
                     a = arrs.get(nm)
-                    if a is None or len(a) <= idx.max():
-                        continue
-                    v = a[idx].astype(float)
-                    u = str(units.get(nm, '')).lower()
-                    if 'rad' in u:
-                        v = np.degrees(v)
-                    v[~np.isfinite(v) | (np.abs(v) > 180)] = np.nan
-                    if not np.isnan(v).all():
-                        return [None if np.isnan(x) else round(float(x), 2) for x in v]
-                return None
+                    if a is not None and len(a) > idx.max() and np.isfinite(a).any():
+                        return nm, a.astype(float)
+                return None, None
 
-            pitch = _attitude('GLIDER_PITCH', 'PITCH')
-            roll = _attitude('GLIDER_ROLL', 'ROLL')
+            # Units attributes can't be trusted: Slocum-derived files often say
+            # "deg" while holding radians. A glider's pitch is tens of degrees,
+            # so a file whose |pitch| never exceeds ~pi/2 is in radians - and
+            # roll/heading come from the same sensor block, so they follow it.
+            p_name, p_raw = _first('GLIDER_PITCH', 'PITCH')
+            is_rad = False
+            if p_raw is not None:
+                is_rad = ('rad' in str(units.get(p_name, '')).lower()
+                          or np.nanpercentile(np.abs(p_raw), 99) < 1.6)
+                p_raw_deg = np.degrees(p_raw) if is_rad else p_raw
+
+            # Real-time files carry attitude only every few minutes, with gaps
+            # of hours: interpolating across those smears dives into climbs.
+            # A track point trusts the sensors only when it sits between two
+            # samples that are both within ATT_MAX_GAP_S of it.
+            ATT_MAX_GAP_S = 600.0
+            tfull = _read_track_times(filepath)
+            have_t = (tfull is not None and len(tfull) > idx.max()
+                      and times is not None and len(times) == len(idx))
+
+            def _attitude(*names, circular=False):
+                nm, a = _first(*names)
+                if a is None:
+                    return None, None
+                if is_rad:
+                    a = np.degrees(a)
+                a[np.abs(a) > 360] = np.nan
+                ok = np.where(np.isfinite(a))[0]
+                if len(ok) < 2:
+                    return None, None
+                if circular:
+                    r = np.radians(a[ok])
+                    v = np.degrees(np.arctan2(np.interp(idx, ok, np.sin(r)), np.interp(idx, ok, np.cos(r)))) % 360
+                else:
+                    v = np.interp(idx, ok, a[ok])
+                trusted = np.ones(len(idx), dtype=bool)
+                if have_t:
+                    k = np.searchsorted(ok, idx)               # next sample at/after each track row
+                    lo = ok[np.clip(k - 1, 0, len(ok) - 1)]
+                    hi = ok[np.clip(k, 0, len(ok) - 1)]
+                    with np.errstate(invalid='ignore'):
+                        trusted = ((np.abs(times - tfull[lo]) <= ATT_MAX_GAP_S)
+                                   & (np.abs(tfull[hi] - times) <= ATT_MAX_GAP_S))
+                return v, trusted
+
+            def _out(v):
+                return [None if not np.isfinite(x) else round(float(x), 2) for x in v]
+
+            pv, pt = _attitude('GLIDER_PITCH', 'PITCH')
+            if pv is not None:
+                # Away from trusted samples: the file's typical dive/climb angle,
+                # signed by the vertical speed of the track (level when hovering).
+                typ_down = np.nanmedian(np.abs(p_raw_deg[p_raw_deg < -5])) if (p_raw_deg < -5).any() else 20.0
+                typ_up = np.nanmedian(np.abs(p_raw_deg[p_raw_deg > 5])) if (p_raw_deg > 5).any() else 20.0
+                if have_t:
+                    with np.errstate(invalid='ignore', divide='ignore'):
+                        w = np.gradient(np.asarray(pres, dtype=float), times)   # m/s, +ve sinking
+                else:
+                    w = np.gradient(np.asarray(pres, dtype=float)) * np.inf
+                w = np.nan_to_num(w, nan=0.0, posinf=1.0, neginf=-1.0)
+                est = np.where(w > 0.02, -typ_down, np.where(w < -0.02, typ_up, 0.0))
+                pitch = _out(np.where(pt, pv, est))
+            rv, rt = _attitude('GLIDER_ROLL', 'ROLL')
+            if rv is not None:
+                roll = _out(np.where(rt, rv, 0.0))
+            hv, ht = _attitude('GLIDER_HEADING', 'HEADING', circular=True)
+            if hv is not None:
+                # Unlike pitch, heading is held between surfacings, so bridging
+                # long gaps between compass samples is sound - and switching to
+                # the track direction in the gaps made the model snap between
+                # the two (they disagree in any current). Keep the compass
+                # throughout, then smooth (circular mean over time) to take out
+                # the sample-to-sample yaw wobble.
+                r = np.radians(hv)
+                win = max(3, min(41, (len(hv) // 500) | 1))
+                ker = np.hanning(win + 2)[1:-1]
+                ker /= ker.sum()
+                sn = np.convolve(np.pad(np.sin(r), win // 2, mode='edge'), ker, mode='valid')
+                cs = np.convolve(np.pad(np.cos(r), win // 2, mode='edge'), ker, mode='valid')
+                heading = _out(np.degrees(np.arctan2(sn, cs)) % 360)
     except Exception:
-        pitch = roll = None
+        pitch = roll = heading = None
 
     min_lon, max_lon = float(np.min(lon)), float(np.max(lon))
     min_lat, max_lat = float(np.min(lat)), float(np.max(lat))
@@ -778,6 +850,7 @@ def generate_3d_data(filepath):
         "time_ms": time_ms,
         "pitch": pitch,
         "roll": roll,
+        "heading": heading,
         "bathy_lon": b_lon,
         "bathy_lat": b_lat,
         "bathy_z": b_z,

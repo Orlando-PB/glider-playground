@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <script src="/static/console_log.js"></script>
+    <script src="/api/plot_presets.js"></script>
     <!-- Prebuilt Tailwind (replaces the runtime Play-CDN compiler). Regenerate
          with the Tailwind CLI when classes change — see scratchpad build. -->
     <link rel="stylesheet" href="/static/tailwind.css">
@@ -671,6 +672,10 @@
         .preset-btn.text-amber-800 { color: #fdba74 !important; }
         .preset-btn.bg-yellow-100 { background-color: rgba(250,204,21,0.16) !important; }
         .preset-btn.text-yellow-800 { color: #fde047 !important; }
+
+        /* Presets given a hex colour in plot_presets.json (--pc set inline) */
+        .preset-btn.preset-btn-custom { background-color: color-mix(in srgb, var(--pc) 16%, transparent); color: color-mix(in srgb, var(--pc) 55%, white); }
+        :root[data-theme="light"] .preset-btn.preset-btn-custom { background-color: color-mix(in srgb, var(--pc) 35%, white); color: color-mix(in srgb, var(--pc) 45%, black); }
 
         /* Light theme: stronger saturation so presets stand out on white */
         :root[data-theme="light"] .preset-btn.bg-red-100    { background-color: #fecaca !important; }
@@ -1872,36 +1877,8 @@
         const gliderMap = document.getElementById('gliderMap');
         const cmapTrigger = document.getElementById('cmapTrigger'), cmapMenu = document.getElementById('cmapMenu');
 
-        const cmoceanPalettes = {
-            thermal: ['#042333','#1d1147','#45155e','#781f5e','#a13058','#bd4a38','#cc6c1a','#d5901c','#ddb33a','#e6d274','#e9f6ae'],
-            haline:  ['#2a186c','#2a348a','#1d4ca7','#0e65a4','#0d7a95','#1a8e83','#3ea06d','#72ae4a','#b2ba38','#e8c75a','#fdef9a'],
-            solar:   ['#331901','#512208','#702912','#8a311b','#a13e20','#b35120','#c06717','#ca8115','#cf9d24','#d6ba4c','#dfd77f'],
-            ice:     ['#03051e','#101448','#1c2b69','#27396d','#34517e','#496d97','#6587b0','#87a2c3','#abbdd4','#cfd7e2','#ecedf1'],
-            gray:    ['#000000','#1a1a1a','#333333','#4d4d4d','#666666','#808080','#999999','#b3b3b3','#cccccc','#e6e6e6','#ffffff'],
-            oxy:     ['#eaf85a','#f5d848','#fbba3e','#fb9e3e','#f4844c','#e4725f','#ca6774','#af5f82','#95568a','#7c4d90','#634198','#4735a0','#203487','#0a2f59','#313335'],
-            oxy_old: ['#400000','#5c0000','#780000','#808080','#8c8c8c','#979797','#a3a3a3','#aeaeae','#baba10','#dbdb0a','#fdfd00'],
-            deep:    ['#fdfecc','#c9e3a9','#93c4a9','#61a1b5','#4883b5','#3d65a8','#3a4c93','#383779','#322263','#2c1050','#190628'],
-            dense:   ['#e6f1f7','#c4d8e8','#a6bed9','#8ba4c9','#7489b8','#636c9f','#595388','#55406e','#4e3055','#3f2040','#2e1226'],
-            algae:   ['#d6f5d6','#b5e4a9','#87cd80','#59b561','#319a4c','#0c7f3d','#006630','#00521e','#003d10','#002b08','#001b04'],
-            matter:  ['#fff7cc','#f9d0a3','#f3a781','#ea8161','#de594e','#c7353f','#a91b3c','#812139','#5a2130','#331821','#160e12'],
-            turbid:  ['#e8f6b1','#d3dba0','#bdc091','#a6a682','#928c74','#807364','#6e5a55','#5c4344','#4a2e32','#361a1f','#200910'],
-            speed:   ['#fffdcc','#d9e7a5','#add28a','#7fbb7d','#56a377','#37886c','#26695b','#1c4848','#1b2838','#1b1024','#0c0412'],
-            amp:     ['#fff5f0','#fcd1b3','#f7a788','#ef7963','#e24c3b','#c53126','#9c2121','#741313','#4d0707','#270303','#0a0000'],
-            tempo:   ['#fff6cc','#d3e4bd','#a9d0b3','#80bca9','#5aa69e','#3b8d8f','#27707d','#1a5267','#133749','#0d2130','#050c17'],
-            rain:    ['#eefcff','#cbe8f0','#a9d1df','#85b9cc','#68a0c0','#5f85b5','#5a67a3','#504c8c','#3a3a73','#232958','#11133d'],
-            phase:   ['#a9795e','#c2656a','#c85080','#ad4ba6','#7652c5','#3f63c6','#1778a2','#0e8765','#3c933e','#7c9136','#a87d40'],
-            topo:    ['#2d1451','#36276b','#3e3d7d','#3e5298','#3671a9','#5cb5ae','#cfe5a8','#b3a060','#8c6b35','#5f3d1b','#3b1e0a'],
-            balance: ['#181c44','#3952a1','#5f89ca','#99b3d8','#cad4df','#f5f5f5','#e7c6a5','#d09168','#b35d40','#802b24','#400000'],
-            delta:   ['#112f46','#164872','#275a8f','#3d7ea0','#5aa294','#97c07d','#e0d18a','#dba04b','#bd4e40','#7d2f38','#3b152f'],
-            curl:    ['#150b2e','#2a245d','#3a3f85','#56659f','#8596b5','#c9c9c3','#d4c58b','#bfa05a','#a76b3e','#6d2e3e','#371032'],
-            diff:    ['#241c2f','#2c3d6a','#38689e','#6098b8','#a3bfc5','#e2e2e2','#d0b6a9','#b37773','#874441','#51252b','#241414'],
-            tarn:    ['#3a1e0b','#7a4622','#b17838','#d3a369','#e2c999','#e2e2d8','#a4c0a5','#6c9c86','#387367','#14494a','#0e2d35'],
-            bbp:     ['#cccccc','#737373','#000000','#1335f5','#3f8df7','#67dffb','#a1fc4e','#f8d748','#ef8733','#ea3323'],
-            temp:    ['#1b1c6e','#365292','#5286b7','#8db4c4','#dbe5cd','#f1d8b4','#d9997e','#c05e4c','#a0372b','#811910'],
-            sal:     ['#f9e8b1','#f1c38f','#e8a074','#db7c5f','#cb5c58','#b2425c','#943061','#732460','#511c53','#321340'],
-            sunset:  ['#ecf472','#f1c85b','#eea052','#db7e61','#ba6b78','#935c86','#714c8e','#4d3a99','#1f3479','#0f263b'],
-            chla:    ['#182548','#2c5398','#4a88a4','#87b8b5','#dae4da','#e6d992','#a8ab3e','#56872e','#285932','#1b2617']
-        };
+        // Palettes live in static/plot_presets.json (served as /api/plot_presets.js).
+        const cmoceanPalettes = (window.GP_PLOT_PRESETS || {}).palettes || {};
 
         (function buildCmapMenu() {
             const menu = document.getElementById('cmapMenu');
@@ -1997,7 +1974,7 @@
         
         let isPlotting = false;
         let plotQueued = false;
-        let currentPreset = 'preset_temp';
+        let currentPreset = ((window.GP_PLOT_PRESETS || {}).views || {}).default_preset || 'preset_temp';
 
         let isDraggingCTop = false, isDraggingCBottom = false;
 
@@ -2795,7 +2772,7 @@
         }
 
         // Preference order for auto-picking a new plot's preset.
-        const NEW_PLOT_PRESET_ORDER = ['preset_temp', 'preset_sal', 'preset_density', 'preset_chla', 'preset_doxy', 'preset_bbp', 'preset_ts'];
+        const NEW_PLOT_PRESET_ORDER = () => viewSpecs('new_plot_order').map(s => s.key);
 
         function presetAvailable(key) {
             const p = OceanPresets[key];
@@ -2811,7 +2788,7 @@
             if (type !== 'plot') return { datasetId: datasetSelect.value || '' };
 
             const used = new Set(Object.values(panels).filter(p => p.type === 'plot').map(p => p.state.preset).filter(Boolean));
-            for (const key of NEW_PLOT_PRESET_ORDER) {
+            for (const key of NEW_PLOT_PRESET_ORDER()) {
                 if (!used.has(key) && presetAvailable(key)) return stateFromPreset(key);
             }
             // Any remaining available preset not yet shown.
@@ -3332,23 +3309,40 @@
             if (!(snap && buildFromSnapshot(snap))) buildDefaultLayout();
         }
 
-        const OceanPresets = {
-            preset_phases: { text: 'Phases', icon: 'lens_blur', bg: 'bg-gray-100', textCol: 'text-gray-700', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['SCI_PHASE'], cmap: 'discrete_09', invert: true },
-            preset_temp: { text: 'Thermal', icon: 'thermostat', bg: 'bg-red-100', textCol: 'text-red-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['TEMP', 'CONS_TEMP'], cmap: 'temp', invert: true },
-            preset_ts: { text: 'T-S Diagram', icon: 'scatter_plot', bg: 'bg-purple-100', textCol: 'text-purple-800', x: ['PRAC_SALINITY', 'ABS_SALINITY', 'CNDC'], y: ['TEMP', 'CONS_TEMP'], c: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], cmap: 'deep', invert: false },
-            preset_sal: { text: 'Salinity', icon: 'water_drop', bg: 'bg-blue-100', textCol: 'text-blue-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['PRAC_SALINITY', 'ABS_SALINITY'], cmap: 'sal', invert: true },
-            preset_density: { text: 'Density', icon: 'layers', bg: 'bg-indigo-100', textCol: 'text-indigo-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DENSITY'], cmap: 'dense', invert: true },
-            preset_chla: { text: 'Chlorophyll', icon: 'grass', bg: 'bg-green-100', textCol: 'text-green-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['CHLA'], cmap: 'chla', invert: true, drawOrder: 'outliers' },
-            // Oxygen, in rough order of usefulness: calibrated concentration first
-            // (MOLAR_DOXY µmol/L, DOXY µmol/kg, OXYSAT_DOXY % sat), then raw optode
-            // outputs (DPHASE_DOXY phase angle °, FREQUENCY_DOXY Hz) as a last
-            // resort so a file with only raw sensor data still gets *an* oxygen
-            // plot. Raw outputs aren't converted to concentration (that needs the
-            // optode's calibration coefficients) — they're shown in their own units.
-            preset_doxy: { text: 'Oxygen', icon: 'air', bg: 'bg-cyan-100', textCol: 'text-cyan-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['MOLAR_DOXY', 'DOXY', 'OXYSAT_DOXY', 'DPHASE_DOXY', 'TPHASE_DOXY', 'BPHASE_DOXY', 'FREQUENCY_DOXY'], cmap: 'oxy', invert: true },
-            preset_bbp: { text: 'Backscatter', icon: 'blur_on', bg: 'bg-amber-100', textCol: 'text-amber-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['BBP700', 'BBP532', 'BBP470', 'BBP650', 'BBP660', 'BBP880'], cmap: 'bbp', invert: true, drawOrder: 'outliers' },
-            preset_par: { text: 'PAR', icon: 'sunny', bg: 'bg-yellow-100', textCol: 'text-yellow-800', x: ['TIME', 'TIME_GPS'], y: ['PRES', 'GLIDER_DEPTH', 'DEPTH', 'PRES_ENG'], c: ['DOWNWELLING_PAR'], cmap: 'sunset', invert: true, drawOrder: 'outliers' }
+        // Presets, views and palettes all come from static/plot_presets.json
+        // (served as /api/plot_presets.js → window.GP_PLOT_PRESETS) — edit that
+        // file, not this one. Here it's just reshaped into the OceanPresets form
+        // the rest of the shell uses.
+        const PRESET_CFG = window.GP_PLOT_PRESETS || { axes: {}, presets: {}, views: {}, palettes: {} };
+        const PRESET_VIEWS = PRESET_CFG.views || {};
+        const PRESET_NAMED_COLOURS = {
+            gray:   ['bg-gray-100', 'text-gray-700'],     red:    ['bg-red-100', 'text-red-800'],
+            purple: ['bg-purple-100', 'text-purple-800'], blue:   ['bg-blue-100', 'text-blue-800'],
+            indigo: ['bg-indigo-100', 'text-indigo-800'], green:  ['bg-green-100', 'text-green-800'],
+            cyan:   ['bg-cyan-100', 'text-cyan-800'],     amber:  ['bg-amber-100', 'text-amber-800'],
+            yellow: ['bg-yellow-100', 'text-yellow-800'],
         };
+        const OceanPresets = (() => {
+            const names = (spec) => typeof spec === 'string' ? (PRESET_CFG.axes[spec] || [spec]) : (spec || []);
+            const out = {};
+            for (const [key, p] of Object.entries(PRESET_CFG.presets || {})) {
+                const named = PRESET_NAMED_COLOURS[p.colour];
+                out[key] = {
+                    text: p.label || key, icon: p.icon || 'show_chart',
+                    bg: named ? named[0] : 'preset-btn-custom', textCol: named ? named[1] : '',
+                    customColour: named ? null : (p.colour || '#9ca3af'),
+                    x: names(p.x), y: names(p.y), c: names(p.c),
+                    cmap: p.cmap || 'thermal', invert: !!p.invert_y,
+                };
+                if (p.draw_order) out[key].drawOrder = p.draw_order;
+            }
+            return out;
+        })();
+        const DEFAULT_PRESET = OceanPresets[PRESET_VIEWS.default_preset] ? PRESET_VIEWS.default_preset : (Object.keys(OceanPresets)[0] || 'preset_temp');
+        // A view's plot list from the JSON → [{ key, drawOrder? }], unknown presets dropped.
+        const viewSpecs = (name) => (PRESET_VIEWS[name] || [])
+            .map(e => typeof e === 'string' ? { key: e } : { key: e.preset, drawOrder: e.draw_order })
+            .filter(s => OceanPresets[s.key]);
 
         // Preset buttons don't depend on any fetched data, so build them right
         // away rather than waiting on init()'s /api/config round trip — otherwise
@@ -3796,6 +3790,7 @@
                 btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap ${p.bg} ${p.textCol}`;
                 btn.innerHTML = `<span class="material-symbols-outlined text-[14px]">${p.icon}</span> <span class="preset-text">${p.text}</span>`;
                 btn.dataset.preset = key;
+                if (p.customColour) btn.style.setProperty('--pc', p.customColour);
                 
                 btn.addEventListener('click', () => {
                     if (btn.disabled) return;
@@ -4093,7 +4088,7 @@
         // Overview: globe + 3D + a 1×N stack of the headline biogeochemical presets.
         function applyOverview() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const candidates = ['preset_temp', 'preset_density', 'preset_chla', 'preset_doxy'];
+            const candidates = viewSpecs('overview').map(s => s.key);
             const avail = candidates.filter(key => {
                 const p = OceanPresets[key];
                 return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
@@ -4126,7 +4121,7 @@
         // sidebar (the in-plot SVG marginal) switched on.
         function applyDashboard() {
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const order = ['preset_temp', 'preset_sal', 'preset_density', 'preset_doxy', 'preset_chla', 'preset_bbp'];
+            const order = viewSpecs('dashboard').map(s => s.key);
             const avail = order.filter(key => {
                 const p = OceanPresets[key];
                 return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
@@ -4174,14 +4169,9 @@
                 const p = OceanPresets[key];
                 return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
             };
-            const specs = [
-                { key: 'preset_temp', drawOrder: 'normal'   },
-                { key: 'preset_chla', drawOrder: 'smallest' },
-                { key: 'preset_chla', drawOrder: 'largest'  },
-                { key: 'preset_bbp',  drawOrder: 'smallest' },
-                { key: 'preset_bbp',  drawOrder: 'largest'  },
-                { key: 'preset_par',  drawOrder: 'outliers' },
-            ].filter(s => presetOk(s.key));
+            const specs = viewSpecs('biooptics')
+                .map(s => ({ key: s.key, drawOrder: s.drawOrder || OceanPresets[s.key].drawOrder || 'normal' }))
+                .filter(s => presetOk(s.key));
             if (specs.length === 0) return;
 
             _pendingGlobeFit = false;
@@ -4250,8 +4240,10 @@
 
             const topMap    = keepMap || createPanel('map',  { datasetId: datasetSelect.value || '' });
             const bottomMap = createPanel('map2', { datasetId: datasetSelect.value || '' });
-            const bbp = createPanel('plot', stateFromPreset('preset_bbp'));
-            const sal = createPanel('plot', stateFromPreset('preset_sal'));
+            // The two plots come from views.duo in plot_presets.json (top, bottom).
+            const [duoTop, duoBottom] = viewSpecs('duo').map(s => s.key);
+            const bbp = createPanel('plot', stateFromPreset(duoTop || DEFAULT_PRESET));
+            const sal = createPanel('plot', stateFromPreset(duoBottom || DEFAULT_PRESET));
 
             layoutTree = duoLayoutTree(topMap.id, bottomMap.id, bbp.id, sal.id);
             _viewKind = 'duo'; _layoutPortrait = isPortrait();
@@ -5404,7 +5396,7 @@
                 // when the file supports it; only otherwise the first usable preset.
                 // (Phases is first in OceanPresets, so 'first valid' alone made every
                 // fallback a Phases plot.)
-                const fallback = (firstValid && !isValidKey('preset_temp')) ? firstValid : 'preset_temp';
+                const fallback = (firstValid && !isValidKey(DEFAULT_PRESET)) ? firstValid : DEFAULT_PRESET;
                 // Synthetic views keep their own selection but still need sane
                 // toolbar variables underneath (a later plot reads them) —
                 // applyPreset re-detects currentPreset, so restore it after.
@@ -5482,7 +5474,7 @@
         ySelect.addEventListener('change', () => { 
             checkAndUpdatePreset();
             resetPlotState(true);
-            updateToggleBtn(invertYBtn, ['PRES', 'PRES_ENG', 'GLIDER_DEPTH', 'DEPTH'].includes(ySelect.value.toUpperCase().replace(/_ADJUSTED$/, '')));
+            updateToggleBtn(invertYBtn, (PRESET_VIEWS.invert_y_vars || []).includes(ySelect.value.toUpperCase().replace(/_ADJUSTED$/, '')));
             updatePlot();
         });
         
@@ -6375,7 +6367,7 @@
         // back to the default thermal preset. Used by every View selector button
         // before it lays out its panels.
         function fullResetState() {
-            currentPreset = 'preset_temp';
+            currentPreset = DEFAULT_PRESET;
             applyPreset(currentPreset);
             // Profiles default OFF — only the Dashboard view turns them on (per-plot).
             updateToggleBtn(profileSidebarBtn, false);

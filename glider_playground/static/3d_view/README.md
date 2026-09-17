@@ -10,11 +10,12 @@ lives here, kept apart from the science-facing pages.
   bathymetry and through the water column behind the "Scenery" toggle in the
   view's Style panel (default on; the toggle also switches the seabed's depth shading).
   - `scenery.js` — placement rules per kind (seabed depth band / land /
-    floating depth band, plus a latitude band), seeded scatter, merge into one
+    floating depth band, plus a latitude band or ocean-region boxes — kelps,
+    seagrasses and corals are per-region species), seeded scatter, merge into one
     flat-shaded `mesh3d`, and a gentle sway/bob for underwater things during
     playback. Exposed as `window.Scenery`
     (`load`, `build`, `sway`).
-  - `*.json` — the meshes (same format as `models/`; origin at ground level for things that stand, at body centre for things that swim). Species (whales, sharks, schooling fish, jellyfish) are built by small parametric functions in the generator, one file each.
+  - `*.json` — the meshes (same format as `models/`; origin at ground level for things that stand, at body centre for things that swim). Species (whales, dolphins, sharks, schooling fish, jellyfish, rays, turtles, eels, octopuses, squid, crabs, lobsters, shells, starfish, urchins, anemones, kelps, corals…) are built by small parametric functions in the generator, one file each; a part named `hull` sets the length the view sizes the animal by.
   - `make_models.py` — regenerates those JSON files; edit shapes here, run
     `python make_models.py`.
 

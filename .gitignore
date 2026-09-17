@@ -13,3 +13,5 @@
 /testing/
 # Private server-only deploy assets (analytics plugin, secrets). Never publish.
 /deploy/
+
+CLAUDE.md

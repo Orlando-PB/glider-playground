@@ -33,6 +33,7 @@ import xarray as xr
 from . import plot_logic
 from . import spatial_logic
 from . import derive_logic
+from . import presets_logic
 from . import server_config
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,10 @@ DATA_DIR = _resolve_data_dir()
 # v25: 3D view payload gains per-point epoch-ms times (position slider)
 # v26: 3D view payload gains per-point pitch/roll (degrees) for the vehicle model
 # v27: 3D view track cap raised (MAX_POINTS_3D) now it carries no temperature colouring
-CACHE_VERSION = "27"
+# v28: 3D view attitude interpolated onto track rows (was all-missing when logged
+#      sparsely), radians mislabelled as "deg" detected, compass heading added
+# v29: 3D view compass heading bridged across gaps and smoothed
+CACHE_VERSION = "29"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -866,25 +870,14 @@ def _mark_step_done(rec: dict, step: str):
 # These mirror the frontend's default first request so the prewarmed binary
 # lands under the exact key the browser will ask for. They MUST track the
 # index.html defaults:
-#   - x/y/c come from OceanPresets + findBest (prefer the _ADJUSTED variant).
+#   - x/y/c come from static/plot_presets.json (every preset with prewarm: true,
+#     via presets_logic) + findBest (prefer the _ADJUSTED variant).
 #   - QC flags, CTD gap-fill/clean, and the hard TIME-validity drop are always
 #     applied now — no toggles left to mirror.
 #   - cycle_var is the auto-detected cycle variable (CycleProfile / /api/cycles).
 # A mismatch is harmless: the entry just won't be hit and the request computes
 # live, exactly as before. So this can never serve wrong data — worst case it's
 # wasted work.
-_PREWARM_X_CANDIDATES = ["TIME", "TIME_GPS"]
-_PREWARM_Y_CANDIDATES = ["PRES", "GLIDER_DEPTH", "DEPTH", "PRES_ENG"]
-# c-var lists per preset, same preference order as OceanPresets in index.html.
-_PREWARM_C_CANDIDATES = [
-    ["TEMP", "CONS_TEMP"],
-    ["PRAC_SALINITY", "ABS_SALINITY"],
-    ["DENSITY"],
-    ["CHLA"],
-    ["MOLAR_DOXY", "DOXY", "OXYSAT_DOXY", "DPHASE_DOXY", "TPHASE_DOXY", "BPHASE_DOXY", "FREQUENCY_DOXY"],
-    ["BBP700", "BBP532"],
-    ["DOWNWELLING_PAR"],
-]
 
 
 def _resolve_first(candidates, var_set):
@@ -912,11 +905,6 @@ def _prewarm_default_plots(rec: dict):
     if not var_names:
         return
 
-    x_var = _resolve_first(_PREWARM_X_CANDIDATES, var_names)
-    y_var = _resolve_first(_PREWARM_Y_CANDIDATES, var_names)
-    if not x_var or not y_var:
-        return
-
     qc_flags = "0,1,2,5,8"
 
     try:
@@ -929,12 +917,13 @@ def _prewarm_default_plots(rec: dict):
     # Match the frontend's Auto budget: 60k on the server, 100k locally.
     max_points = 60000 if is_server else 100000
 
-    c_vars = []
-    for cand in _PREWARM_C_CANDIDATES:
-        r = _resolve_first(cand, var_names)
-        if r and r not in c_vars:
-            c_vars.append(r)
-    if not c_vars:
+    # One (x, y, c) per prewarm-flagged preset the file can satisfy.
+    combos = []
+    for xc, yc, cc in presets_logic.prewarm_candidates():
+        combo = (_resolve_first(xc, var_names), _resolve_first(yc, var_names), _resolve_first(cc, var_names))
+        if all(combo) and combo not in combos:
+            combos.append(combo)
+    if not combos:
         return
 
     # The frontend may or may not have loaded /api/cycles before firing its first
@@ -943,7 +932,7 @@ def _prewarm_default_plots(rec: dict):
     # both keys — a guaranteed hit either way.
     cycle_var_keys = [None] if cycle_var is None else [cycle_var, None]
 
-    for c_var in c_vars:
+    for x_var, y_var, c_var in combos:
         if _is_removed(rec):
             return
         try:

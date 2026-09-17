@@ -1,0 +1,170 @@
+{
+  "_help": [
+    "ONE FILE for plot presets, dashboard views and colour palettes. Read by the backend (startup pre-caching) and by every page (served as /api/plot_presets.js). Restart the app after editing.",
+    "ADD A PRESET: copy a block in 'presets', give it a new key (preset_<something>), and edit it. It appears as a toolbar button automatically, greyed out for files that lack its variables.",
+    "  label      - button text.",
+    "  icon       - a Material Symbols icon name (fonts.google.com/icons).",
+    "  colour     - button colour: red, purple, blue, indigo, green, cyan, amber, yellow, gray - or any hex like '#e879f9'.",
+    "  x / y / c  - variable names to try IN ORDER; the first one present in the file wins (its _ADJUSTED variant is preferred automatically). Either a list, or the name of a shared list from 'axes' (e.g. 'time', 'depth').",
+    "  cmap       - a name from 'palettes' (append _r to reverse it), or 'discrete_09' for integer flags, or 'black'.",
+    "  invert_y   - true for depth/pressure on the y axis.",
+    "  draw_order - optional: normal | outliers | smallest | largest (which points are drawn on top).",
+    "  prewarm    - true = pre-cache this plot when a file is first processed, so the first click is instant. Only applies to files processed after the change.",
+    "ADD A PALETTE: add a name + list of hex colours to 'palettes', LOW value first -> HIGH value last. (Gradients copied top-to-bottom from a colour bar are high-first: reverse them.)",
+    "VIEWS: which presets each built-in view shows, in order. Presets the file can't satisfy are skipped. An entry is a preset key, or {\"preset\": key, \"draw_order\": ...} to override. 'duo' uses exactly two. 'new_plot_order' is the preference order when adding a new plot panel. 'invert_y_vars' are y variables that auto-switch Invert-Y on when picked by hand."
+  ],
+  "axes": {
+    "time": ["TIME", "TIME_GPS"],
+    "depth": ["PRES", "GLIDER_DEPTH", "DEPTH", "PRES_ENG"]
+  },
+  "presets": {
+    "preset_phases": {
+      "label": "Phases",
+      "icon": "lens_blur",
+      "colour": "gray",
+      "x": "time",
+      "y": "depth",
+      "c": ["SCI_PHASE"],
+      "cmap": "discrete_09",
+      "invert_y": true,
+      "prewarm": false
+    },
+    "preset_temp": {
+      "label": "Thermal",
+      "icon": "thermostat",
+      "colour": "red",
+      "x": "time",
+      "y": "depth",
+      "c": ["TEMP", "CONS_TEMP"],
+      "cmap": "temp",
+      "invert_y": true,
+      "prewarm": true
+    },
+    "preset_ts": {
+      "label": "T-S Diagram",
+      "icon": "scatter_plot",
+      "colour": "purple",
+      "x": ["PRAC_SALINITY", "ABS_SALINITY", "CNDC"],
+      "y": ["TEMP", "CONS_TEMP"],
+      "c": "depth",
+      "cmap": "deep",
+      "invert_y": false,
+      "prewarm": false
+    },
+    "preset_sal": {
+      "label": "Salinity",
+      "icon": "water_drop",
+      "colour": "blue",
+      "x": "time",
+      "y": "depth",
+      "c": ["PRAC_SALINITY", "ABS_SALINITY"],
+      "cmap": "sal",
+      "invert_y": true,
+      "prewarm": true
+    },
+    "preset_density": {
+      "label": "Density",
+      "icon": "layers",
+      "colour": "indigo",
+      "x": "time",
+      "y": "depth",
+      "c": ["DENSITY"],
+      "cmap": "dense",
+      "invert_y": true,
+      "prewarm": true
+    },
+    "preset_chla": {
+      "label": "Chlorophyll",
+      "icon": "grass",
+      "colour": "green",
+      "x": "time",
+      "y": "depth",
+      "c": ["CHLA"],
+      "cmap": "chla",
+      "invert_y": true,
+      "draw_order": "outliers",
+      "prewarm": true
+    },
+    "preset_doxy": {
+      "label": "Oxygen",
+      "icon": "air",
+      "colour": "cyan",
+      "x": "time",
+      "y": "depth",
+      "c": ["MOLAR_DOXY", "DOXY", "OXYSAT_DOXY", "DPHASE_DOXY", "TPHASE_DOXY", "BPHASE_DOXY", "FREQUENCY_DOXY"],
+      "cmap": "oxy",
+      "invert_y": true,
+      "prewarm": true
+    },
+    "preset_bbp": {
+      "label": "Backscatter",
+      "icon": "blur_on",
+      "colour": "amber",
+      "x": "time",
+      "y": "depth",
+      "c": ["BBP700", "BBP532", "BBP470", "BBP650", "BBP660", "BBP880"],
+      "cmap": "bbp",
+      "invert_y": true,
+      "draw_order": "outliers",
+      "prewarm": true
+    },
+    "preset_par": {
+      "label": "PAR",
+      "icon": "sunny",
+      "colour": "yellow",
+      "x": "time",
+      "y": "depth",
+      "c": ["DOWNWELLING_PAR"],
+      "cmap": "sunset",
+      "invert_y": true,
+      "draw_order": "outliers",
+      "prewarm": true
+    }
+  },
+  "views": {
+    "default_preset": "preset_temp",
+    "new_plot_order": ["preset_temp", "preset_sal", "preset_density", "preset_chla", "preset_doxy", "preset_bbp", "preset_ts"],
+    "invert_y_vars": ["PRES", "PRES_ENG", "GLIDER_DEPTH", "DEPTH"],
+    "overview": ["preset_temp", "preset_density", "preset_chla", "preset_doxy"],
+    "dashboard": ["preset_temp", "preset_sal", "preset_density", "preset_doxy", "preset_chla", "preset_bbp"],
+    "biooptics": [
+      { "preset": "preset_temp", "draw_order": "normal" },
+      { "preset": "preset_chla", "draw_order": "smallest" },
+      { "preset": "preset_chla", "draw_order": "largest" },
+      { "preset": "preset_bbp", "draw_order": "smallest" },
+      { "preset": "preset_bbp", "draw_order": "largest" },
+      { "preset": "preset_par", "draw_order": "outliers" }
+    ],
+    "duo": ["preset_bbp", "preset_sal"]
+  },
+  "palettes": {
+    "thermal": ["#042333", "#1d1147", "#45155e", "#781f5e", "#a13058", "#bd4a38", "#cc6c1a", "#d5901c", "#ddb33a", "#e6d274", "#e9f6ae"],
+    "haline": ["#2a186c", "#2a348a", "#1d4ca7", "#0e65a4", "#0d7a95", "#1a8e83", "#3ea06d", "#72ae4a", "#b2ba38", "#e8c75a", "#fdef9a"],
+    "solar": ["#331901", "#512208", "#702912", "#8a311b", "#a13e20", "#b35120", "#c06717", "#ca8115", "#cf9d24", "#d6ba4c", "#dfd77f"],
+    "ice": ["#03051e", "#101448", "#1c2b69", "#27396d", "#34517e", "#496d97", "#6587b0", "#87a2c3", "#abbdd4", "#cfd7e2", "#ecedf1"],
+    "gray": ["#000000", "#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#999999", "#b3b3b3", "#cccccc", "#e6e6e6", "#ffffff"],
+    "oxy": ["#eaf85a", "#f5d848", "#fbba3e", "#fb9e3e", "#f4844c", "#e4725f", "#ca6774", "#af5f82", "#95568a", "#7c4d90", "#634198", "#4735a0", "#203487", "#0a2f59", "#313335"],
+    "oxy_old": ["#400000", "#5c0000", "#780000", "#808080", "#8c8c8c", "#979797", "#a3a3a3", "#aeaeae", "#baba10", "#dbdb0a", "#fdfd00"],
+    "deep": ["#fdfecc", "#c9e3a9", "#93c4a9", "#61a1b5", "#4883b5", "#3d65a8", "#3a4c93", "#383779", "#322263", "#2c1050", "#190628"],
+    "dense": ["#e6f1f7", "#c4d8e8", "#a6bed9", "#8ba4c9", "#7489b8", "#636c9f", "#595388", "#55406e", "#4e3055", "#3f2040", "#2e1226"],
+    "algae": ["#d6f5d6", "#b5e4a9", "#87cd80", "#59b561", "#319a4c", "#0c7f3d", "#006630", "#00521e", "#003d10", "#002b08", "#001b04"],
+    "matter": ["#fff7cc", "#f9d0a3", "#f3a781", "#ea8161", "#de594e", "#c7353f", "#a91b3c", "#812139", "#5a2130", "#331821", "#160e12"],
+    "turbid": ["#e8f6b1", "#d3dba0", "#bdc091", "#a6a682", "#928c74", "#807364", "#6e5a55", "#5c4344", "#4a2e32", "#361a1f", "#200910"],
+    "speed": ["#fffdcc", "#d9e7a5", "#add28a", "#7fbb7d", "#56a377", "#37886c", "#26695b", "#1c4848", "#1b2838", "#1b1024", "#0c0412"],
+    "amp": ["#fff5f0", "#fcd1b3", "#f7a788", "#ef7963", "#e24c3b", "#c53126", "#9c2121", "#741313", "#4d0707", "#270303", "#0a0000"],
+    "tempo": ["#fff6cc", "#d3e4bd", "#a9d0b3", "#80bca9", "#5aa69e", "#3b8d8f", "#27707d", "#1a5267", "#133749", "#0d2130", "#050c17"],
+    "rain": ["#eefcff", "#cbe8f0", "#a9d1df", "#85b9cc", "#68a0c0", "#5f85b5", "#5a67a3", "#504c8c", "#3a3a73", "#232958", "#11133d"],
+    "phase": ["#a9795e", "#c2656a", "#c85080", "#ad4ba6", "#7652c5", "#3f63c6", "#1778a2", "#0e8765", "#3c933e", "#7c9136", "#a87d40"],
+    "topo": ["#2d1451", "#36276b", "#3e3d7d", "#3e5298", "#3671a9", "#5cb5ae", "#cfe5a8", "#b3a060", "#8c6b35", "#5f3d1b", "#3b1e0a"],
+    "balance": ["#181c44", "#3952a1", "#5f89ca", "#99b3d8", "#cad4df", "#f5f5f5", "#e7c6a5", "#d09168", "#b35d40", "#802b24", "#400000"],
+    "delta": ["#112f46", "#164872", "#275a8f", "#3d7ea0", "#5aa294", "#97c07d", "#e0d18a", "#dba04b", "#bd4e40", "#7d2f38", "#3b152f"],
+    "curl": ["#150b2e", "#2a245d", "#3a3f85", "#56659f", "#8596b5", "#c9c9c3", "#d4c58b", "#bfa05a", "#a76b3e", "#6d2e3e", "#371032"],
+    "diff": ["#241c2f", "#2c3d6a", "#38689e", "#6098b8", "#a3bfc5", "#e2e2e2", "#d0b6a9", "#b37773", "#874441", "#51252b", "#241414"],
+    "tarn": ["#3a1e0b", "#7a4622", "#b17838", "#d3a369", "#e2c999", "#e2e2d8", "#a4c0a5", "#6c9c86", "#387367", "#14494a", "#0e2d35"],
+    "bbp": ["#cccccc", "#737373", "#000000", "#1335f5", "#3f8df7", "#67dffb", "#a1fc4e", "#f8d748", "#ef8733", "#ea3323"],
+    "temp": ["#1b1c6e", "#365292", "#5286b7", "#8db4c4", "#dbe5cd", "#f1d8b4", "#d9997e", "#c05e4c", "#a0372b", "#811910"],
+    "sal": ["#f9e8b1", "#f1c38f", "#e8a074", "#db7c5f", "#cb5c58", "#b2425c", "#943061", "#732460", "#511c53", "#321340"],
+    "sunset": ["#ecf472", "#f1c85b", "#eea052", "#db7e61", "#ba6b78", "#935c86", "#714c8e", "#4d3a99", "#1f3479", "#0f263b"],
+    "chla": ["#182548", "#2c5398", "#4a88a4", "#87b8b5", "#dae4da", "#e6d992", "#a8ab3e", "#56872e", "#285932", "#1b2617"]
+  }
+}
