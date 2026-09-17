@@ -279,6 +279,7 @@
         const sceneryEveryMs = 50;   // scenery sway/swim cadence during playback (~20 fps: the motion is slow, and every update re-meshes ~15k vertices)
         const trackLineMax = Infinity;   // cap on points in the drawn track line. Uncapped: a decimated line visibly differs from the full-resolution tip, so the path "changed" once the glider had passed
         const followDist = 0.64;      // scene units: the camera eases in to this if it's further out during playback (never pushes out)
+        const maxOffFrac = 0.35;     // the pivot may never sit further than this fraction of the eye distance from the glider, so the glider stays in frame however fast it moves
         const leadFrac = 0.3;        // the pivot sits this fraction of the camera distance ahead of the glider, so the glider is off-centre with the water ahead filling the frame
         const cooldownMs = 1500;     // resume delay after a manual rotate/zoom
         // Argo floats: the index only gives surfacings, so between them the float follows a synthetic
@@ -1412,6 +1413,7 @@
                             // Camera: ease the pivot toward a point a little ahead of the glider, carry the eye with it,
                             // then swing the eye (shortest way) toward the azimuth behind the direction of travel.
                             const target = centerFor(data, posFloat);
+                            const gl = { x: target.x, y: target.y };
                             const hd0 = travelHeading(data, posFloat);
                             if (hd0) {
                                 const o0 = eyeOffset(), r0 = Math.min(followDist, Math.hypot(o0.x, o0.y));
@@ -1421,7 +1423,12 @@
                             sinceStart += dtRaw;
                             const ramp0 = Math.min(1, sinceStart / camSoftStartS), ramp = ramp0 * ramp0 * (3 - 2 * ramp0);
                             const a = (1 - Math.exp(-dtRaw / cameraTau)) * ramp;
-                            const dx = (target.x - currentCenter.x) * a, dy = (target.y - currentCenter.y) * a;
+                            let dx = (target.x - currentCenter.x) * a, dy = (target.y - currentCenter.y) * a;
+                            {   // Leash: the smoothed pivot lags a fast glider; pull it back within maxOffFrac of the eye distance.
+                                const e = eyeOffset(), lim = maxOffFrac * Math.hypot(e.x, e.y, e.z);
+                                const ox = currentCenter.x + dx - gl.x, oy = currentCenter.y + dy - gl.y, off = Math.hypot(ox, oy);
+                                if (off > lim) { const k = (1 - lim / off) * ramp; dx -= ox * k; dy -= oy * k; }
+                            }
                             currentCenter = { x: currentCenter.x + dx, y: currentCenter.y + dy, z: currentCenter.z };
                             const o = { x: currentEye.x + dx - currentCenter.x, y: currentEye.y + dy - currentCenter.y };
                             let r = Math.hypot(o.x, o.y);
