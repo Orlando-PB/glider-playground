@@ -270,12 +270,13 @@
         const clearViewDirs = 24;           // compass directions scored for an open view
         const clearViewBehindBias = 0.15;   // how much "behind the glider" is preferred over a slightly clearer side
         const clearViewSticky = 0.06;       // a new direction must beat the current one by this much
+        const pitchExagFromDeg = 6, pitchExagFullDeg = 18;   // measured pitch below/above which the model's pitch is not / fully (half-way) stretched
         const camSoftStartS = 4;     // s: camera easing ramps in over this long after play / resume
         const camAimTau = 3;         // s: smoothing of the target azimuth itself, ahead of camAzimuthTau
         const cameraTau = 2.0;       // s: camera-centre smoothing time constant (bigger = lazier follow)
         const trackEveryMs = 500;    // past/ahead track split cadence during playback
         const sceneryEveryMs = 50;   // scenery sway/swim cadence during playback (~20 fps: the motion is slow, and every update re-meshes ~15k vertices)
-        const trackLineMax = 4000;   // points in the drawn track line (the split re-uploads both halves; the model still uses every sample)
+        const trackLineMax = Infinity;   // cap on points in the drawn track line. Uncapped: a decimated line visibly differs from the full-resolution tip, so the path "changed" once the glider had passed
         const followDist = 1.0;      // scene units: the camera eases in to this if it's further out during playback (never pushes out)
         const leadFrac = 0.3;        // the pivot sits this fraction of the camera distance ahead of the glider, so the glider is off-centre with the water ahead filling the frame
         const cooldownMs = 1500;     // resume delay after a manual rotate/zoom
@@ -387,6 +388,7 @@
                 currentEye = { x: currentEye.x + c.x - currentCenter.x, y: currentEye.y + c.y - currentCenter.y, z: currentEye.z + c.z - currentCenter.z };
                 currentCenter = c;
             }
+            let sceneVExag = 1;             // vertical exaggeration of the current scene, set by buildScene
             let occGrid = null;             // drawn seabed grid { lon, lat, z }, for the playback line-of-sight test
             // Fraction of sight lines from an eye at azimuth `th` (horizontal radius r, height dz above the
             // pivot) to glider positions around track index f that hit the seabed anywhere. 0 = clear view.
@@ -657,6 +659,7 @@
                 const aspectZ = (distZ / maxHoriz) * vExag;
 
                 boxAspectZ = aspectZ;
+                sceneVExag = vExag;
                 occGrid = showSeafloor ? { lon: bLon, lat: bLat, z: bathyZ } : null;
 
                 // Explicit axis ranges so data units convert to scene units exactly (see sceneScale).
@@ -802,8 +805,8 @@
             // Placement is done in scene units (via sceneScale), then converted back to lon/lat/depth for Plotly.
             const gliderLength = 0.03;     // scene units nose-to-tail (scene is ~1 unit across)
 
-            // Track split at index i; both halves share the current point. The line is drawn from a
-            // decimated copy (trackLineMax points) with the exact current sample spliced in.
+            // Track split at index i; both halves share the current point. The line is every sample unless
+            // trackLineMax caps it (then a decimated copy with the exact current sample spliced in).
             let trackLine = null;   // { idx: [sample indices], x, y, z }
             function trackGeometry(data, i) {
                 if (!trackLine) {
@@ -1031,7 +1034,13 @@
                         const sx = e / coslat / S.kx, sy = nn / S.ky, sl = Math.hypot(sx, sy);
                         if (d0 != null && sl > 1e-12) h = [sx / sl, sy / sl, 0];
                     }
-                    const pr = pitchDeg * Math.PI / 180, cp = Math.cos(pr), sp = Math.sin(pr);
+                    // Halfway between the measured pitch and that pitch stretched by the scene's vertical exaggeration
+                    // (the slope of the drawn track): the stretched one alone is near-vertical at high exaggeration.
+                    const pr0 = pitchDeg * Math.PI / 180;
+                    // Shallow angles and the surface keep the true pitch, so a slightly tilted glider stays nearly flat.
+                    const ss = (v, lo, hi) => { const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo))); return t * t * (3 - 2 * t); };
+                    const wEx = 0.5 * ss(Math.abs(pitchDeg), pitchExagFromDeg, pitchExagFullDeg) * ss(-sample(data, f)[2], 2, 10);
+                    const pr = pr0 + (Math.atan(Math.tan(pr0) * sceneVExag) - pr0) * wEx, cp = Math.cos(pr), sp = Math.sin(pr);
                     fw = [h[0] * cp, h[1] * cp, sp];
                     const s0 = [-h[1], h[0], 0];                                       // port side, level
                     const u0 = [fw[1] * s0[2] - fw[2] * s0[1], fw[2] * s0[0] - fw[0] * s0[2], fw[0] * s0[1] - fw[1] * s0[0]];

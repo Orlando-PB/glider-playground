@@ -130,6 +130,7 @@ change alters cached output, and add a line here.
 
 | Version | Change |
 |---|---|
+| v31 | 3D view bathymetry grid widened by one cell and keeps its far edges, so the scene box always contains the track |
 | v30 | map track and 3D track point caps are now the same locally and on the server (5000 / 20000; the server was 1000 / 4000) — LOW_MEMORY mode removed |
 | v29 | 3D view compass heading bridged across gaps and smoothed |
 | v28 | 3D view attitude interpolated onto track rows (was all-missing when logged sparsely), radians mislabelled as "deg" detected, compass heading added |

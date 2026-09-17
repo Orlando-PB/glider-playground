@@ -134,9 +134,13 @@ def _trim_position_outliers(lat, lon, times=None):
 
 @functools.lru_cache(maxsize=32)
 def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat: float):
+    # ERDDAP snaps each bound to its NEAREST grid point (1 arc-minute), which can land inside the
+    # request — widen by a cell so the grid (= the 3D scene box) always contains the track.
+    cell = 1 / 60
     url = (
         "https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv"
-        f"?altitude[({min_lat:.4f}):({max_lat:.4f})][({min_lon:.4f}):({max_lon:.4f})]"
+        f"?altitude[({max(min_lat - cell, -90):.4f}):({min(max_lat + cell, 90):.4f})]"
+        f"[({max(min_lon - cell, -180):.4f}):({min(max_lon + cell, 180):.4f})]"
     )
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
@@ -147,8 +151,9 @@ def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat:
 
     lat_step = max(1, len(lats) // BATHY_RESOLUTION)
     lon_step = max(1, len(lons) // BATHY_RESOLUTION)
-    lats = lats[::lat_step]
-    lons = lons[::lon_step]
+    # Subsample, always keeping the last row/column so the far edges aren't trimmed.
+    lats = np.unique(np.append(lats[::lat_step], lats[-1]))
+    lons = np.unique(np.append(lons[::lon_step], lons[-1]))
 
     df = df[df["latitude"].isin(lats) & df["longitude"].isin(lons)]
     pivot = df.pivot(index="latitude", columns="longitude", values="altitude") \

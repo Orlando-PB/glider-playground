@@ -81,7 +81,7 @@ DATA_DIR = _resolve_data_dir()
 
 # Part of every cache key: bump when a processing change alters cached output
 # (history: OVERVIEW.md, "Cache version history").
-CACHE_VERSION = "30"
+CACHE_VERSION = "31"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.

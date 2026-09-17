@@ -301,11 +301,13 @@ m.save("palm")
 # Parametric builders + a species table; one file per species. Lengths in
 # metres, colours are flat per part. Shapes are cartoons, not field guides.
 
-def revolve(m, p, profile, seg=8, squash=0.8, lean_z=0.0):
+def revolve(m, p, profile, seg=8, squash=0.8, lean_z=0.0, arc=None, span=None):
     """Body of revolution along x: profile = [(x, radius)...]; y radius = r,
-    z radius = r*squash; `lean_z` lifts the tail end (whales' fluke stock)."""
+    z radius = r*squash; `lean_z` lifts the tail end (whales' fluke stock).
+    `arc` = (q0, q1) draws only that run of segments (a belly shell); `span`
+    = the full body's (nose x, tail x) so a partial profile leans with it."""
     rings = []
-    x0, x1 = profile[0][0], profile[-1][0]
+    x0, x1 = span or (profile[0][0], profile[-1][0])
     for x, r in profile:
         lift = lean_z * (x1 - x) / (x1 - x0)
         if r == 0:
@@ -313,7 +315,7 @@ def revolve(m, p, profile, seg=8, squash=0.8, lean_z=0.0):
         else:
             rings.append([m.add_vert(p, x, r * math.cos(2 * math.pi * q / seg), lift + r * squash * math.sin(2 * math.pi * q / seg)) for q in range(seg)])
     for r0, r1 in zip(rings, rings[1:]):
-        for q in range(seg):
+        for q in range(*(arc or (0, seg))):
             m.quad(p, r0[q], r0[(q + 1) % seg], r1[(q + 1) % seg], r1[q])
 
 
@@ -321,26 +323,83 @@ def tri(m, p, a, b, c):
     m.add_tri(p, m.add_vert(p, *a), m.add_vert(p, *b), m.add_vert(p, *c))
 
 
+def _rad(prof, x):
+    """Profile radius at x (linear between stations; profile runs nose to tail)."""
+    for (xa, ra), (xb, rb) in zip(prof, prof[1:]):
+        if xb <= x <= xa:
+            return ra + (rb - ra) * (xa - x) / (xa - xb)
+    return 0.0
+
+
+def _skin(prof, L, squash, girth=1.0, lean=0.0):
+    """Point on a revolved body's surface: S(x fraction, angle in degrees from
+    the +y flank, up positive, side, k = how far proud of the skin)."""
+    x0, x1 = prof[0][0], prof[-1][0]
+    def S(x, deg, side=1, k=1.02):
+        r, t = _rad(prof, x) * girth * L * k, math.radians(deg)
+        return (x * L, side * r * math.cos(t), lean * L * (x0 - x) / (x0 - x1) + r * squash * math.sin(t))
+    return S
+
+
+def _shade(colour, k):
+    return "#" + "".join("%02X" % min(255, int(int(colour[q:q + 2], 16) * k)) for q in (1, 3, 5))
+
+
+WHALE_TAIL = [(0.0, 0.113), (-0.15, 0.098), (-0.28, 0.07), (-0.38, 0.042), (-0.46, 0.02)]
+WHALE_HEADS = {
+    "round": [(0.5, 0.0), (0.485, 0.03), (0.45, 0.055), (0.38, 0.085), (0.28, 0.105), (0.15, 0.115)],
+    "blunt": [(0.5, 0.0), (0.495, 0.06), (0.46, 0.095), (0.35, 0.115), (0.2, 0.118)],
+    "pointed": [(0.5, 0.0), (0.47, 0.02), (0.4, 0.048), (0.3, 0.085), (0.15, 0.112)],
+}
+
+
 def whale(name, L, colour, fin_colour, head="round", dorsal=0.06, flipper=0.25, fluke=0.2, belly=None, tusk=0.0, beak=None, flank=None, eyepatch=None):
     """Baleen/toothed whale or dolphin: body, horizontal flukes, pectoral
     flippers, an optional dorsal fin (height as a fraction of L), tusk,
     beak = (length fraction, colour), flank = side-blaze colour and
-    eyepatch = colour of an orca-style patch behind the eye."""
+    eyepatch = colour of an orca-style patch behind the eye. The big ones
+    (L >= 4 m) get a smoother body, a wrapped belly, swept fins and eyes."""
     m = Mesh()
+    big = L >= 4
     body = m.part("hull", colour)
-    nose = [(0.5, 0.0), (0.42, 0.06)] if head == "round" else [(0.5, 0.0), (0.46, 0.09), (0.35, 0.115)] if head == "blunt" else [(0.5, 0.0), (0.4, 0.045)]
-    prof = nose + [(0.2, 0.11), (0.0, 0.115), (-0.2, 0.09), (-0.38, 0.045), (-0.46, 0.02)]
-    revolve(m, body, [(x * L, r * L) for x, r in prof], seg=8, squash=0.85, lean_z=0.02 * L)
+    if big:
+        prof = WHALE_HEADS[head] + WHALE_TAIL
+        revolve(m, body, [(x * L, r * L) for x, r in prof], seg=12, squash=0.85, lean_z=0.02 * L)
+    else:
+        nose = [(0.5, 0.0), (0.42, 0.06)] if head == "round" else [(0.5, 0.0), (0.46, 0.09), (0.35, 0.115)] if head == "blunt" else [(0.5, 0.0), (0.4, 0.045)]
+        prof = nose + [(0.2, 0.11), (0.0, 0.115), (-0.2, 0.09), (-0.38, 0.045), (-0.46, 0.02)]
+        revolve(m, body, [(x * L, r * L) for x, r in prof], seg=8, squash=0.85, lean_z=0.02 * L)
     fins = m.part("fins", fin_colour)
-    for side in (1, -1):   # flukes (horizontal)
-        tri(m, fins, (-0.45 * L, 0, 0.02 * L), (-0.45 * L - fluke * 0.6 * L, side * fluke * L, 0.03 * L), (-0.5 * L, side * 0.03 * L, 0.025 * L))
-        tri(m, fins, (0.18 * L, side * 0.1 * L, -0.04 * L), (-0.1 * L, side * (0.1 + flipper) * L, -0.07 * L), (0.04 * L, side * 0.1 * L, -0.05 * L))
-    if dorsal:
+    for side in (1, -1):   # flukes (horizontal) + flippers
+        if big:
+            root, tip = (-0.43 * L, 0, 0.02 * L), (-0.45 * L - fluke * 0.55 * L, side * fluke * L, 0.03 * L)
+            mid = (-0.5 * L - fluke * 0.2 * L, side * fluke * 0.45 * L, 0.027 * L)
+            tri(m, fins, root, tip, mid)
+            tri(m, fins, root, mid, (-0.485 * L, 0, 0.022 * L))   # notch
+            rf, rr = (0.2 * L, side * 0.1 * L, -0.04 * L), (0.07 * L, side * 0.1 * L, -0.05 * L)
+            lead, tip = (0.1 * L, side * (0.1 + flipper * 0.6) * L, -0.058 * L), (-0.1 * L, side * (0.1 + flipper) * L, -0.08 * L)
+            tri(m, fins, rf, lead, rr)
+            tri(m, fins, lead, tip, rr)
+        else:
+            tri(m, fins, (-0.45 * L, 0, 0.02 * L), (-0.45 * L - fluke * 0.6 * L, side * fluke * L, 0.03 * L), (-0.5 * L, side * 0.03 * L, 0.025 * L))
+            tri(m, fins, (0.18 * L, side * 0.1 * L, -0.04 * L), (-0.1 * L, side * (0.1 + flipper) * L, -0.07 * L), (0.04 * L, side * 0.1 * L, -0.05 * L))
+    if dorsal and big:   # swept back, hollow trailing edge
+        front, apex = (-0.07 * L, 0, 0.08 * L), (-0.235 * L, 0, (0.085 + dorsal) * L)
+        tri(m, fins, front, apex, (-0.2 * L, 0, (0.085 + dorsal * 0.35) * L))
+        tri(m, fins, front, (-0.2 * L, 0, (0.085 + dorsal * 0.35) * L), (-0.22 * L, 0, 0.075 * L))
+    elif dorsal:
         tri(m, fins, (-0.08 * L, 0, 0.09 * L), (-0.22 * L, 0, 0.09 * L), (-0.2 * L, 0, (0.09 + dorsal) * L))
-    if belly:
+    if belly and big:
+        under = [(x * L, r * L * 1.02) for x, r in prof if -0.3 <= x <= 0.485]
+        revolve(m, m.part("belly", belly), under, seg=12, squash=0.85, lean_z=0.02 * L, arc=(7, 11), span=(0.5 * L, -0.46 * L))
+    elif belly:
         b = m.part("belly", belly)
         for side in (1, -1):
             tri(m, b, (0.3 * L, side * 0.1 * L, -0.06 * L), (-0.15 * L, side * 0.09 * L, -0.07 * L), (0.1 * L, side * 0.02 * L, -0.1 * L))
+    if big:
+        S, e = _skin(prof, L, 0.85, lean=0.02), m.part("eye", "#0E1114")
+        for side in (1, -1):
+            tri(m, e, S(0.385, -12, side), S(0.36, -12, side), S(0.372, 2, side))
     if beak:
         prism_axis(m, m.part("beak", beak[1]), (0.455 * L, 0, -0.012 * L), ((0.47 + beak[0]) * L, 0, -0.02 * L), 0.032 * L)
     if flank:
@@ -365,26 +424,60 @@ def prism_axis(m, p, a, b, r):
         m.add_tri(p, ring0[q], ring0[(q + 1) % 3], tip)
 
 
-def shark(name, L, colour, belly="#D8DEE3", dorsal=0.14, tail=0.22, hammer=0.0, blunt=False, girth=1.0, flat=1.1):
-    """Shark: pointed snout, tall dorsal fin, vertical asymmetric tail, pale belly."""
+SHARK_TAIL = [(0.15, 0.086), (0.0, 0.082), (-0.15, 0.066), (-0.3, 0.038), (-0.42, 0.016)]
+
+
+def shark(name, L, colour, belly="#D8DEE3", dorsal=0.14, tail=0.22, hammer=0.0, blunt=False, girth=1.0, flat=1.1, spots=None):
+    """Shark: pointed snout, swept dorsal fins, notched asymmetric tail, gill
+    slits and a wrapped pale belly; `spots` = colour of whale-shark back spots."""
     m = Mesh()
     body = m.part("hull", colour)
-    nose = [(0.5, 0.0), (0.49, 0.06), (0.4, 0.085)] if blunt else [(0.5, 0.0), (0.38, 0.05)]
-    prof = nose + [(0.15, 0.085), (-0.1, 0.075), (-0.3, 0.035), (-0.42, 0.015)]
-    revolve(m, body, [(x * L, r * girth * L) for x, r in prof], seg=6, squash=flat)
+    nose = [(0.5, 0.0), (0.495, 0.05), (0.46, 0.078), (0.38, 0.087)] if blunt else [(0.5, 0.0), (0.47, 0.022), (0.4, 0.05), (0.3, 0.074)]
+    prof = nose + SHARK_TAIL
+    revolve(m, body, [(x * L, r * girth * L) for x, r in prof], seg=10, squash=flat)
+    S = _skin(prof, L, flat, girth)
+    top = lambda x: _rad(prof, x) * girth * flat * 0.9 * L
     if hammer:   # cephalofoil: a flat wing across the snout
         for side in (1, -1):
             tri(m, body, (0.5 * L, 0, 0.004 * L), (0.49 * L, side * hammer * L, 0.004 * L), (0.42 * L, side * hammer * L, 0.004 * L))
             tri(m, body, (0.5 * L, 0, 0.004 * L), (0.42 * L, side * hammer * L, 0.004 * L), (0.4 * L, 0, 0.004 * L))
     fins = m.part("fins", colour)
-    tri(m, fins, (-0.02 * L, 0, 0.07 * L), (-0.18 * L, 0, 0.07 * L), (-0.14 * L, 0, (0.07 + dorsal) * L))            # dorsal
-    tri(m, fins, (-0.42 * L, 0, 0.0), (-0.42 * L - 0.12 * L, 0, tail * L), (-0.5 * L, 0, 0.0))                          # upper tail lobe
-    tri(m, fins, (-0.42 * L, 0, 0.0), (-0.5 * L, 0, 0.0), (-0.42 * L - 0.06 * L, 0, -tail * 0.5 * L))                   # lower tail lobe
+    z = top(-0.08)
+    front, apex, hollow = (0.0, 0, z), (-0.165 * L, 0, z + dorsal * L), (-0.135 * L, 0, z + dorsal * 0.3 * L)
+    tri(m, fins, front, apex, hollow)                                                                    # first dorsal
+    tri(m, fins, front, hollow, (-0.16 * L, 0, z * 0.9))
+    z = top(-0.31)
+    tri(m, fins, (-0.27 * L, 0, z), (-0.345 * L, 0, z + dorsal * 0.28 * L), (-0.33 * L, 0, z))           # second dorsal
+    tri(m, fins, (-0.29 * L, 0, -z), (-0.355 * L, 0, -z - dorsal * 0.22 * L), (-0.34 * L, 0, -z))        # anal
+    root_up, root_lo, fork = (-0.4 * L, 0, 0.014 * L), (-0.4 * L, 0, -0.014 * L), (-0.475 * L, 0, 0.0)
+    tri(m, fins, root_up, (-0.55 * L, 0, tail * L), fork)                                                # upper tail lobe
+    tri(m, fins, root_lo, fork, (-0.5 * L, 0, -tail * 0.55 * L))                                         # lower tail lobe
+    tri(m, fins, root_up, fork, root_lo)
     for side in (1, -1):
-        tri(m, fins, (0.15 * L, side * 0.07 * L, -0.03 * L), (-0.08 * L, side * 0.26 * L, -0.06 * L), (0.02 * L, side * 0.07 * L, -0.04 * L))
-    b = m.part("belly", belly)
+        rf, rr = (0.16 * L, side * 0.07 * L, -0.03 * L), (0.04 * L, side * 0.07 * L, -0.04 * L)
+        lead, tip = (0.07 * L, side * 0.19 * L, -0.048 * L), (-0.09 * L, side * 0.27 * L, -0.065 * L)
+        tri(m, fins, rf, lead, rr)                                                                       # pectoral
+        tri(m, fins, lead, tip, rr)
+        zb = -top(-0.18)
+        tri(m, fins, (-0.14 * L, side * 0.025 * L, zb), (-0.24 * L, side * 0.085 * L, zb - 0.02 * L), (-0.22 * L, side * 0.025 * L, zb))   # pelvic
+    under = [(x * L, r * girth * L * 1.02) for x, r in prof if -0.3 <= x <= 0.47]
+    revolve(m, m.part("belly", belly), under, seg=10, squash=flat, arc=(6, 9))
+    gills = m.part("gills", _shade(colour, 0.6))
+    eye = m.part("eye", "#0E1114")
     for side in (1, -1):
-        tri(m, b, (0.32 * L, side * 0.06 * L, -0.04 * L), (-0.15 * L, side * 0.06 * L, -0.05 * L), (0.1 * L, side * 0.01 * L, -0.085 * L))
+        for x in (0.27, 0.245, 0.22, 0.195):
+            tri(m, gills, S(x, -18, side), S(x, 22, side), S(x - 0.009, 2, side))
+        if hammer:
+            y = side * (hammer + 0.002) * L
+            tri(m, eye, (0.47 * L, y, -0.006 * L), (0.445 * L, y, -0.006 * L), (0.457 * L, y, 0.012 * L))
+        else:
+            tri(m, eye, S(0.425, 2, side), S(0.405, 2, side), S(0.415, 20, side))
+    if spots:
+        sp = m.part("spots", spots)
+        for q in range(7):
+            x = 0.36 - q * 0.095
+            for deg in ((38, 90, 142) if q % 2 else (62, 118)):
+                tri(m, sp, S(x + 0.012, deg), S(x - 0.012, deg - 5), S(x - 0.012, deg + 5))
     m.save(name)
 
 
@@ -740,7 +833,7 @@ shark("shark_blue", 3, "#4A78B5")
 shark("shark_greenland", 4, "#4B4F55", belly="#6E737A", dorsal=0.06)
 shark("shark_porbeagle", 2.5, "#4E5C6A")
 shark("shark_hammerhead", 3.5, "#6F7C87", dorsal=0.17, hammer=0.14)
-shark("shark_whale", 10, "#4F6577", belly="#E4E8EA", dorsal=0.09, blunt=True, girth=1.15, flat=0.8)
+shark("shark_whale", 10, "#4F6577", belly="#E4E8EA", dorsal=0.09, blunt=True, girth=1.15, flat=0.8, spots="#DCE6EC")
 
 # Fish schools
 school("fish_herring", 0.3, "#C4D0DC", count=10, spread=2.0, back="#3E5E78")
