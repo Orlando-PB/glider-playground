@@ -728,13 +728,21 @@
             // Datetime x is packed as epoch-ms f64; convert to naive-UTC 'YYYY-MM-DD HH:MM:SS' strings.
             if (meta.is_x_dt && meta.x instanceof Float64Array) {
                 const fa = meta.x;
-                const pad = n => String(n).padStart(2, '0');
+                // One Date per day, not per point: the date prefix is reused and h/m/s come from arithmetic.
+                const P2 = Array.from({ length: 60 }, (_, n) => (n < 10 ? '0' : '') + n);
                 const strs = new Array(fa.length);
+                let lastDay = NaN, prefix = '';
                 for (let i = 0; i < fa.length; i++) {
                     const ms = fa[i];
                     if (!isFinite(ms)) { strs[i] = null; continue; }
-                    const d = new Date(ms);
-                    strs[i] = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+                    const day = Math.floor(ms / 86400000);
+                    if (day !== lastDay) {
+                        const d = new Date(day * 86400000);
+                        prefix = `${d.getUTCFullYear()}-${P2[d.getUTCMonth()+1]}-${P2[d.getUTCDate()]} `;
+                        lastDay = day;
+                    }
+                    const sec = Math.floor((ms - day * 86400000) / 1000);
+                    strs[i] = prefix + P2[(sec / 3600) | 0] + ':' + P2[((sec / 60) | 0) % 60] + ':' + P2[sec % 60];
                 }
                 meta.x = strs;
             }

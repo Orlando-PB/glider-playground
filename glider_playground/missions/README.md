@@ -15,7 +15,8 @@ Everything lives in this folder. The rest of the app touches it in two places: `
 | `template.json` | Starter JSON shown by the list page's "New mission" dialog. |
 | `bundle.py`, `__main__.py` | Pack / import mission bundles (`.zip`). |
 | `routes.py` | `/api/missions`, `/api/missions/<id>`, `/preview`, `/scene`, `/track/<key>`, `/export`, `/import`, `/template`, `/guide`; the `/missions` pages; mounts `static/`. |
-| `static/mission_view.html` + `.js` | The mission list (map thumbnails from `/preview`) and the scene, time bar and labels. Runs in an iframe over the shell's workspace. |
+| `static/mission_view.html` + `.js` | The mission list (map thumbnails from `/preview`). Runs in an iframe over the shell's workspace. |
+| `static/mission_three.html` | One mission: a thin page over `static/ocean3d/` (`mission.js` + `mission.css` for the key, timeline card and labels; `labels.js` pins them to the scene). |
 | `static/missions_shell.js` | In the shell: the "Missions" button, the overlay, the `/missions` ↔ `/missions/<id>` URLs (pushState), hiding the presets + Settings while a mission is open, and "Back to mission" after a platform was opened (Classic view). |
 
 User missions go in `~/.glider_playground/missions/<id>.json` (same id as a bundled one overrides it).
@@ -33,7 +34,7 @@ Dates are naive UTC (`"2024-06-09"` or `"2024-06-09T05:10"`). Positions are deci
 {
   "title": "BIO-Carbon",                             // \n = line break
   "summary": "One line for the mission list.",
-  "time":   { "start": "2024-05-24", "end": "2024-10-01", "open_at": "2024-08-06" },   // time bar range. A mission plays from the start; "open_at" (optional) opens it paused on that date
+  "time":   { "start": "2024-05-24", "end": "2024-10-01", "open_at": "2024-08-06", "speed": 36000 },   // time bar range. A mission plays from the start; "open_at" (optional) opens it paused on that date; "speed" (optional, mission seconds per real second: 1, 60, 600, 3600, 36000 or 86400) always starts it at that rate instead of the one last chosen
   "region": { "lat": [54.5, 67.0], "lon": [-32.0, 0.0] },   // scene box. Omit to fit the platforms' tracks.
   "camera": { "eye": [-0.1, -1.12, 1.04], "center": [0.08, 0.12, -0.2] },              // optional, Plotly scene units
   "vertical_exaggeration": 60,                                                         // optional
@@ -54,6 +55,8 @@ Dates are naive UTC (`"2024-06-09"` or `"2024-06-09T05:10"`). Positions are deci
     "wmo": ["3901581"],                                                   // named floats, and / or…
     "deployed_near": { "lat": 60.0, "lon": -24.0, "radius_km": 40,        // …floats whose FIRST profile is
                        "between": ["2024-05-24", "2024-06-05"] },         //    inside this circle + window
+    "dac": "bodc",                                                        // …and / or every float of a data centre (or a list of
+                                                                          //    them, or "all") that surfaces in the scene during the mission
     "colour": "#0f8b8d"
   },
 
@@ -118,3 +121,7 @@ Locally you can also `POST /api/missions/import` with the zip. On a server that 
 into `~/.glider_playground/missions/inbox/` (scp, or the admin file manager) and it is imported the next time the
 mission list is requested. Data unpacks to `~/.glider_playground/missions/data/<id>/` and is registered like any
 user-added file, so it goes through the normal processing queue and is never touched by the ERDDAP auto-prune.
+
+## Live missions
+
+The list also shows `Live: ...` missions that no file describes. They are built on each listing (`live_logic.py`) from the BODC platforms reporting in the last week: the app downloads those files as it does for the Files panel, and once processed, platforms within 300 km of each other (chained) share one mission. A platform joins its mission when its file finishes processing, and a platform that stops reporting stays for 30 days after its last update, when the app deletes the downloaded file and the mission's cached scene with it. While the feed is scanning, downloading or processing, the list says so and refreshes itself. To keep one, export it and import the JSON under a new id.

@@ -33,6 +33,7 @@ from ..core import cache_logic
 
 SERVER_FILES_URL = "https://linkedsystems.uk/erddap/files/"
 DAYS_ACTIVE = 7
+PRUNE_DAYS = 30               # a managed file not updated on the server for this long is deleted
 FILE_SUFFIX = "_R.nc"
 SCAN_CACHE_TTL = 120          # seconds — 2 min server-side cache for the listing
 AUTO_UPDATE_COOLDOWN = 300    # seconds — minimum gap between auto-update sweeps
@@ -345,7 +346,7 @@ def _maybe_auto_update(listing: list[dict]):
 
       * auto-download every active glider we don't already have,
       * re-download a managed file when the server has a newer copy, and
-      * delete managed files once they age out of the live window.
+      * delete managed files the server has not updated for PRUNE_DAYS.
 
     Gliders the user binned are skipped (suppressed).
     """
@@ -368,12 +369,12 @@ def _maybe_auto_update(listing: list[dict]):
         elif entry["server_mtime"] > float(info.get("server_mtime", 0)) + 1:
             _enqueue_download(entry)        # have it, but server has a newer copy
 
-    cutoff = now - DAYS_ACTIVE * 86400
+    cutoff = now - PRUNE_DAYS * 86400
     for fname, info in marker.items():
         if fname in _in_flight:
             continue
         if float(info.get("server_mtime", 0)) < cutoff:
-            _remove_managed_file(fname)     # aged out of the live window
+            _remove_managed_file(fname)     # not updated for PRUNE_DAYS
 
 
 # ---------- public API ----------

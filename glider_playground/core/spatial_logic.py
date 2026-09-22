@@ -164,6 +164,25 @@ def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat:
     return lons.tolist(), lats.tolist(), pivot.values.tolist()
 
 
+def fetch_bathy_grid(bounds: dict, grid: int, fine: bool = True) -> dict:
+    """Seabed grid for a lat/lon box, strided server-side to about `grid` points along the longer side. `fine` reads
+    the 15-arc-second ETOPO 2022 (the three.js views); otherwise the 1-arc-minute ETOPO the Plotly views use. The box
+    is widened by a cell so it always contains `bounds`. Heights are whole metres, 0 where missing."""
+    dataset, var, per_deg = ("ETOPO_2022_v1_15s", "z", 240) if fine else ("etopo180", "altitude", 60)
+    span = max(bounds["max_lat"] - bounds["min_lat"], bounds["max_lon"] - bounds["min_lon"])
+    stride = max(1, int(round(span * per_deg / grid)))
+    cell = stride / per_deg
+    url = (f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{dataset}.csv"
+           f"?{var}[({max(bounds['min_lat'] - cell, -90):.4f}):{stride}:({min(bounds['max_lat'] + cell, 90):.4f})]"
+           f"[({max(bounds['min_lon'] - cell, -180):.4f}):{stride}:({min(bounds['max_lon'] + cell, 180):.4f})]")
+    resp = requests.get(url, timeout=300)
+    resp.raise_for_status()
+    rows = np.genfromtxt(io.StringIO(resp.text), delimiter=",", skip_header=2)      # latitude-major, both ascending
+    lats, lons = np.unique(rows[:, 0]), np.unique(rows[:, 1])
+    z = np.nan_to_num(rows[:, 2]).reshape(len(lats), len(lons)).round().astype(int)
+    return {"bathy_lon": lons.tolist(), "bathy_lat": lats.tolist(), "bathy_z": z.tolist()}
+
+
 def _bathy_for(bounds: dict, max_depth: float) -> dict:
     """Bathymetry keys for the 3D payload. If the fetch fails: a flat floor just
     below the deepest dive, flagged `bathy_fallback` so it gets retried later."""

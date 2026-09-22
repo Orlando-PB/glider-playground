@@ -68,14 +68,16 @@ glider_playground/
                       ships_logic, waypoint_logic
   server/             running as a service: erddap_fetch (BODC), server_config, update_logic
   static/             frontend, no build step
-    index.html  main_plot.html  map_view.html  3d_view.html     the four pages
+    index.html  main_plot.html  map_view.html  3d_three.html    the four pages
     js/               shared helpers (cycle_profile.js, console_log.js)
     map_view/         map-only layers (argo_layer.js, ships_layer.js)
-    3d_view/          3D-only assets (vehicle models, scenery)
+    3d_view/          3D-only assets (vehicle models, scenery models)
+    ocean3d/          the three.js 3D view + mission view (ES modules)
     icons/            app logos + platform/ship map icons
     readme_images/    screenshots used by README.md (dashboard.webp doubles as the social-share image)
-    vendor/           Plotly builds + generated tailwind.css — don't edit
+    vendor/           Plotly builds + generated tailwind.css and globe-three.min.js — don't edit
 tailwind/             config/input used to regenerate static/vendor/tailwind.css
+three_bundle/         entry + package.json used to regenerate static/vendor/globe-three.min.js (globe.gl + three, one copy)
 ```
 
 ## Plotting & rendering libraries
@@ -83,8 +85,7 @@ tailwind/             config/input used to regenerate static/vendor/tailwind.css
 - **Plotly** is used for plotting, and it's **vendored**, 
   sitting in `glider_playground/static/vendor/`:
   - `plotly-gl2d-2.32.0.min.js` — 2D/WebGL build, used by `main_plot.html`.
-  - `plotly-gl3d-2.32.0.min.js` — 3D/WebGL build, used by `3d_view.html`.
-- The globe in `map_view.html` and the bathymetry/dive-track view in `3d_view.html` are custom
+- The globe in `map_view.html` and the bathymetry/dive-track view in `3d_three.html` (three.js, `static/ocean3d/`) are custom
   implementations.
 - Shared JS helpers used across the panel pages live in `static/js/`: `cycle_profile.js`, `console_log.js`.
 

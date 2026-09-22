@@ -1127,6 +1127,8 @@ def _process(file_id: str):
             try:
                 from ..maps import copernicus_prefetch
                 copernicus_prefetch.ensure(file_id)
+                from . import bathy_prefetch      # lazy: it imports this module
+                bathy_prefetch.ensure(file_id)
             except Exception:
                 traceback.print_exc()
     except Exception as e:

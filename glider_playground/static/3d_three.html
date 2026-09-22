@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>3D view</title>
+    <script>
+        // Theme from the URL, else the shell's, before first paint.
+        (() => { let t = new URLSearchParams(location.search).get('theme'); if (!t) { try { t = parent.document.documentElement.getAttribute('data-theme'); } catch (_) {} } document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light'); })();
+    </script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="/static/info_note.css">
+    <link rel="stylesheet" href="/static/ocean3d/view.css">
+    <script src="/api/plot_presets.js"></script>
+    <script type="importmap">{ "imports": { "three": "/static/vendor/three.module.min.js?v=186-lines" } }</script>
+</head>
+<body>
+    <canvas id="view"></canvas>
+    <div id="note" class="info-note"><span id="status">Loading…</span><span id="scaleNote"></span><span>Bathymetry data provided by <a href="https://www.ncei.noaa.gov/products/etopo-global-relief-model" target="_blank" rel="noopener">NOAA</a></span></div>
+    <div id="timebar"></div>
+    <div id="corner">
+        <details id="panel"><summary title="Style options"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Style</span></summary>
+            <div id="options"></div>
+            <div id="legend"></div>
+        </details>
+    </div>
+    <script type="module" src="/static/ocean3d/file.js"></script>
+</body>
+</html>

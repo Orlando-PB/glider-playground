@@ -9,7 +9,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 
 from ..server import server_config
-from . import bundle, mission_logic
+from . import bundle, live_logic, mission_logic
 
 router = APIRouter(prefix="/api/missions")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -29,7 +29,8 @@ def _local_only() -> None:
 
 @router.get("")
 def api_missions():
-    return {"missions": mission_logic.list_missions(), "local": not server_config.IS_SERVER}
+    return {"missions": mission_logic.list_missions(), "local": not server_config.IS_SERVER,
+            "live_status": live_logic.status()}
 
 
 @router.get("/template")
@@ -55,9 +56,9 @@ def api_mission_preview(mission_id: str):
 
 
 @router.get("/{mission_id}/scene")
-def api_mission_scene(mission_id: str):
+def api_mission_scene(mission_id: str, grid: int = mission_logic.BATHY_GRID):
     try:
-        return mission_logic.scene(_mission(mission_id))
+        return mission_logic.scene(_mission(mission_id), max(50, min(grid, 1500)))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Scene unavailable: {e}")
 

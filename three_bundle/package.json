@@ -1,0 +1,17 @@
+{
+  "name": "glider-playground-three-bundle",
+  "private": true,
+  "description": "Dev-only: builds glider_playground/static/vendor/globe-three.min.js and three.module.min.js",
+  "scripts": {
+    "build:globe": "esbuild entry.js --bundle --minify --format=iife --legal-comments=inline --outfile=../glider_playground/static/vendor/globe-three.min.js",
+    "build:module": "esbuild entry_module.js --bundle --minify --format=esm --legal-comments=inline --outfile=../glider_playground/static/vendor/three.module.min.js",
+    "build": "npm run build:globe && npm run build:module"
+  },
+  "dependencies": {
+    "globe.gl": "2.46.2",
+    "three": "0.186.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

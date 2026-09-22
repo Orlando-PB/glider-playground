@@ -3,105 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mission · Glider Playground</title>
-    <script src="/static/vendor/plotly-gl3d-2.32.0.min.js"></script>
-    <script src="/api/plot_presets.js"></script>
-    <script src="/static/3d_view/scene_kit.js"></script>
-    <script src="/static/3d_view/scenery/scenery.js"></script>
+    <title>Missions · Glider Playground</title>
     <style>
         :root { --ink: #0d1b33; --navy: #12295c; --soft: #2a3a57; --accent: #e8702a; --card: rgba(255,255,255,.93);
                 --sky: linear-gradient(#dcecf8, #a9cdea 55%, #8dbbe0); --halo: #fff; }
         [data-theme="dark"] { --ink: #e8eef8; --soft: #b8c4d8; --card: rgba(20,28,44,.92); --sky: linear-gradient(#0b1424, #10223c 55%, #173456); --halo: #0b1424; }
         html, body { margin: 0; height: 100%; overflow: hidden; color: var(--ink); background: var(--sky);
                      font-family: Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif; }
-        #plot3d, #labels, #leaders { position: absolute; inset: 0; }
-        #labels, #leaders { pointer-events: none; overflow: hidden; }
-        #labels > * { left: 0; top: 0; }      /* placed with `translate` (no layout, sub-pixel) */
-        #leaders { width: 100%; height: 100%; }
-        h1 { position: absolute; left: 24px; top: 16px; margin: 0; font-size: clamp(20px, 2.1vw, 32px); line-height: 1.08; font-weight: 800;
-             white-space: pre-line; text-shadow: 0 0 6px var(--halo), 0 0 12px var(--halo); pointer-events: none; }
-        .card { position: absolute; background: var(--card); border-radius: 14px; box-shadow: 0 3px 12px rgba(13,27,51,.28); padding: 12px 16px; }
-        #timeline { left: 20px; bottom: 76px; max-width: 350px; }
-        #timeline h2, #key h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: 2px; color: var(--accent); }
-        .row { display: grid; grid-template-columns: 28px 72px 1fr; align-items: center; min-height: 26px; font-size: 12.5px; color: var(--soft); transition: opacity .3s; }
-        .row b { color: var(--ink); } .row.future { opacity: .38; }
-        .row.current b { color: var(--accent); }
-        .row.jump { cursor: pointer; border-radius: 8px; margin: 0 -6px; padding: 0 6px; } .row.jump:hover { background: rgba(18,41,92,.1); opacity: 1; }
-        .jumpable { pointer-events: auto; cursor: pointer; }
-        #key { right: 20px; top: 20px; width: 240px; max-height: calc(100% - 140px); overflow: auto; }
-        .krow { display: flex; align-items: center; min-height: 26px; font-size: 12.5px; font-weight: 500; border-radius: 8px; padding: 0 4px; margin: 0 -4px; }
-        .krow.open { cursor: pointer; } .krow.open:hover { background: rgba(18,41,92,.1); }
-        #colourRow { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(18,41,92,.14); font-size: 11px; } [data-theme="dark"] #colourRow { border-color: rgba(255,255,255,.14); }
-        #colourRow label { display: block; font-weight: 700; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
-        #colourSel { width: 100%; font: inherit; font-weight: 600; font-size: 12px; padding: 4px 6px; border: none; border-radius: 7px; background: rgba(18,41,92,.08); color: var(--ink); }
-        [data-theme="dark"] #colourSel { background: rgba(255,255,255,.1); }
-        #colourBar { margin-top: 7px; } #colourBar i { display: block; height: 7px; border-radius: 4px; }
-        #colourBar div { display: flex; justify-content: space-between; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--soft); }
-        .krow.head { font-weight: 700; margin-top: 6px; } .krow.head:first-child { margin-top: 0; }
-        .krow.head.plain { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(18,41,92,.14); border-radius: 0; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
-        [data-theme="dark"] .krow.head.plain { border-color: rgba(255,255,255,.14); }
-        .krow.sub { min-height: 22px; font-size: 12px; padding-left: 10px; }
-        .krow .eye { margin-left: auto; flex: none; border: none; background: none; cursor: pointer; padding: 3px; border-radius: 6px; color: var(--soft); opacity: .55; }
-        .krow small + .eye { margin-left: 4px; } .krow .eye:hover { opacity: 1; background: rgba(18,41,92,.1); }
-        .krow .eye svg { display: block; } .krow .eye .slash { display: none; } .krow.hiddenRow .eye .slash { display: inline; }
-        .krow.hiddenRow > span { opacity: .4; } .krow.hiddenRow .eye { opacity: .9; }
-        .krow.off { opacity: .45; } .krow small { margin-left: auto; font-size: 10px; color: var(--soft); padding-left: 8px; }
-        .sw { width: 54px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-right: 10px; }
-        .sw i { display: block; width: 44px; border-radius: 3px; } .sw img { max-width: 48px; max-height: 24px; }
-        .badge { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700;
-                 font-size: 12px; border: 2px solid #fff; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
-        .badge.sm { width: 20px; height: 20px; font-size: 11px; }
-        .pin { position: absolute; transform: translate(-50%, -50%); transition: opacity .3s; } .future { opacity: .38; }
-        .pill { position: absolute; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px 0 5px; border-radius: 20px; background: var(--navy);
-                color: #fff; box-shadow: 0 3px 10px rgba(13,27,51,.35); white-space: nowrap; transform: translate(-50%, -50%); transition: opacity .3s; }
-        .pill .logo { width: 30px; height: 30px; border-radius: 50%; background: #fff; display: grid; place-items: center; }
-        .pill .logo img { width: 24px; filter: brightness(0) saturate(100%) invert(31%) sepia(74%) saturate(2000%) hue-rotate(212deg) brightness(88%); }
-        .klogo { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2px solid var(--navy); display: grid; place-items: center; box-sizing: content-box; }
-        .klogo img { width: 18px; filter: brightness(0) saturate(100%) invert(31%) sepia(74%) saturate(2000%) hue-rotate(212deg) brightness(88%); }
-        .pill b { display: block; font-size: 13px; font-weight: 600; } .pill small { font-size: 11.5px; color: #c3d0ee; }
-        .dot { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2.5px solid var(--navy); box-sizing: border-box; transform: translate(-50%, -50%); }
-        .place { position: absolute; transform: translate(-50%, -50%); font-size: 12.5px; font-weight: 500; white-space: nowrap;
-                 text-shadow: 0 0 3px var(--halo), 0 0 3px var(--halo), 0 0 6px var(--halo); }
-        .place.big { font-size: 17px; font-weight: 700; letter-spacing: 2px; } .place.sea { font-style: italic; color: #2f5f8f; font-size: 13.5px; letter-spacing: 1px; }
-        [data-theme="dark"] .place.sea { color: #8fb8e0; }
-        .place.station { font-weight: 800; font-size: 12.5px; letter-spacing: 1.2px; }
-        .tag { position: absolute; transform: translate(-50%, -150%); font-weight: 700; font-size: 11px; background: rgba(255,255,255,.9); color: #0d1b33; padding: 1px 7px;
-               border-radius: 9px; white-space: nowrap; pointer-events: auto; cursor: pointer; border: 1.5px solid transparent; }
-        .tag:hover { border-color: var(--accent); } .tag.quiet { font-weight: 600; font-size: 10px; opacity: .85; }
-        #timebar { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: min(640px, calc(100% - 48px)); display: flex; align-items: center; gap: 10px;
-                   padding: 7px 12px; border-radius: 24px; }
-        #timebar button { width: 30px; height: 30px; border-radius: 50%; border: none; background: transparent; color: var(--ink); cursor: pointer; flex: none;
-                          display: grid; place-items: center; padding: 0; transition: background-color .15s ease, color .15s ease; }
-        #timebar button:hover { background: rgba(18,41,92,.1); color: var(--accent); }
-        #timebar input[type=range] { flex: 1; accent-color: var(--accent); }
-        #timebar select { border: none; background: transparent; color: var(--ink); font: inherit; font-size: 12px; }
-        #clock { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12.5px; min-width: 88px; text-align: right; }
-        #scaleNote { position: absolute; right: 20px; bottom: 8px; font-size: 10px; color: var(--soft); opacity: .85; user-select: none; text-shadow: 0 0 4px var(--halo); }
-        #scaleNote a { color: inherit; } #scaleNote a:hover { color: var(--ink); } body.picking #scaleNote { display: none; }
-        #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(340px, 80vw); text-align: left; }
-        #status .name { font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 14px; min-height: 24px; }
-        #status .bar { height: 3px; border-radius: 3px; background: rgba(18,41,92,.14); overflow: hidden; } [data-theme="dark"] #status .bar { background: rgba(255,255,255,.14); }
-        #status .fill { height: 100%; width: 4%; border-radius: 3px; background: var(--accent); transition: width .5s cubic-bezier(.2,.7,.2,1); }
-        #status .step { margin-top: 10px; font-size: 12px; color: var(--soft); letter-spacing: .01em; transition: opacity .2s; }
-        #status.error .fill { background: #d64545; width: 100% !important; } #status.error .step { color: #d64545; }
         /* Mission list: the shell's own palette (index.html), not the scene's sky. */
         body.picking { --p-app: #f4f6fa; --p-panel: #ffffff; --p-hover: #e4e8ef; --p-text: #171a22; --p-text2: #4b525f; --p-muted: #5f6673; --p-accent: #41658a;
                        --p-soft: rgba(65,101,138,.12); --p-shadow: 0 1px 2px rgba(16,24,40,.06), 0 6px 18px rgba(16,24,40,.08); background: var(--p-app); color: var(--p-text); }
         [data-theme="dark"] body.picking { --p-app: #0b0d13; --p-panel: #121420; --p-hover: #252936; --p-text: #e4e7ef; --p-text2: #a1a9b8; --p-muted: #8b93a3;
                        --p-soft: rgba(65,101,138,.18); --p-shadow: 0 6px 18px rgba(0,0,0,.45); }
-        body.picking #plot3d, body.picking #title { display: none; }
         #picker { position: absolute; inset: 0; overflow: auto; padding: 0 24px 40px; box-sizing: border-box; font-size: 13px; }
         #picker .wrap { max-width: 980px; margin: 0 auto; }
         .hero { position: relative; overflow: hidden; margin: 24px 0 18px; padding: 26px 28px; border-radius: 16px; color: #fff;
                 background: radial-gradient(120% 140% at 85% -10%, #2f6f9f 0%, #1b3f63 45%, #0e2238 100%); box-shadow: var(--p-shadow); }
         .hero h2 { font-size: 24px; font-weight: 700; margin: 0 0 6px; letter-spacing: -.01em; } .hero p { margin: 0; color: rgba(255,255,255,.78); line-height: 1.5; }
         .hero .wave { position: absolute; left: 0; right: 0; bottom: 0; height: 46px; opacity: .35; }
-        .hero h2, .hero p { position: relative; max-width: 50%; }
-        .hero .fleet { position: absolute; left: 56%; right: 0; top: 0; bottom: 0; overflow: hidden; pointer-events: none; }     /* its own lane: never over the text */
-        .hero .fleet img { position: absolute; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); animation: swim linear infinite; }
-        @keyframes swim { from { transform: translateX(-150px); } to { transform: translateX(480px); } }
-        @keyframes bob { 0%, 100% { transform: translateY(0) rotate(-1.5deg); } 50% { transform: translateY(-4px) rotate(1.5deg); } }
-        @media (prefers-reduced-motion: reduce) { .hero .fleet img { animation: none !important; } }
+        .hero h2, .hero p { position: relative; max-width: 640px; }
         .mcard { display: grid; grid-template-columns: 340px 1fr; margin: 0 0 14px; border-radius: 14px; overflow: hidden; background: var(--p-panel); box-shadow: var(--p-shadow);
                  cursor: pointer; transition: transform .18s ease, box-shadow .18s ease; }
         .mcard:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(16,24,40,.18); } .mcard:active { transform: none; }
@@ -111,6 +31,10 @@
         [data-theme="dark"] .thumb .tiles { filter: brightness(.72) saturate(.85); }
         .thumb.empty { background: radial-gradient(120% 140% at 80% 0%, #2f6f9f, #12304d); }
         .thumb.empty::after { content: 'Preview unavailable'; position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.7); font-size: 12px; }
+        .thumb.loading::after { content: 'Generating preview…'; position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.85); font-size: 12px; animation: pulse 1.4s ease-in-out infinite; }
+        .livestat { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--p-muted); font-size: 12px; } .livestat[hidden] { display: none; }
+        .livestat .spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; animation: spin .9s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } } @keyframes pulse { 50% { opacity: .45; } }
         .thumb svg { position: absolute; inset: 0; width: 100%; height: 100%; }
         .thumb svg .trk { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: draw 2.4s ease-out forwards; }
         @keyframes draw { to { stroke-dashoffset: 0; } }
@@ -120,7 +44,7 @@
         .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 14px; }
         .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 9999px; background: var(--p-soft); color: var(--p-text2); white-space: nowrap; }
         .chip img { height: 13px; max-width: 34px; } .chip.part { background: rgba(251,191,36,.18); color: #a16207; } [data-theme="dark"] .chip.part { color: #fbbf24; }
-        @media (max-width: 720px) { .mcard { grid-template-columns: 1fr; } .hero .fleet { display: none; } }
+        @media (max-width: 720px) { .mcard { grid-template-columns: 1fr; } }
         .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; } .tools .msg { color: var(--p-muted); font-size: 12px; }
         .tools button, .newdlg button { font: inherit; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 9999px; border: none; cursor: pointer; background: var(--p-soft); color: var(--p-text2); }
         .tools button:hover, .newdlg button:hover { background: var(--p-hover); }
@@ -142,26 +66,7 @@
     </style>
 </head>
 <body>
-    <div id="plot3d"></div>
-    <svg id="leaders"></svg>
-    <div id="labels"></div>
-    <h1 id="title"></h1>
-    <div class="card hidden" id="timeline"><h2>TIMELINE</h2><div id="timelineRows"></div></div>
-    <div class="card hidden" id="key"><div id="keyRows"></div>
-        <div id="colourRow" class="hidden"><label for="colourSel">Track colour</label><select id="colourSel"></select>
-            <div id="colourBar" class="hidden"><i></i><div></div></div></div></div>
-    <div class="card hidden" id="timebar">
-        <button id="playBtn" title="Play / pause (Space)" aria-label="Play"></button>
-        <input id="timeSlider" type="range" min="0" max="1000" step="1" value="1000" aria-label="Mission time" title="←/→ step, Shift for bigger steps">
-        <span id="clock"></span>
-        <select id="speedSel" title="Playback speed" aria-label="Playback speed">
-            <option value="1200">slow</option><option value="90" selected>normal</option><option value="25">fast</option>
-        </select>
-        <button id="resetBtn" title="Reset the view" aria-label="Reset the view"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/></svg></button>
-    </div>
-    <span id="scaleNote" class="hidden"><span id="scaleX"></span>Bathymetry data provided by <a href="https://www.ncei.noaa.gov/products/etopo-global-relief-model" target="_blank" rel="noopener">NOAA</a></span>
-    <div id="status"><div class="name"></div><div class="bar"><div class="fill"></div></div><div class="step">Opening mission</div></div>
-    <div id="picker" class="hidden"></div>
+    <div id="picker"></div>
     <script src="/missions/static/mission_view.js"></script>
 </body>
 </html>

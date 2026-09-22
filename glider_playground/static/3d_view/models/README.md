@@ -1,6 +1,6 @@
 # 3D models
 
-Minimal low-poly meshes for the 3D view (`3d_view.html`), one JSON file per
+Minimal low-poly meshes for the 3D view (`3d_three.html`, mission page; loaded by `ocean3d/models.js`), one JSON file per
 object. No textures, no external formats — small enough to inline or fetch
 per view.
 
@@ -37,7 +37,7 @@ Conventions: metres, true scale, coordinates rounded to 3 dp.
 
 ## In use
 
-Only the gliders/ALR are wired up today: `3d_view.html` picks
+Only the gliders/ALR are wired up today: `ocean3d/models.js` picks
 `slocum` / `seaglider` / `alr` from the file's detected platform kind and
 poses it along the track (heading from the track, pitch/roll from the file
 when present). Everything else is here for future layers (Argo floats, ships,

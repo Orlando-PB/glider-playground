@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mission</title>
+    <script>
+        // Theme from the URL, else the shell's, before first paint.
+        (() => { let t = new URLSearchParams(location.search).get('theme'); if (!t) { try { t = parent.document.documentElement.getAttribute('data-theme'); } catch (_) {} } document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light'); })();
+    </script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="/static/info_note.css">
+    <link rel="stylesheet" href="/static/ocean3d/view.css">
+    <link rel="stylesheet" href="/static/ocean3d/mission.css">
+    <script src="/api/plot_presets.js"></script>
+    <script type="importmap">{ "imports": { "three": "/static/vendor/three.module.min.js?v=186-lines" } }</script>
+</head>
+<body>
+    <canvas id="view"></canvas>
+    <svg id="leaders"></svg>
+    <div id="labels"></div>
+    <h1 id="title"></h1>
+    <div class="card" id="timeline" hidden><h2>TIMELINE</h2><div id="timelineRows"></div></div>
+    <div class="card" id="key" hidden><div id="keyRows"></div><div id="legend"></div></div>
+    <div id="note" class="info-note"><span id="status"></span><span id="scaleNote"></span><span>Bathymetry data provided by <a href="https://www.ncei.noaa.gov/products/etopo-global-relief-model" target="_blank" rel="noopener">NOAA</a></span></div>
+    <div id="timebar"></div>
+    <div id="corner">
+        <details id="panel"><summary title="Style options"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Style</span></summary>
+            <div id="options"></div>
+        </details>
+    </div>
+    <div id="loader" role="status" aria-live="polite">
+        <div class="box">
+            <div class="kicker">MISSION</div>
+            <div id="loaderTitle"></div>
+            <div class="bar"><i></i></div>
+            <div id="loaderText">Loading…</div>
+        </div>
+    </div>
+    <script type="module" src="/static/ocean3d/mission.js"></script>
+</body>
+</html>

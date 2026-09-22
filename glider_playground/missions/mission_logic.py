@@ -18,6 +18,8 @@ from ..core import cache_logic, spatial_logic
 from ..maps import argo_logic
 from ..server import server_config
 
+from . import live_logic
+
 logger = logging.getLogger(__name__)
 
 EXAMPLES_DIR = Path(__file__).parent / "examples"
@@ -57,6 +59,8 @@ def _mission_files() -> dict:
 
 
 def load(mission_id: str) -> dict | None:
+    if _slug(mission_id).startswith(live_logic.PREFIX):
+        return live_logic.missions().get(_slug(mission_id))
     f = _mission_files().get(_slug(mission_id))
     if not f:
         return None
@@ -107,7 +111,7 @@ def list_missions() -> list[dict]:
     bundle.import_inbox()
     index = _file_index()
     out = []
-    for mid in _mission_files():
+    for mid in [*live_logic.missions(), *_mission_files()]:
         try:
             m = load(mid)
         except Exception as e:  # noqa: BLE001
@@ -116,7 +120,7 @@ def list_missions() -> list[dict]:
         plats = m.get("platforms", [])
         have = sum(1 for p in plats if _resolve(p, index))
         out.append({"id": mid, "title": " ".join(str(m.get("title", mid)).split()), "summary": m.get("summary", ""),
-                    "platforms": len(plats), "platforms_available": have})
+                    "platforms": len(plats), "platforms_available": have, "live": bool(m.get("live"))})
     return out
 
 
@@ -199,7 +203,9 @@ def _float_tracks(m: dict, bounds: dict, t0: float, t1: float) -> list[dict]:
 
     "floats": {"wmo": [...]}  lists floats outright;
     "floats": {"deployed_near": {"lat", "lon", "radius_km", "between": [date, date]}}  finds floats whose FIRST
-    profile falls in that circle and window (i.e. floats launched there). Both can be combined.
+    profile falls in that circle and window (i.e. floats launched there);
+    "floats": {"dac": "bodc" | [...]}  takes every float of those data centres that surfaces in the scene during the
+    mission ("all" = any centre). All three can be combined.
     """
     cfg = m.get("floats") or {}
     if not cfg:
@@ -223,6 +229,11 @@ def _float_tracks(m: dict, bounds: dict, t0: float, t1: float) -> list[dict]:
             dist = 111.2 * np.hypot(lat - near["lat"], (lon - near["lon"]) * np.cos(np.radians(near["lat"])))
             if n0 <= ms <= n1 and dist <= near.get("radius_km", 50) and wmo not in earlier:
                 wanted.add(wmo)
+    dacs = cfg.get("dac")
+    if dacs:
+        dacs = {str(d).lower() for d in ([dacs] if isinstance(dacs, str) else dacs)}
+        centre = {str(r[0]): str(r[6]).lower() for r in argo_logic.list_floats().get("floats", [])}
+        wanted |= {w for w, profs in by_wmo.items() if ("all" in dacs or centre.get(w) in dacs) and any(t0 <= p[0] <= t1 for p in profs)}
     out = []
     for wmo in sorted(wanted):
         profs = sorted(by_wmo.get(wmo, []))
@@ -250,45 +261,29 @@ def _bounds(m: dict) -> dict:
     return {"min_lat": min(lats) - pad_lat, "max_lat": max(lats) + pad_lat, "min_lon": min(lons) - pad_lon, "max_lon": max(lons) + pad_lon}
 
 
-def _bathy(bounds: dict) -> dict:
-    """Same ETOPO source as the 3D view, but strided server-side: a mission box is far bigger than one
-    deployment's, and the full 1-arc-minute grid for it would be tens of MB."""
-    import csv
-    import io
-    import requests
-    span = max(bounds["max_lat"] - bounds["min_lat"], (bounds["max_lon"] - bounds["min_lon"]))
-    stride = max(1, int(round(span * 60 / BATHY_GRID)))
-    url = ("https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv"
-           f"?altitude[({bounds['min_lat']:.4f}):{stride}:({bounds['max_lat']:.4f})]"
-           f"[({bounds['min_lon']:.4f}):{stride}:({bounds['max_lon']:.4f})]")
-    resp = requests.get(url, timeout=120)
-    resp.raise_for_status()
-    rows = list(csv.reader(io.StringIO(resp.text)))[2:]
-    lats = sorted({float(r[0]) for r in rows}); lons = sorted({float(r[1]) for r in rows})
-    li = {v: i for i, v in enumerate(lats)}; lo = {v: i for i, v in enumerate(lons)}
-    z = [[0.0] * len(lons) for _ in lats]
-    for r in rows:
-        if r[2] not in ("", "NaN"):
-            z[li[float(r[0])]][lo[float(r[1])]] = float(r[2])
-    return {"bathy_lon": lons, "bathy_lat": lats, "bathy_z": z}
+def _bathy(bounds: dict, grid: int = BATHY_GRID) -> dict:
+    """Strided seabed for the mission box (the full grid for a box this big would be tens of MB). The default is the
+    Plotly page's 1-arc-minute ETOPO; a finer `grid` (the three.js page) reads the 15-arc-second ETOPO 2022."""
+    from ..core import spatial_logic
+    return spatial_logic.fetch_bathy_grid(bounds, grid, fine=grid > BATHY_GRID)
 
 
-def scene(m: dict) -> dict:
-    """Bounds + bathymetry + floats. Cached on disk per mission content (the ETOPO fetch for a big box is slow)."""
+def scene(m: dict, grid: int = BATHY_GRID) -> dict:
+    """Bounds + bathymetry + floats. Cached on disk per mission content and grid (the ETOPO fetch for a big box is slow)."""
     bounds = _bounds(m)
     t = m.get("time") or {}
     t0, t1 = _ms(t["start"]), _ms(t["end"])
-    sig = hashlib.sha1(json.dumps([bounds, m.get("floats"), t0, t1, BATHY_GRID], sort_keys=True).encode()).hexdigest()[:16]
+    sig = hashlib.sha1(json.dumps([bounds, m.get("floats"), t0, t1, grid], sort_keys=True).encode()).hexdigest()[:16]
     SCENE_DIR.mkdir(parents=True, exist_ok=True)
-    cache = SCENE_DIR / f"{m['id']}_{sig}.json"
+    cache = SCENE_DIR / f"{m['id']}_{grid}_{sig}.json"
     if cache.exists():
         try:
             return json.loads(cache.read_text())
         except Exception:  # noqa: BLE001
             pass
-    out = {"bounds": bounds, "time_ms": [t0, t1], **_bathy(bounds), "floats": _float_tracks(m, bounds, t0, t1)}
+    out = {"bounds": bounds, "time_ms": [t0, t1], **_bathy(bounds, grid), "floats": _float_tracks(m, bounds, t0, t1)}
     if not any("status" in f for f in out["floats"]):      # don't pin a scene made while the Argo index was still building
-        for stale in SCENE_DIR.glob(f"{m['id']}_*.json"):
+        for stale in SCENE_DIR.glob(f"{m['id']}_{grid}_*.json"):
             stale.unlink(missing_ok=True)
         cache.write_text(json.dumps(out))
     return out

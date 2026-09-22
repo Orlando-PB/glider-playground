@@ -12,3 +12,6 @@ __pycache__/
 /deploy/
 
 CLAUDE.md
+
+# three_bundle dev install
+node_modules/

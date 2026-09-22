@@ -8,8 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Start the panel iframes' big libraries downloading now, not after the file list + iframe HTML arrive. -->
     <link rel="prefetch" as="script" href="/static/vendor/plotly-gl2d-2.32.0.min.js">
-    <link rel="prefetch" as="script" href="https://unpkg.com/globe.gl@2.46.1/dist/globe.gl.min.js">
-    <link rel="prefetch" as="script" href="https://unpkg.com/three@0.160.0/build/three.min.js">
+    <link rel="prefetch" as="script" href="/static/vendor/globe-three.min.js">
     <script src="/static/js/console_log.js"></script>
     <script src="/api/plot_presets.js"></script>
     <!-- Prebuilt Tailwind; regenerate with the Tailwind CLI when classes change. -->
@@ -2225,7 +2224,7 @@
             } else if (panel.type === '3d') {
                 const fid = datasetSelect.value;
                 const f = document.getElementById('iframe3D');
-                if (fid && f) f.src = `/static/3d_view.html?id=${encodeURIComponent(fid)}&theme=${getCurrentTheme()}`;
+                if (fid && f) { f.src = `/static/3d_three.html?id=${encodeURIComponent(fid)}&theme=${getCurrentTheme()}`; refreshPanelPlaceholders(); }
             }
             // vars / attrs are populated by loadVariables / loadDatasetInfo by id.
         }
@@ -3022,6 +3021,8 @@
                 _nextPanelId = snap.nextId || (ids.length + 1);
                 ids.forEach(id => {
                     const pd = snap.panels[id];
+                    // Quality always boots as Auto: a saved 'Full' that hangs the page must not survive a reload.
+                    if (pd.state && pd.state.quality) pd.state.quality = '';
                     createPanel(pd.type, pd.state || {}, id);
                 });
                 layoutTree = snap.tree;
@@ -3280,7 +3281,7 @@
                 event.source.postMessage({ type: 'panelActive', active: srcPanel.id === activePanelId }, '*');
             }
 
-            if (msg.type === 'view3dReady') { sync3dColour(true); return; }
+            if (msg.type === 'view3dReady') { refreshPanelPlaceholders(); sync3dColour(true); return; }
 
             // Colour-trim ack: releases the flow-control lock so the next slider value can be sent.
             if (msg.type === 'colourUpdated') {
@@ -5652,7 +5653,8 @@
             // Only load the 3D view while its panel is open; renderPanel loads it on open.
             const iframe3D = document.getElementById('iframe3D');
             if (iframe3D && Object.values(panels).some(p => p.type === '3d')) {
-                iframe3D.src = `/static/3d_view.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+                iframe3D.src = `/static/3d_three.html?id=${encodeURIComponent(fileId)}&theme=${getCurrentTheme()}`;
+                refreshPanelPlaceholders();   // the veil otherwise waits for a plot to load — and there may be none
             }
 
             // Duo's second globe shares the dataset; reload it too.

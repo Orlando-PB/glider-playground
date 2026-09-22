@@ -39,7 +39,7 @@
         overlay.style.display = open ? 'block' : 'none';
         try { frame.contentWindow.postMessage({ type: 'missionVisible', on: open }, '*'); } catch (_) {}
         if (open) {
-            if (id !== current || !frame.getAttribute('src')) frame.src = `/missions/static/mission_view.html?embed=1&theme=${encodeURIComponent(theme())}${id ? '&id=' + encodeURIComponent(id) : ''}`;
+            if (id !== current || !frame.getAttribute('src')) frame.src = id ? `/missions/static/mission_three.html?theme=${encodeURIComponent(theme())}&id=${encodeURIComponent(id)}` : `/missions/static/mission_view.html?embed=1&theme=${encodeURIComponent(theme())}`;      // the list is still mission_view.html
             if (id) lastMission = id;
             requestAnimationFrame(fit);
         }

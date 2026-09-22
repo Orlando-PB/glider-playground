@@ -10,6 +10,7 @@ In server mode only, also loads private plugins from
 ~/.glider_playground/plugins.
 """
 
+import json
 import logging
 import os
 import platform
@@ -25,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .maps import argo_logic
+from .core import bathy_prefetch
 from .core import cache_logic
 from .core import cycle_profile_logic
 from .server import erddap_fetch
@@ -65,6 +67,7 @@ _threading.Thread(target=copernicus_fetch.warm_up, name="cm-warmup", daemon=True
 # Background overlay prefetch: every READY file gets its Copernicus layers
 # fetched once and stored on disk (see copernicus_prefetch).
 copernicus_prefetch.start()
+bathy_prefetch.start()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -562,6 +565,28 @@ def api_3d_data(id: str):
         if rec and rec.get("spatial_3d") is payload:
             cache_logic._save_payload_sidecar(rec)
     return payload
+
+
+@app.get("/api/3d_bathy")
+def api_3d_bathy(id: str, grid: int = bathy_prefetch.GRID):
+    """Fine seabed for the file's 3D box, for the three.js 3D view: normally already stored by bathy_prefetch."""
+    try:
+        _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)      # the box comes from the 3D payload
+        return Response(content=bathy_prefetch.fetch(id, max(50, min(grid, 1200))), media_type="application/json")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Seabed unavailable: {e}")
+
+
+@app.get("/api/3d_track")
+def api_3d_track(id: str):
+    """The file's 3D track as packed binary (see bathy_prefetch.track), for the three.js 3D view."""
+    try:
+        _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
+        return Response(content=bathy_prefetch.track(id), media_type="application/octet-stream")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/api/3d_colours")
