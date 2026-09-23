@@ -37,7 +37,7 @@ export function createView(seabed, { floatTraces = true, store = 'gp_ocean3d', o
     const wear = () => stage.setBackground(getComputedStyle(document.documentElement).getPropertyValue('--sky').trim());
     wear();
 
-    let vertical = 1, timeline = null, scenery = null, following = -1;
+    let vertical = 1, timeline = null, scenery = null, following = -1, span = null;      // span: [a, b] ms, the stretch of track the time bar's clip handles show
     const show = { floats: ownLayers || saved.floats !== false, traces: saved.traces ?? floatTraces, scenery: saved.scenery !== false }, extras = [], timeWatchers = [];
     const shown = p => !p.hidden && (!p.float || show.floats);
     const setVertical = trueHeight => {
@@ -99,6 +99,7 @@ export function createView(seabed, { floatTraces = true, store = 'gp_ocean3d', o
         if (!float && drawn) floor.refresh(world.carve(track.lon, track.lat, track.z));      // measured depths beat the chart
         const line = buildTrack(world, track, colour, float ? { upright: true, width: 1.5 } : width ? { width } : {}), model = await loadModel(modelName || 'slocum', world, sizeKey || modelName || 'slocum').catch(() => null);
         stage.content.add(line.object); if (model) stage.scene.add(model.object);
+        if (span) line.setWindow(...span);
         const platform = { key, label, colour, track: line, model, position: null, float, hidden: false, drawn };
         platforms.push(platform);
         line.object.visible = drawn && (!float || show.traces);
@@ -109,7 +110,8 @@ export function createView(seabed, { floatTraces = true, store = 'gp_ocean3d', o
     // A line with no vehicle of its own (a ship's leg, a station's circle); hidden along with `owner`, a platform.
     const addLine = (track, colour, { width, owner } = {}) => {
         const line = buildTrack(world, { ...track, time_ms: track.time_ms || track.lon.map(() => 0) }, colour, { upright: true, width });
-        stage.content.add(line.object); extras.push({ object: line.object, owner, off: false }); stage.redraw();
+        if (span && track.time_ms) line.setWindow(...span);
+        stage.content.add(line.object); extras.push({ object: line.object, owner, off: false, track: track.time_ms ? line : null }); stage.redraw();
         return line.object;
     };
     // A model standing still (a buoy).
@@ -145,7 +147,11 @@ export function createView(seabed, { floatTraces = true, store = 'gp_ocean3d', o
             for (const p of platforms) if (shown(p) && aboard(p, now)) stow(p);
             for (const fn of timeWatchers) fn(now);
             stage.redraw();
-        }, { speed: speed || saved.speed, defaultSpeed, onSpeed: speed => keep({ speed }) });
+        }, { speed: speed || saved.speed, defaultSpeed, onSpeed: speed => keep({ speed }), onWindow: (a, b) => {
+            span = [a, b];
+            for (const p of platforms) p.track.setWindow(a, b);
+            for (const x of extras) if (x.track) x.track.setWindow(a, b);
+        } });
         stage.onHold(timeline.hold);
         if (!matchMedia('(prefers-reduced-motion: reduce)').matches) timeline.play(true); else timeline.setTime(t1);
         return timeline;

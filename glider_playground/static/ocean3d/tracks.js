@@ -38,14 +38,15 @@ export function projectClearings(camera) {
 }
 
 // Opaque, so the dense zig-zags cost one layer of pixels, not hundreds blended; the clearing is a screen-door (a
-// dither pattern of dropped pixels) instead of blending.
-function lineMaterial(world, colour, width) {
+// dither pattern of dropped pixels) instead of blending. `shown`: the fix indices drawn (uniform, from the time bar's
+// clip handles) — each segment carries its two fix indices, and pixels outside the window are dropped.
+function lineMaterial(world, colour, width, shown) {
     const mat = new THREE.LineMaterial({ color: colour, linewidth: width });
     radius.value = CLEARING.radius * world.size.x; columnDepth = world.size.y;
     mat.onBeforeCompile = sh => {
-        sh.uniforms.uClearings = onScreen; sh.uniforms.uFeet = onScreenFoot; sh.uniforms.uClearing = radius;
-        sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec4 vClip;\nvoid main() {').replace('gl_Position = clip;', 'gl_Position = clip;\nvClip = clip;');
-        sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec4 vClip;
+        sh.uniforms.uClearings = onScreen; sh.uniforms.uFeet = onScreenFoot; sh.uniforms.uClearing = radius; sh.uniforms.uWindow = shown;
+        sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec4 vClip; varying float vIdx; attribute vec2 instanceIdx;\nvoid main() {\nvIdx = ( position.y < 0.5 ) ? instanceIdx.x : instanceIdx.y;').replace('gl_Position = clip;', 'gl_Position = clip;\nvClip = clip;');
+        sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec4 vClip; varying float vIdx; uniform vec2 uWindow;
             uniform vec4 uClearings[${MAX_VEHICLES}], uFeet[${MAX_VEHICLES}]; uniform float uClearing; uniform vec2 resolution;
             float clearing() {
                 float keep = 1.0; vec2 aspect = vec2(resolution.x / resolution.y, 1.0), here = vClip.xy / vClip.w;
@@ -59,7 +60,8 @@ function lineMaterial(world, colour, width) {
                 }
                 return mix(${CLEARING.opacity.toFixed(2)}, 1.0, keep);
             }
-            void main() {`).replace('float alpha = opacity;', `float alpha = opacity;
+            void main() {
+                if (vIdx < uWindow.x || vIdx > uWindow.y) discard;`).replace('float alpha = opacity;', `float alpha = opacity;
                 ivec2 cell = ivec2(gl_FragCoord.xy) & 3; float door = float((cell.x * 5 + cell.y * 7 + (cell.x ^ cell.y) * 3) & 15) / 16.0 + 0.03;      // 4x4 ordered dither
                 if (clearing() < door) discard;`);
     };
@@ -76,10 +78,13 @@ export function buildTrack(world, track, colour, { upright = false, width = WIDT
         if (Math.abs(p[0]) > world.size.x / 2 || Math.abs(p[2]) > world.size.z / 2) continue;
         pos.set(p, m * 3); time[m] = track.time_ms[q]; src[m] = q; if (pitch) pitch[m] = Number.isFinite(track.pitch[q]) ? track.pitch[q] : NaN; m++;
     }
-    if (m < 2) return { object: new THREE.Group(), at: () => null, park() {}, setColours() {} };
-    const own = new THREE.Color(colour || '#12295c'), geometry = new THREE.LineGeometry();
+    if (m < 2) return { object: new THREE.Group(), at: () => null, park() {}, setColours() {}, setWindow() {} };
+    const own = new THREE.Color(colour || '#12295c'), geometry = new THREE.LineGeometry(), shown = { value: new THREE.Vector2(-1, m) };
     geometry.setPositions(pos.subarray(0, m * 3));
-    const object = new THREE.Line2(geometry, lineMaterial(world, own, width)), spot = upright ? new THREE.Vector3() : vehicles[slots++ % MAX_VEHICLES];      // lines only clear round vehicles, not floats
+    const idx = new Float32Array((m - 1) * 2);
+    for (let q = 0; q < m - 1; q++) { idx[q * 2] = q; idx[q * 2 + 1] = q + 1; }
+    geometry.setAttribute('instanceIdx', new THREE.InstancedBufferAttribute(idx, 2));
+    const object = new THREE.Line2(geometry, lineMaterial(world, own, width, shown)), spot = upright ? new THREE.Vector3() : vehicles[slots++ % MAX_VEHICLES];      // lines only clear round vehicles, not floats
 
     // Colour the line by a value per served fix (`values`, aligned with the track as served; `scale(v)` -> THREE.Color),
     // or back to the platform's own colour with no arguments.
@@ -115,5 +120,14 @@ export function buildTrack(world, track, colour, { upright = false, width = WIDT
         return { position, heading, pitch: (vertical === 1 ? Math.max(-PITCH_MAX, Math.min(PITCH_MAX, degrees * PITCH_GAIN)) : degrees) * Math.PI / 180 };      // true height: true pitch
     };
     const park = () => spot.set(AWAY, AWAY, AWAY);      // hidden: no clearing round where it would be
-    return { object, at, park, setColours, span: [time[0], time[m - 1]] };
+    // Draw only the fixes between times `a` and `b` (ms; the cut falls part-way along a segment).
+    const index = t => {
+        if (t < time[0]) return -1;
+        if (t >= time[m - 1]) return m;
+        let lo = 0, hi = m - 1;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (time[mid] <= t) lo = mid; else hi = mid - 1; }
+        return lo + (t - time[lo]) / (time[lo + 1] - time[lo]);
+    };
+    const setWindow = (a, b) => shown.value.set(index(a), index(b));
+    return { object, at, park, setColours, setWindow, span: [time[0], time[m - 1]] };
 }

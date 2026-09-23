@@ -1065,7 +1065,8 @@
 
         /* ---------- Toolbar ----------
            .toolbar-row is two fixed lines: .toolbar-topline (logo, Files, right-hand actions) and .toolbar-secondline
-           (View pinned left, Presets wrapping in the space to its right). Nothing moves between lines with width.
+           (View pinned left, Presets wrapping in the space to its right). On screens wide enough for View + Presets to sit
+           unwrapped between Files and the actions, .toolbar-oneline folds both lines into one (see fitToolbarLines).
            #settingsRow is an absolutely positioned dropdown panel, keyed off data-settings-open. */
         .toolbar-row {
             display: flex;
@@ -1104,6 +1105,14 @@
         }
         .toolbar-secondline > .toolbar-group:first-child { flex: 0 0 auto; }
         .toolbar-secondline > .group-divider { min-height: 24px; }
+        /* Wide screens: when View + Presets fit unwrapped between Files and the right-hand actions, they join the
+           top line (fitToolbarLines toggles the class after measuring); otherwise the second line stays as it is. */
+        .toolbar-row.toolbar-oneline { flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px; }
+        .toolbar-row.toolbar-oneline .toolbar-topline { display: contents; }
+        .toolbar-row.toolbar-oneline .toolbar-main { flex: 0 0 auto; }
+        .toolbar-row.toolbar-oneline .toolbar-secondline { order: 2; flex: 0 0 auto; flex-wrap: nowrap; width: auto; margin: 0 auto; }
+        .toolbar-row.toolbar-oneline #presetContainer { flex-wrap: nowrap; }
+        .toolbar-row.toolbar-oneline .toolbar-actions { order: 3; }
         /* Medium screens: the View rail drops its icons and tightens so it (plus Missions) fits on one line. */
         @media (max-width: 1100px) {
             .view-seg-btn { padding: 7px 9px; gap: 0; }
@@ -4030,6 +4039,34 @@
             clearTimeout(_reflowTimer);
             _reflowTimer = setTimeout(() => { reflowLayoutForOrientation(); fitClassicSummaryHeight(); }, 150);
         });
+
+        // Top bar: View + Presets move up beside Files when they fit unwrapped, else they keep their own line.
+        // Measured at natural (unwrapped) widths so the answer doesn't depend on which mode is currently applied.
+        const toolbarRow = document.querySelector('.toolbar-row');
+        function fitToolbarLines() {
+            if (!toolbarRow) return;
+            const main = toolbarRow.querySelector('.toolbar-main');
+            const second = toolbarRow.querySelector('.toolbar-secondline');
+            const actions = toolbarRow.querySelector('.toolbar-actions');
+            if (!main || !second || !actions) return;
+            if (window.innerWidth <= 720) { toolbarRow.classList.remove('toolbar-oneline'); return; }
+            const probe = 'flex:0 0 auto;width:max-content;flex-wrap:nowrap;margin:0';
+            const prev = [main.style.cssText, second.style.cssText];
+            main.style.cssText += ';' + probe; second.style.cssText += ';' + probe;
+            second.querySelectorAll('#presetContainer').forEach(el => el.style.flexWrap = 'nowrap');
+            const need = main.offsetWidth + second.offsetWidth + actions.offsetWidth + 3 * 10 + 2 * 14 + 16;
+            main.style.cssText = prev[0]; second.style.cssText = prev[1];
+            second.querySelectorAll('#presetContainer').forEach(el => el.style.flexWrap = '');
+            toolbarRow.classList.toggle('toolbar-oneline', need <= toolbarRow.clientWidth);
+        }
+        let _fitToolbarRaf = 0;
+        const scheduleFitToolbar = () => { cancelAnimationFrame(_fitToolbarRaf); _fitToolbarRaf = requestAnimationFrame(fitToolbarLines); };
+        window.addEventListener('resize', scheduleFitToolbar);
+        if (toolbarRow) {
+            new MutationObserver(scheduleFitToolbar).observe(toolbarRow.querySelector('.toolbar-secondline'), { childList: true, subtree: true, characterData: true });
+            new MutationObserver(scheduleFitToolbar).observe(toolbarRow.querySelector('.toolbar-main'), { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
+        }
+        scheduleFitToolbar();
 
         // Drop plot panels and stash other singletons but KEEP the globe + 3D mounted: re-parenting an
         // iframe reloads it (new WebGL context, lost tile cache). Returns {map, td} (either may be null).
