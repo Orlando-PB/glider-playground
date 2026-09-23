@@ -10,6 +10,8 @@
     <link rel="prefetch" as="script" href="/static/vendor/plotly-gl2d-2.32.0.min.js">
     <link rel="prefetch" as="script" href="/static/vendor/globe-three.min.js">
     <script src="/static/js/console_log.js"></script>
+    <script src="/static/js/units.js"></script>
+    <script src="/static/js/snapshot.js"></script>
     <script src="/api/plot_presets.js"></script>
     <!-- Prebuilt Tailwind; regenerate with the Tailwind CLI when classes change. -->
     <link rel="stylesheet" href="/static/vendor/tailwind.css">
@@ -67,6 +69,7 @@
             --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
             --shadow-md: 0 6px 18px rgba(0,0,0,0.45);
             --shadow-lg: 0 14px 36px rgba(0,0,0,0.6);
+            --settings-section-bg: rgba(255,255,255,0.035);
             --tooltip-bg: #0d0f17;
             --scroll-thumb: #2f3443;
             --scroll-thumb-hover: #3b4152;
@@ -95,6 +98,7 @@
             --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
             --shadow-md: 0 6px 18px rgba(15,23,42,0.08);
             --shadow-lg: 0 14px 36px rgba(15,23,42,0.12);
+            --settings-section-bg: rgba(15,23,42,0.045);
             --tooltip-bg: #1f2330;
             --scroll-thumb: #c7cdd8;
             --scroll-thumb-hover: #aeb5c2;
@@ -122,7 +126,6 @@
         }
 
         select, input[type="text"], input[type="password"], input[type="datetime-local"], input[type="number"], button {
-            outline: none;
             transition: background-color 0.15s, border-color 0.15s, color 0.15s, transform 0.08s;
             border-radius: var(--radius-sm);
             color: var(--text-primary);
@@ -136,6 +139,14 @@
             box-shadow: 0 0 0 3px var(--accent-ring);
         }
         select option { background: var(--bg-panel-2); color: var(--text-primary); }
+
+        /* Keyboard focus: a ring on every focusable control, none on mouse/touch focus (:focus-visible). */
+        :focus:not(:focus-visible) { outline: none; }
+        button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
+        a:focus-visible, [tabindex]:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
 
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -184,6 +195,13 @@
             text-transform: uppercase;
             color: var(--text-muted);
         }
+        /* Profile / cycle "show all" cross: always present (disabled when nothing is selected) so the row never shifts. */
+        .nav-clear { display: inline-flex; align-items: center; padding: 2px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; }
+        .nav-clear:hover:not(:disabled) { color: var(--red, #ea4335); }
+        .nav-clear:disabled { opacity: 0.3; cursor: default; }
+        /* Read-only direction tag: text, not an arrow, so it isn't taken for one of the direction buttons. */
+        .dir-tag { font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding: 2px 6px; border-radius: 999px; border: 1px dashed var(--border); }
+        .dir-tag:empty { display: none; }
         .group-divider {
             width: 1px;
             align-self: stretch;
@@ -283,11 +301,8 @@
             display: inline-flex; gap: 2px; padding: 0;
             border-radius: 9999px;
             background-color: var(--bg-panel-3);
-            /* Shrink and scroll rather than wrapping when the toolbar is tight. */
-            flex-shrink: 1;
-            min-width: 0;
-            overflow-x: auto;
-            scrollbar-width: thin;
+            /* Never shrinks or scrolls: when the line is tight the presets drop beneath it, and on phones it goes edge to edge. */
+            flex-shrink: 0;
         }
         :root[data-theme="light"] .view-seg { background-color: #dde3ec; }
         .view-seg-btn {
@@ -297,6 +312,9 @@
             border-radius: 9999px; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
         }
         .view-seg-btn .material-symbols-outlined { font-size: 14px; }
+        /* The pill clips overflow (it scrolls when tight), so the keyboard ring goes inside the button. */
+        .view-seg-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+        .view-seg-btn.active:focus-visible { box-shadow: inset 0 0 0 2px #fff; }
         .view-seg-btn:hover:not(:disabled):not(.active) { color: var(--text-primary); background-color: var(--bg-hover); }
         .view-seg-btn:disabled { cursor: not-allowed; }
         .view-seg-btn.active {
@@ -645,6 +663,23 @@
             box-shadow: 0 0 0 3px rgba(65,101,138,0.22);
         }
         .preset-btn:disabled { opacity: 0.25 !important; filter: grayscale(100%); cursor: not-allowed; }
+        /* Grouped presets: one chip, a vertical menu beneath on hover / focus / click. */
+        .preset-group { position: relative; display: inline-flex; }
+        .preset-group-btn { display: inline-flex; align-items: center; gap: 4px; padding-right: 7px !important; }
+        .preset-btn.preset-group-plain { background: var(--bg-panel-3); color: var(--text-secondary); border: 2px solid transparent; }   /* border-color is set inline when a member is active */
+        .preset-group-btn.active { transform: none; box-shadow: none; }   /* the coloured border is the active mark */
+        :root[data-theme="light"] .preset-group-plain { background: #dde3ec; color: #1f2937; }
+        .preset-caret { opacity: 0.7; transition: transform 0.15s; }
+        .preset-group.open .preset-caret { transform: rotate(180deg); }
+        .preset-menu {
+            display: none; position: absolute; top: calc(100% + 4px); left: 0; z-index: 85;
+            flex-direction: column; align-items: stretch; gap: 3px; padding: 5px;
+            background: var(--bg-panel-2); border: 1px solid var(--border);
+            border-radius: var(--radius-md); box-shadow: var(--shadow-md); min-width: 100%;
+        }
+        .preset-group.open .preset-menu { display: flex; }
+        .preset-menu .preset-btn { justify-content: flex-start; }
+        .preset-menu .preset-btn.active { transform: none; }
         /* Override light preset backgrounds for dark theme */
         .preset-btn.bg-red-100    { background-color: rgba(248,113,113,0.16) !important; }
         .preset-btn.text-red-800  { color: #fca5a5 !important; }
@@ -714,6 +749,7 @@
         .gp-panel.active.idle::after { opacity: 0; }
         .gp-panel.active.idle .gp-add.show { display: none; }
         .gp-panel.active.idle .gp-panel-header { opacity: 0; }
+        .gp-panel.active.idle:hover .gp-panel-header { opacity: 1; }
         /* Keyboard focus inside a panel keeps its controls reachable. */
         .gp-panel:focus-within .gp-panel-header { opacity: 1 !important; }
         .gp-panel:focus-within .gp-add.show { display: flex !important; }
@@ -888,6 +924,12 @@
         .var-row .var-time-warning { font-size: 9px; font-weight: 600; color: #1f2937; background: #f9ab00; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
         .var-row .var-desc { font-size: 10px; color: var(--text-muted); line-height: 1.35; overflow: hidden; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .var-row.is-qc .var-name { color: var(--text-muted); font-style: italic; }
+        .var-row.var-plottable { cursor: pointer; }
+        .var-row.var-open { background: var(--bg-panel-3); }
+        .var-plot { margin-top: 6px; font-size: 10px; color: var(--text-muted); }
+        .var-plot.hidden { display: none; }
+        .var-plot-chart { display: block; width: 100%; height: 150px; }
+        .var-plot-note { margin-top: 2px; }
 
         .attr-row {
             display: flex; flex-direction: column; gap: 2px;
@@ -1022,34 +1064,50 @@
         }
 
         /* ---------- Toolbar ----------
-           .toolbar-row is one flex-wrap container. .toolbar-topline is width:100% so it always claims line 1;
-           Presets and (when open) #settingsRow's groups wrap together below. #settingsRow is display:contents, keyed off data-settings-open. */
+           .toolbar-row is two fixed lines: .toolbar-topline (logo, Files, right-hand actions) and .toolbar-secondline
+           (View pinned left, Presets wrapping in the space to its right). Nothing moves between lines with width.
+           #settingsRow is an absolutely positioned dropdown panel, keyed off data-settings-open. */
         .toolbar-row {
             display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 4px 10px;
+            flex-direction: column;
+            gap: 6px;
             padding: 8px 14px;
             border-bottom: 1px solid var(--border);
             background: var(--bg-panel);
         }
-        /* .toolbar-topline is nowrap so .toolbar-actions never wraps; only #presetsGroup may drop to its own line. */
         .toolbar-topline {
             display: flex;
             flex-wrap: nowrap;
-            align-items: flex-start;
+            align-items: center;
             justify-content: space-between;
-            gap: 4px 10px;
+            gap: 10px;
             width: 100%;
             min-width: 0;
         }
         .toolbar-main {
             display: flex;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
             align-items: center;
-            gap: 4px 8px;
+            gap: 8px;
             min-width: 0;
             flex: 1 1 auto;
+        }
+        .toolbar-secondline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            min-width: 0;
+            min-height: 32px;
+        }
+        .toolbar-secondline > .toolbar-group:first-child { flex: 0 0 auto; }
+        .toolbar-secondline > .group-divider { min-height: 24px; }
+        /* Medium screens: the View rail drops its icons and tightens so it (plus Missions) fits on one line. */
+        @media (max-width: 1100px) {
+            .view-seg-btn { padding: 7px 9px; gap: 0; }
+            .view-seg-btn .material-symbols-outlined { display: none; }
         }
         .toolbar-actions {
             display: flex;
@@ -1060,23 +1118,81 @@
         /* Settings button: "Settings <chevron>", or a lone tune icon below 1500px. */
         .settings-toggle-icon { display: none; }
         .settings-toggle-text { display: inline-flex; align-items: center; gap: 4px; }
-        #settingsRow { display: none; }
-        html[data-settings-open] #settingsRow { display: contents; }
-        /* Flatten the settings groups into .toolbar-row's flex layout so each control wraps on its own. */
-        #settingsRow .toolbar-group { display: contents; }
+        /* Settings: a dropdown panel under the toolbar's right-hand actions. Flat and borderless: each group is a
+           softly tinted card (title row + one wrapping row of controls) so sections read apart without lines. */
+        #settingsRow {
+            display: none; position: absolute; top: 100%; right: 14px; margin-top: -4px;
+            width: 580px; max-width: calc(100vw - 24px); max-height: calc(100vh - 80px);
+            flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto; overflow-x: hidden;
+            background: var(--bg-panel-2); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); z-index: 80;
+        }
+        html[data-settings-open] #settingsRow { display: flex; }
+        #settingsRow .toolbar-group {
+            display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+            padding: 10px 12px 12px; border-radius: var(--radius-md);
+            background: var(--settings-section-bg);
+        }
+        #settingsRow .group-label { display: flex !important; }
+        /* One wrapping row of controls per section; every control sits on the same 28px line. */
+        #settingsRow .settings-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+        #settingsRow .field { display: flex; align-items: center; gap: 6px; }
+        #settingsRow .field-label { font-size: 10px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+        #settingsRow .field-label.w-fixed { min-width: 40px; }   /* Profile / Cycle / Direction rows line up */
+        #settingsRow .toggle-btn, #settingsRow select, #settingsRow input[type="number"] {
+            height: 28px; box-sizing: border-box; padding-top: 0; padding-bottom: 0;
+        }
+        #settingsRow .toggle-btn { display: inline-flex; align-items: center; justify-content: center; }
+        #settingsRow input[type="number"] { width: 56px; }
+        #settingsRow .qc-chip, #settingsRow .phase-chip { height: 26px; min-width: 26px; padding: 0 6px; font-size: 10px; }
+        #settingsRow .chip-row { display: flex; align-items: center; gap: 4px; }
+        #settingsRow .settings-controls .row { flex: 0 0 100%; display: flex; align-items: center; gap: 6px; }
+        #settingsRow #cycleNavSep { display: none !important; }
+        #settingsRow #navigateContainer { flex-wrap: wrap; gap: 8px 18px; }
+        #settingsRow #dirContainer { flex: 0 0 100%; }   /* Profile + Cycle share a line; Direction takes the next */
+        /* The card goes when the file has neither SCI_PHASE nor profile/cycle data. */
+        #profilesSection:not(:has(#phaseContainer:not([style*="display: none"]), #navigateContainer:not([style*="display: none"]))) { display: none; }
+        #settingsRow .field-note { font-size: 10px; color: var(--text-muted); margin-left: 2px; }
         .toolbar-group {
             display: flex;
             align-items: center;
             gap: 6px;
             padding: 0 6px;
         }
-        /* #presetsGroup/#presetContainer are display:contents so each chip is a direct .toolbar-row flex item and wraps using the full row width. */
-        #presetsGroup, #presetContainer { display: contents; }
+        /* Presets fill the rest of the second line; chips wrap inside it, never around the View segment. */
+        #presetsGroup { flex: 0 1 auto; min-width: 0; align-items: flex-start; }
+        #presetContainer { justify-content: center; }
+        #presetsGroup .group-label { height: 32px; }
+        #presetContainer { min-height: 32px; }
         /* Below 1500px: drop group labels and (i) tooltips; Settings collapses to an icon. */
         @media (max-width: 1500px) {
             .group-label { display: none; }
             .settings-toggle-icon { display: inline-flex; }
             .settings-toggle-text { display: none; }
+        }
+        /* Phones: the second line stacks — the View rail and the preset row each run edge to edge, every button sharing
+           the width equally, icons dropped (the Missions rail joins the View rail as one strip). */
+        @media (max-width: 720px) {
+            .toolbar-row { padding: 6px 0; gap: 6px; }
+            .toolbar-topline { gap: 6px; padding: 0 10px; }
+            .toolbar-main { gap: 6px; }
+            .toolbar-main > div:first-child { padding-right: 8px; }
+            .toolbar-main img { height: 24px !important; }
+            #datasetGroup { flex: 1 1 auto; min-width: 0; padding: 0; }
+            .dataset-trigger { max-width: 100%; min-width: 0; width: 100%; }
+            .toolbar-actions .toggle-btn { padding-left: 6px; padding-right: 6px; }
+            .toolbar-secondline { flex-wrap: wrap; gap: 6px; }
+            .toolbar-secondline > .toolbar-group:first-child { flex: 0 0 100%; padding: 0; gap: 0; }
+            .toolbar-secondline > .group-divider { display: none; }
+            .view-seg { flex: 1 1 auto; min-width: 0; overflow: hidden; border-radius: 0; margin-left: 0 !important; }
+            .view-seg-btn { flex: 1 1 0; min-width: 0; justify-content: center; padding: 7px 2px; font-size: 10px; border-radius: 0; }
+            .view-seg-btn .material-symbols-outlined { display: none; }
+            #presetsGroup { flex: 0 0 100%; padding: 0 6px; }
+            #presetContainer { flex: 1 1 auto; flex-wrap: nowrap; min-width: 0; gap: 4px; }
+            #presetContainer > * { flex: 1 1 0; min-width: 0; }
+            #presetContainer .preset-btn { width: 100%; justify-content: center; padding: 6px 4px !important; font-size: 10px; }
+            #presetContainer .preset-btn > .material-symbols-outlined:not(.preset-caret) { display: none; }
+            #presetContainer .preset-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            #presetContainer .preset-btn.active { transform: none; }
         }
 
         /* ---------- Jelly: toolbar notification icon, hidden until there's something to show ---------- */
@@ -1206,6 +1322,9 @@
             white-space: nowrap;
         }
         #shareToast.show { opacity: 1; transform: translate(-50%, 0); }
+        #shareToast.has-action.show { pointer-events: auto; }
+        .toast-action { margin-left: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.3); background: transparent; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .toast-action:hover { background: rgba(255,255,255,0.12); }
         #shareToast .material-symbols-outlined { font-size: 17px; }
         #shareToast.ok .material-symbols-outlined { color: #34d399; }
         #shareToast.err .material-symbols-outlined { color: #f87171; }
@@ -1286,25 +1405,6 @@
                     </div>
                 </div>
 
-                <div class="group-divider"></div>
-
-                <!-- View layout selector: each is a fresh start that swaps the whole-page layout. Distinct from the plot presets below. -->
-                <div class="toolbar-group">
-                    <span class="group-label" data-tip="Switch the layout.">
-                        View
-                        <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
-                    </span>
-                    <div id="viewSelector" class="view-seg">
-                        <button class="view-seg-btn" data-view="classic" title="Single plot + globe + 3D (the default)"><span class="material-symbols-outlined text-[14px]">show_chart</span>Classic</button>
-                        <button class="view-seg-btn" data-view="map" title="Globe + 3D side by side (no plot)"><span class="material-symbols-outlined text-[14px]">map</span>Map</button>
-                        <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
-                        <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
-                        <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
-                        <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top), and PAR, with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
-                        <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
-                    </div>
-                </div>
-
             </div>
 
             <!-- Right-side actions: never hidden, only disabled, so the bar's shape never changes. -->
@@ -1327,17 +1427,14 @@
                         <div id="jellyMessages" class="flex-grow overflow-y-auto p-3 flex flex-col gap-2 text-xs" style="max-height: 380px;"></div>
                     </div>
                 </div>
-                <button id="settingsToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show axes, QC, phases and profile controls" aria-label="Settings">
+                <button id="settingsToggle" class="toggle-btn px-2.5 py-1.5 rounded flex items-center gap-1" title="Show axes, QC, phases and profile controls" aria-label="Settings" aria-haspopup="true" aria-controls="settingsRow">
                     <span class="material-symbols-outlined text-[15px] settings-toggle-icon">tune</span>
                     <span class="settings-toggle-text">Settings <span class="material-symbols-outlined text-[13px]" id="settingsToggleIcon">expand_more</span></span>
                 </button>
                 <button id="themeToggle" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Toggle light / dark theme" aria-label="Toggle theme">
                     <span class="material-symbols-outlined text-[14px]" id="themeToggleIcon">light_mode</span>
                 </button>
-                <button id="syncTimeBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Sync the time axis across all open timeseries plots — zooming one zooms them all" aria-label="Sync time axes" disabled>
-                    <span class="material-symbols-outlined text-[14px]">sync_alt</span>
-                </button>
-                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Download plot as PNG" disabled>
+                <button id="downloadBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Save a high-resolution PNG of the workspace (every panel, no controls)" aria-label="Download snapshot">
                     <span class="material-symbols-outlined text-[14px]">download</span>
                 </button>
                 <button id="shareBtn" class="toggle-btn px-2 py-1.5 rounded flex items-center gap-1" title="Copy a link to this exact view to your clipboard" aria-label="Share this view">
@@ -1346,16 +1443,37 @@
             </div>
             </div>
 
-            <!-- Presets: kept OUT of .toolbar-topline so its wrapped row gets the full width (see CSS). -->
-            <div class="toolbar-group" id="presetsGroup" style="min-width: 0;">
+            <!-- Second line: View is pinned at the left, Presets take the rest and wrap within their own space. -->
+            <div class="toolbar-secondline">
+            <!-- View layout selector: each is a fresh start that swaps the whole-page layout. Distinct from the plot presets below. -->
+            <div class="toolbar-group">
+                <span class="group-label" data-tip="Switch the layout.">
+                    View
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div id="viewSelector" class="view-seg">
+                    <button class="view-seg-btn" data-view="classic" title="Single plot + globe + 3D (the default)"><span class="material-symbols-outlined text-[14px]">show_chart</span>Classic</button>
+                    <button class="view-seg-btn" data-view="map" title="Globe + 3D side by side (no plot)"><span class="material-symbols-outlined text-[14px]">map</span>Map</button>
+                    <button class="view-seg-btn" data-view="overview" title="Globe + 3D alongside the headline plots"><span class="material-symbols-outlined text-[14px]">grid_view</span>Overview</button>
+                    <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
+                    <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
+                    <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top), and PAR, with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
+                    <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
+                </div>
+            </div>
+
+            <div class="group-divider"></div>
+
+            <div class="toolbar-group" id="presetsGroup">
                 <span class="group-label shrink-0" data-tip="Select your view, or make custom plots in Settings.">
                     Presets
                     <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
                 <div id="presetContainer" class="flex items-center gap-1.5 flex-wrap py-0.5 transition-opacity duration-200"></div>
             </div>
+            </div>
 
-            <!-- Settings: Axes / QC / Phases / Profiles. #settingsRow is display:contents when open (see CSS). Phases/Profiles also hide themselves via CycleProfile.init when the file has no SCI_PHASE / cycle data. -->
+            <!-- Settings: a dropdown panel (Axes / Drawing / QC / Phases / Profiles), one titled section each; shown by data-settings-open (see CSS). Phases/Profiles also hide themselves via CycleProfile.init when the file has no SCI_PHASE / cycle data. -->
             <div id="settingsRow">
             <!-- Axes: presets drive variables by default, this is the manual override -->
             <div class="toolbar-group">
@@ -1363,60 +1481,73 @@
                     Axes
                     <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">X</span>
-                    <select id="xVar" class="p-1.5 w-28 transition-all"></select>
+                <div class="settings-controls">
+                    <div class="field">
+                        <span class="field-label">X</span>
+                        <select id="xVar" class="p-1.5 w-28 transition-all"></select>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Y</span>
+                        <select id="yVar" class="p-1.5 w-28 transition-all"></select>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Colour</span>
+                        <select id="cVar" class="p-1.5 w-28 transition-all">
+                            <option value="">None</option>
+                        </select>
+                        <!-- Colour palette picker -->
+                        <div class="relative" id="cmapContainer">
+                            <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-blue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false" aria-label="Colour palette" title="Colour palette"></button>
+                            <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
+                        </div>
+                        <input type="hidden" id="cmap" value="thermal">
+                    </div>
+                    <button id="invertYBtn" class="toggle-btn px-2.5 rounded">Invert Y</button>
+                    <button id="profileSidebarBtn" class="toggle-btn px-2.5 rounded" title="Add a depth-profile plot (value vs depth) to the left of this plot">Profile</button>
                 </div>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Y</span>
-                    <select id="yVar" class="p-1.5 w-28 transition-all"></select>
-                </div>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Colour</span>
-                    <select id="cVar" class="p-1.5 w-28 transition-all">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <button id="invertYBtn" class="toggle-btn px-2.5 py-1.5 rounded">Invert Y</button>
-                <button id="profileSidebarBtn" class="toggle-btn px-2.5 py-1.5 rounded" title="Add a depth-profile plot (value vs depth) to the left of this plot">Profile</button>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Order</span>
-                    <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top.">
-                        <option value="normal">Standard</option>
-                        <option value="smallest">Lowest on top</option>
-                        <option value="largest">Highest on top</option>
-                        <option value="outliers">Outliers on top</option>
-                    </select>
-                </div>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Size</span>
-                    <select id="drawOrderSize" class="p-1.5 transition-all" title="Marker point size.">
-                        <option value="small">Small</option>
-                        <option value="med">Med</option>
-                        <option value="large">Large</option>
-                    </select>
-                </div>
-                <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-gray-500 font-medium">Quality</span>
-                    <select id="quality" class="p-1.5 transition-all" title="Maximum number of points drawn. Higher = more detail but slower to load/draw; lower = faster. Auto picks 100k locally / 60k on the server. 'Full' sends every point. With multiple plots open the budget is split across them.">
-                        <option value="">Auto</option>
-                        <option value="5000">5k</option>
-                        <option value="20000">20k</option>
-                        <option value="60000">60k</option>
-                        <option value="100000">100k</option>
-                        <option value="200000">200k</option>
-                        <option value="full">Full</option>
-                    </select>
-                </div>
-                <!-- Colour palette picker -->
-                <div class="relative" id="cmapContainer">
-                    <button id="cmapTrigger" class="h-7 w-12 border-none rounded flex items-center px-1 cursor-pointer focus:ring-2 ring-blue" style="background: linear-gradient(to right, #042333, #bd4a38, #e9f6ae);" aria-haspopup="true" aria-expanded="false" aria-label="Colour palette" title="Colour palette"></button>
-                    <div id="cmapMenu" class="absolute top-full right-0 mt-1 w-28 max-h-80 overflow-y-auto bg-white border border-gray-200 hidden z-50 py-1 flex-col custom-scrollbar rounded"></div>
-                </div>
-                <input type="hidden" id="cmap" value="thermal">
             </div>
 
-            <div class="group-divider"></div>
+            <!-- Drawing: how many points, which draw on top, and time-axis sync across plots -->
+            <div class="toolbar-group">
+                <span class="group-label" data-tip="How the points are drawn: which ones sit on top, how big they are, and how many are sent to the browser. Sync time links the time axis of every open timeseries plot.">
+                    Drawing
+                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
+                </span>
+                <div class="settings-controls">
+                    <div class="field">
+                        <span class="field-label">Order</span>
+                        <select id="drawOrder" class="p-1.5 transition-all" title="Choose which points draw on top.">
+                            <option value="normal">Standard</option>
+                            <option value="smallest">Lowest on top</option>
+                            <option value="largest">Highest on top</option>
+                            <option value="outliers">Outliers on top</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Size</span>
+                        <select id="drawOrderSize" class="p-1.5 transition-all" title="Marker point size.">
+                            <option value="small">Small</option>
+                            <option value="med">Med</option>
+                            <option value="large">Large</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Quality</span>
+                        <select id="quality" class="p-1.5 transition-all" title="Maximum number of points drawn. Higher = more detail but slower to load/draw; lower = faster. Auto picks 100k locally / 60k on the server. 'Full' sends every point. With multiple plots open the budget is split across them.">
+                            <option value="">Auto</option>
+                            <option value="5000">5k</option>
+                            <option value="20000">20k</option>
+                            <option value="60000">60k</option>
+                            <option value="100000">100k</option>
+                            <option value="200000">200k</option>
+                            <option value="full">Full</option>
+                        </select>
+                    </div>
+                    <button id="syncTimeBtn" class="toggle-btn px-2.5 rounded gap-1" title="Sync the time axis across all open timeseries plots — zooming one zooms them all. Needs two or more timeseries plots." aria-label="Sync time axes" disabled>
+                        <span class="material-symbols-outlined text-[14px]">sync_alt</span>Sync time
+                    </button>
+                </div>
+            </div>
 
             <!-- QC -->
             <div class="toolbar-group">
@@ -1424,70 +1555,71 @@
                     QC
                     <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
-                <div id="qcFlagsContainer" class="flex items-center gap-0.5">
-                    <!-- QC flag chips 0-9 built by buildQcChips() -->
-                    <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
+                <div class="settings-controls">
+                    <div id="qcFlagsContainer" class="chip-row">
+                        <!-- QC flag chips 0-9 built by buildQcChips() -->
+                        <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
+                    </div>
+                    <button id="qcDefaultBtn" class="toggle-btn px-2.5 rounded" title="Reset to the default flags (0,1,2,5,8)">Default</button>
                 </div>
-                <button id="qcDefaultBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Reset to the default flags (0,1,2,5,8)">Default</button>
             </div>
 
-            <!-- Phases (JS-conditional: hidden when the file has no SCI_PHASE) -->
-            <div id="phaseDivider" class="group-divider" style="display: none;"></div>
-            <div id="phaseContainer" class="toolbar-group" style="display: none;">
-                <span id="phaseInfoDot" class="group-label" data-tip="SCI_PHASE (OG1 vocabulary). All chips active = show everything. Click a chip to include only those phases.">
-                    Phases
-                    <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
-                </span>
-                <div id="phaseChipsContainer" class="flex gap-0.5 items-center"></div>
-                <button id="phaseAllBtn" class="toggle-btn px-1.5 py-1 rounded text-[9px]" title="Show all phases">All</button>
-            </div>
-
-            <!-- Profiles navigation (hidden by JS when the file has no profile/cycle data). -->
-            <div id="navigateDivider" class="group-divider" style="display: none;"></div>
-            <div id="navigateContainer" class="toolbar-group" style="display: none;">
-                <span class="group-label" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle.">
+            <!-- Profiles: phases, profile/cycle navigation and direction in one card. The helper hides #phaseContainer /
+                 #navigateContainer separately; the card hides itself once both are hidden (see CSS). -->
+            <div id="profilesSection" class="toolbar-group">
+                <span class="group-label" data-tip="Profile = individual ascent/descent. Cycle = full down-up sweep. Stepping profiles while a cycle is selected constrains to profiles within that cycle. Phase = SCI_PHASE (OG1 vocabulary): all chips active shows everything, click a chip to include only those phases.">
                     Profiles
                     <span class="info-dot"><span class="material-symbols-outlined">info</span></span>
                 </span>
-                <div id="profileContainer" class="flex items-center gap-1" style="display: none;">
-                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Profile</span>
-                    <button id="profilePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous profile">
-                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                    </button>
-                    <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
-                    <button id="profileNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next profile">
-                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                    </button>
-                    <span id="profileDirIcon" class="material-symbols-outlined text-[13px] w-4 text-center" style="color: var(--text-muted);" title="Direction"></span>
-                    <button id="profileClearBtn" class="text-gray-400 hover:text-red px-1 border-none bg-transparent cursor-pointer" title="Show all profiles" style="display: none;">
-                        <span class="material-symbols-outlined text-[13px]">close</span>
-                    </button>
-                </div>
-                <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
-                <div id="cycleContainer" class="flex items-center gap-1" style="display: none;">
-                    <span class="text-[9px] font-medium shrink-0" style="color: var(--text-muted);">Cycle</span>
-                    <button id="cyclePrevBtn" class="toggle-btn px-1 py-1 rounded" title="Previous cycle">
-                        <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-                    </button>
-                    <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
-                    <button id="cycleNextBtn" class="toggle-btn px-1 py-1 rounded" title="Next cycle">
-                        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-                    </button>
-                    <button id="cycleClearBtn" class="text-gray-400 hover:text-red px-1 border-none bg-transparent cursor-pointer" title="Show all cycles" style="display: none;">
-                        <span class="material-symbols-outlined text-[13px]">close</span>
-                    </button>
-                </div>
-                <!-- Direction buttons: icon-only (JS-conditional) -->
-                <div id="dirContainer" class="flex gap-0.5 items-center ml-1" style="display: none;">
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
-                        <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
-                        <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
-                    </button>
-                    <button class="dir-btn toggle-btn active px-1.5 py-1 rounded" data-dir="0" title="Transect — horizontal propulsion">
-                        <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
-                    </button>
+                <div class="settings-controls">
+                    <div id="phaseContainer" class="row" style="display: none;">
+                        <span id="phaseInfoDot" class="field-label w-fixed" data-tip="SCI_PHASE — click a chip to include only those phases" style="cursor: help;">Phase</span>
+                        <div id="phaseChipsContainer" class="chip-row"></div>
+                        <button id="phaseAllBtn" class="toggle-btn px-2.5 rounded" title="Show all phases">All</button>
+                    </div>
+                    <div id="navigateContainer" class="row flex-wrap" style="display: none;">
+                        <div id="profileContainer" class="field" style="display: none;">
+                            <span class="field-label w-fixed">Profile</span>
+                            <button id="profilePrevBtn" class="toggle-btn px-1 rounded" title="Previous profile">
+                                <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                            </button>
+                            <input type="number" id="profileNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Profile number (empty = all)">
+                            <button id="profileNextBtn" class="toggle-btn px-1 rounded" title="Next profile">
+                                <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                            </button>
+                            <button id="profileClearBtn" class="nav-clear" title="Show all profiles" aria-label="Show all profiles" disabled>
+                                <span class="material-symbols-outlined text-[13px]">close</span>
+                            </button>
+                            <span id="profileDirIcon" class="dir-tag" title="Direction of the selected profile"></span>
+                        </div>
+                        <div id="cycleNavSep" class="w-px self-stretch mx-0.5" style="background: var(--border); display: none;"></div>
+                        <div id="cycleContainer" class="field" style="display: none;">
+                            <span class="field-label">Cycle</span>
+                            <button id="cyclePrevBtn" class="toggle-btn px-1 rounded" title="Previous cycle">
+                                <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                            </button>
+                            <input type="number" id="cycleNumInput" class="w-12 p-1 text-[11px] text-center rounded" placeholder="All" title="Cycle number (empty = all)">
+                            <button id="cycleNextBtn" class="toggle-btn px-1 rounded" title="Next cycle">
+                                <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                            </button>
+                            <button id="cycleClearBtn" class="nav-clear" title="Show all cycles" aria-label="Show all cycles" disabled>
+                                <span class="material-symbols-outlined text-[13px]">close</span>
+                            </button>
+                        </div>
+                        <!-- Direction buttons: icon-only (JS-conditional) -->
+                        <div id="dirContainer" class="field" style="display: none;">
+                            <span class="field-label w-fixed">Direction</span>
+                            <button class="dir-btn toggle-btn active px-1.5 rounded" data-dir="-1" title="Upcast — glider ascending, pressure decreasing (PROFILE_DIRECTION = -1)">
+                                <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+                            </button>
+                            <button class="dir-btn toggle-btn active px-1.5 rounded" data-dir="1" title="Downcast — glider descending, pressure increasing (PROFILE_DIRECTION = 1)">
+                                <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+                            </button>
+                            <button class="dir-btn toggle-btn active px-1.5 rounded" data-dir="0" title="Transect — horizontal propulsion">
+                                <span class="material-symbols-outlined text-[14px]">swap_horiz</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
             </div>
@@ -1769,6 +1901,7 @@
         const customTooltip = document.getElementById('customTooltip');
         
         const presetContainer = document.getElementById('presetContainer');
+        const presetGroups = {};    // grouped-preset chips, filled by renderPresetsDropdown()
 
         const inspectorContainer = document.getElementById('inspectorContainer');
         const mapEmptyText = document.getElementById('mapEmptyText'), resetInspectorBtn = document.getElementById('resetInspectorBtn');
@@ -1781,7 +1914,7 @@
 
         (function buildCmapMenu() {
             const menu = document.getElementById('cmapMenu');
-            const btnClass = 'cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded outline-none focus:ring-2 ring-blue';
+            const btnClass = 'cmap-option block w-[calc(100%-8px)] h-5 mx-1 my-0.5 cursor-pointer border-none rounded';
             const addBtn = (val, bg, title) => {
                 const b = document.createElement('button');
                 b.className = btnClass;
@@ -1918,8 +2051,6 @@
 
         // True while a multi-plot view loads its panels; alignment is suppressed until it clears
         // (avoids a refresh cascade and blowing the WebGL-context cap).
-        let _bulkLoading = false;
-        let _bulkLoadTimer = null;
 
         // A panel whose x axis is time, so aligning its x range to others is meaningful.
         function isTimeAxisVar(name) {
@@ -1965,10 +2096,11 @@
 
         // Drive timeseries plots to an explicit x range; plots sharing the master's y var also get the y range.
         // Echoed plotZoomed events are flagged so they don't re-trigger alignment.
-        function driveAlignX(targets, xRange, masterYVar, yRange) {
+        function driveAlignX(targets, xRange, masterYVar, yRange, isUnion) {
             targets.forEach(p => {
                 if (!p.iframe || !p.iframe.contentWindow) return;
                 const limits = { xMin: xRange.xMin, xMax: xRange.xMax };
+                if (isUnion) limits.union = true;   // the plot keeps this as its zoom-out reset range
                 if (yRange && masterYVar && panelYVar(p) === masterYVar) {
                     limits.yMin = yRange.yMin; limits.yMax = yRange.yMax;
                 }
@@ -1981,6 +2113,31 @@
             if (!xRange) { applyUnionRange(); return; }
             driveAlignX(timeseriesPanels().filter(p => !master || p.id !== master.id),
                         xRange, panelYVar(master), yRange);
+        }
+
+        // Plottable TIME extent of the shown file (ms), from /api/dataset_info; null until known.
+        let datasetTimeExtent = null;
+
+        // Last union range applied, per dataset + profile/cycle filter: the exact range a re-render of the
+        // same selection will settle on (the file's TIME extent is only an estimate — plots can end earlier).
+        const _unionMemo = {};
+        const alignKey = (st) => `${st.datasetId || ''}|${JSON.stringify(st.cycleProfile || {})}`;
+
+        // The x range a synced timeseries plot will end up on once every panel has loaded: the active zoom,
+        // else the selected profile/cycle's window, else the file's time extent (padded like unionTimeRange).
+        // Handed to the plot in its URL so it draws aligned from the first frame instead of loading in place
+        // and then being moved by the union. Sync off, or a lone plot: null (own extent, as before).
+        function expectedXRange(panel) {
+            if (!alignTimeAxes || !isTimeseriesPanel(panel) || timeseriesPanels().length < 2) return null;
+            const m = activeAlignRange();
+            if (m) return m.xRange;
+            const memo = _unionMemo[alignKey(panel.state)];
+            if (memo) return memo;
+            const sel = CycleProfile.getSelectedTimeRange && CycleProfile.getSelectedTimeRange();
+            const ext = sel || (datasetTimeExtent && [datasetTimeExtent.min, datasetTimeExtent.max]);
+            if (!ext || !(ext[1] > ext[0])) return null;
+            const pad = (ext[1] - ext[0]) * 0.015;
+            return { xMin: ext[0] - pad, xMax: ext[1] + pad };
         }
 
         // Union of every loaded timeseries plot's time extent; null until one is known.
@@ -2004,8 +2161,14 @@
             _unionTimer = setTimeout(() => {
                 const ts = timeseriesPanels();
                 if (ts.length < 2) return;
+                // Any panel still loading (a view being built, a profile stepped faster than plots draw)
+                // means an extent is about to change: wait, its plotLoaded re-applies the union. This is the
+                // only settling mechanism, so every view gets the same alignment regardless of load order.
+                if (ts.some(p => p._loading)) return;
                 const range = unionTimeRange();
-                if (range) driveAlignX(ts, range);
+                if (!range) return;
+                _unionMemo[alignKey(ts[0].state)] = range;
+                driveAlignX(ts, range, null, null, true);
             }, 60);
         }
 
@@ -2023,7 +2186,6 @@
 
         // A plot just loaded: with sync on, fit it to the active zoom, else re-apply the union.
         function syncOnPlotLoad(panel) {
-            if (_bulkLoading) return;   // wait until the staggered batch has settled
             if (!alignTimeAxes || !isTimeseriesPanel(panel)) return;
             if (timeseriesPanels().length < 2) return;
             const m = activeAlignRange();
@@ -2033,7 +2195,6 @@
 
         // A real user zoom: this plot becomes the master. The caller has already filtered `driven` echoes.
         function maybeAlign(srcPanel, limits) {
-            if (_bulkLoading) return;   // ignore load-time zoom echoes during a staggered batch
             if (!alignTimeAxes || !isTimeseriesPanel(srcPanel)) return;
             alignMasterId = srcPanel.id;
             const xRange = (limits && limits.xMin !== undefined && limits.xMin !== 'auto' && limits.xMin !== null)
@@ -2118,7 +2279,16 @@
                 cMin: baseCMin, cMax: baseCMax,
                 // The user's trimmed colour range, so the slider restores per panel.
                 cTrimMin: cTrimMinInput.value, cTrimMax: cTrimMaxInput.value,
+                lines: currentLines,
             };
+        }
+        // Resolved variable names for a `lines` preset (candidates the file lacks are dropped), or null.
+        let currentLines = null;
+        function resolveLines(p) {
+            if (!p || !p.lines) return null;
+            const have = (v) => variableCache.some(vc => vc.name === v);
+            const out = p.lines.map(cands => cands.map(v => have(v + '_ADJUSTED') ? v + '_ADJUSTED' : have(v) ? v : '').find(Boolean)).filter(Boolean);
+            return out.length ? out : null;
         }
 
         // Push a panel's stored state into the toolbar without firing change handlers (_suspendToolbar).
@@ -2129,6 +2299,7 @@
                 if (s.x !== undefined) xSelect.value = s.x;
                 if (s.y !== undefined) ySelect.value = s.y;
                 if (s.c !== undefined) cVarSelect.value = s.c;
+                currentLines = s.lines || null;
                 if (s.cmap) { cmapInput.value = s.cmap; if (typeof updateCmapGradient === 'function') updateCmapGradient(s.cmap); }
                 updateToggleBtn(invertYBtn, !!s.invertY);
                 if (s.qcFlags !== undefined) { qcFlagsInput.value = s.qcFlags; syncQcChips(); }
@@ -2173,6 +2344,7 @@
                 size_mode: s.drawOrderSize || defaultDrawOrderSize(s.drawOrder || 'normal'),
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
+            if (s.lines && s.lines.length) params.set('lines', s.lines.join(','));
             if (s.zoomBounds) {
                 params.set('zXmin', s.zoomBounds.xMin); params.set('zXmax', s.zoomBounds.xMax);
                 params.set('zYmin', s.zoomBounds.yMin); params.set('zYmax', s.zoomBounds.yMax);
@@ -2189,7 +2361,7 @@
             if (!panel) return;
             if (panel.type === 'plot') {
                 const s = panel.state;
-                if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; panel._frameReady = false; return; }
+                if (!s.datasetId || !s.x) { panel.iframe.classList.add('hidden'); panel.iframe.src = ''; panel._frameReady = false; panel._loading = false; return; }
                 panel.iframe.classList.remove('hidden');
                 const multiview = plotPanelCount() > 1 ? 1 : 0;
                 // Pass click time (_gpt0) and src-set time (_gpt1); use the click only if fresh (<2s), else now.
@@ -2198,7 +2370,13 @@
                 const nPlots = plotPanelCount();
                 // Auto point budget: smaller on the Pi, which can't draw/ship much over 60k.
                 const POINT_BUDGET = isServerMode ? 60000 : 100000;
-                let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}`;
+                // Render generation: echoed back in plotLoaded/plotError so a superseded load (profile spam)
+                // can't feed stale extents into the synced union range.
+                panel._loadSeq = (panel._loadSeq || 0) + 1;
+                panel._loading = true;
+                let params = `${buildPlotParams(s)}&theme=${getCurrentTheme()}&multiview=${multiview}&_seq=${panel._loadSeq}`;
+                const xr = expectedXRange(panel);
+                if (xr) params += `&xr0=${xr.xMin}&xr1=${xr.xMax}`;
                 // The budget is split across open plot panels (same-origin iframes draw serially on one thread).
                 // 'full' sends a sentinel so the server skips decimation.
                 if (s.quality === 'full') {
@@ -2236,7 +2414,7 @@
         function blankPlotFrame(iframeEl) {
             if (!iframeEl) return;
             const owner = Object.values(panels).find(p => p.iframe === iframeEl);
-            if (owner) owner._frameReady = false;
+            if (owner) { owner._frameReady = false; owner._loading = false; }
             iframeEl.src = '';
         }
 
@@ -2574,7 +2752,8 @@
             const p = OceanPresets[key];
             if (!p) return false;
             const isVal = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            return p.x.some(isVal) && p.y.some(isVal) && p.c.some(isVal);
+            if (p.lines) return p.x.some(isVal) && p.lines.some(cands => cands.some(isVal));   // any one line is enough
+            return p.x.some(isVal) && p.y.some(isVal) && (p.c.length === 0 || p.c.some(isVal));
         }
 
         // State for a new panel. New plots pick the next preset not already on screen.
@@ -2935,6 +3114,24 @@
             _shareToastTimer = setTimeout(() => el.classList.remove('show'), 2200);
         }
 
+        // Toast with an optional action button (e.g. Undo); stays longer than the plain one.
+        function showActionToast(message, action) {
+            const el = document.getElementById('shareToast');
+            if (!el) return;
+            el.className = 'ok' + (action ? ' has-action' : '');
+            el.innerHTML = `<span class="material-symbols-outlined">swap_horiz</span>${escapeHtmlSafe(message)}`;
+            if (action) {
+                const b = document.createElement('button');
+                b.type = 'button'; b.className = 'toast-action'; b.textContent = action.label;
+                b.addEventListener('click', () => { el.classList.remove('show'); action.run(); });
+                el.appendChild(b);
+            }
+            void el.offsetWidth;
+            el.classList.add('show');
+            clearTimeout(_shareToastTimer);
+            _shareToastTimer = setTimeout(() => el.classList.remove('show'), action ? 6000 : 2200);
+        }
+
         async function shareCurrentView() {
             const ok = await copyToClipboard(buildShareUrl());
             showShareToast(ok ? 'Link copied to clipboard' : 'Could not copy link', ok);
@@ -3095,6 +3292,9 @@
                     customColour: named ? null : (p.colour || '#9ca3af'),
                     x: names(p.x), y: names(p.y), c: names(p.c),
                     cmap: p.cmap || 'thermal', invert: !!p.invert_y,
+                    group: p.group || null,
+                    // `lines`: several y variables (each a candidate list) drawn as lines on one plot; y is the axis title's variable.
+                    lines: Array.isArray(p.lines) ? p.lines.map(names) : null,
                 };
                 if (p.draw_order) out[key].drawOrder = p.draw_order;
             }
@@ -3144,6 +3344,7 @@
             // Force a reflow, then re-enable transitions next frame.
             void root.offsetWidth;
             requestAnimationFrame(() => root.classList.remove('theme-switching'));
+            requestAnimationFrame(redrawVarPlots);   // open variable previews take the new ink
             if (persist) setCookie(COOKIE_THEME, t);
             const icon = document.getElementById('themeToggleIcon');
             if (icon) icon.textContent = t === 'light' ? 'dark_mode' : 'light_mode';
@@ -3178,6 +3379,10 @@
             const settingsToggle = document.getElementById('settingsToggle');
             const settingsToggleIcon = document.getElementById('settingsToggleIcon');
             if (settingsToggle) {
+                document.getElementById('settingsRow').addEventListener('keydown', (e) => {
+                    if (e.key !== 'Escape') return;
+                    e.stopPropagation(); settingsToggle.click(); settingsToggle.focus();
+                });
                 settingsToggle.addEventListener('click', () => {
                     const isOpen = !document.documentElement.hasAttribute('data-settings-open');
                     document.documentElement.toggleAttribute('data-settings-open', isOpen);
@@ -3251,7 +3456,12 @@
 
             // A grey context track was clicked: make it the active dataset (selectFile posts setActive back).
             if (msg.type === 'requestActivate') {
-                if (msg.id && msg.id !== datasetSelect.value) selectFile(msg.id);
+                if (msg.id && msg.id !== datasetSelect.value) {
+                    const prevId = datasetSelect.value;
+                    selectFile(msg.id);
+                    const rec = fileById(msg.id);
+                    showActionToast(`Switched to ${rec ? rec.name : msg.id}`, prevId ? { label: 'Undo', run: () => selectFile(prevId) } : null);
+                }
                 return;
             }
 
@@ -3273,6 +3483,14 @@
 
             // Route plot messages to their owning panel.
             const srcPanel = panelByWindow(event.source);
+
+            // A load from a superseded render (its seq is behind the panel's): the live render will report
+            // in its own time, so drop this one entirely.
+            if (srcPanel && (msg.type === 'plotLoaded' || msg.type === 'plotError')) {
+                const seq = Number(msg.seq);
+                if (msg.seq != null && isFinite(seq) && srcPanel._loadSeq && seq < srcPanel._loadSeq) return;
+                srcPanel._loading = false;
+            }
 
             // First successful draw: this iframe is warm and can be re-driven via 'replot'.
             if (srcPanel && msg.type === 'plotLoaded') {
@@ -3438,7 +3656,6 @@
                     <p class="text-sm font-medium text-gray-800">${msg.message}</p>
                     <p class="text-xs text-gray-500 mt-1">Try adjusting variables, disabling filters, or changing QC settings.</p>
                 `;
-                downloadBtn.disabled = true;
                 setColourRail(false);
                 plotStatsContainer.classList.add('hidden');
             }
@@ -3511,6 +3728,8 @@
             const currentInvert = invertYBtn.classList.contains('active');
 
             for (const [key, p] of Object.entries(OceanPresets)) {
+                if (!!p.lines !== !!currentLines) continue;
+                if (p.lines) { if (p.x.includes(currentX)) return key; continue; }
                 const matchX = p.x.includes(currentX);
                 const matchY = p.y.includes(currentY);
                 const matchC = p.c.includes(currentC) || (!currentC && p.c.length === 0);
@@ -3539,14 +3758,38 @@
 
         }
 
+        // A preset's `group` (plot_presets.json) folds it into one chip that opens a menu on hover / focus / click.
+        function presetGroupHost(name) {
+            if (presetGroups[name]) return presetGroups[name].menu;
+            const wrap = document.createElement('div'); wrap.className = 'preset-group';
+            const trig = document.createElement('button');
+            trig.type = 'button'; trig.className = 'preset-btn preset-group-btn';
+            trig.setAttribute('aria-haspopup', 'true'); trig.setAttribute('aria-expanded', 'false');
+            const menu = document.createElement('div'); menu.className = 'preset-menu'; menu.setAttribute('role', 'menu');
+            wrap.append(trig, menu); presetContainer.appendChild(wrap);
+            // Hover opens for a look; a click pins it open like a normal dropdown until a pick, a second click, Escape or a click elsewhere.
+            let pinned = false, t = null;
+            const setOpen = on => { if (!on) pinned = false; wrap.classList.toggle('open', on); trig.setAttribute('aria-expanded', on); };
+            wrap.addEventListener('mouseenter', () => { clearTimeout(t); setOpen(true); });
+            wrap.addEventListener('mouseleave', () => { if (!pinned) t = setTimeout(() => { if (!pinned) setOpen(false); }, 150); });
+            trig.addEventListener('click', () => { if (pinned) setOpen(false); else { setOpen(true); pinned = true; } });
+            document.addEventListener('click', e => { if (pinned && !wrap.contains(e.target)) setOpen(false); });
+            wrap.addEventListener('focusout', e => { if (!pinned && !wrap.contains(e.relatedTarget)) setOpen(false); });
+            wrap.addEventListener('keydown', e => { if (e.key === 'Escape') { setOpen(false); trig.focus(); } });
+            menu.addEventListener('click', () => setOpen(false));
+            presetGroups[name] = { wrap, trig, menu };
+            return menu;
+        }
         function renderPresetsDropdown() {
             presetContainer.innerHTML = '';
+            for (const k of Object.keys(presetGroups)) delete presetGroups[k];
 
             Object.entries(OceanPresets).forEach(([key, p]) => {
                 const btn = document.createElement('button');
-                btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none outline-none whitespace-nowrap ${p.bg} ${p.textCol}`;
+                btn.className = `preset-btn flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-medium border-none whitespace-nowrap ${p.bg} ${p.textCol}`;
                 btn.innerHTML = `<span class="material-symbols-outlined text-[14px]">${p.icon}</span> <span class="preset-text">${p.text}</span>`;
                 btn.dataset.preset = key;
+                btn.setAttribute('aria-label', `${p.text} plot preset`);
                 if (p.customColour) btn.style.setProperty('--pc', p.customColour);
                 
                 btn.addEventListener('click', () => {
@@ -3563,16 +3806,29 @@
                     updatePlot();
                 });
                 
-                presetContainer.appendChild(btn);
+                (p.group ? presetGroupHost(p.group) : presetContainer).appendChild(btn);
             });
             updatePresetUI();
         }
 
         function updatePresetUI() {
-            Array.from(presetContainer.children).forEach(btn => {
-                if (btn.dataset.preset === currentPreset) btn.classList.add('active');
-                else btn.classList.remove('active');
+            const isOn = key => key === currentPreset;
+            presetContainer.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
+                const on = isOn(btn.dataset.preset);
+                btn.classList.toggle('active', on);
+                btn.setAttribute('aria-pressed', on);
             });
+            // A group's chip keeps its name; when a member is the active plot it gets a border in that member's colour.
+            for (const [name, g] of Object.entries(presetGroups)) {
+                const members = Array.from(g.menu.querySelectorAll('.preset-btn[data-preset]'));
+                const src = members.find(b => isOn(b.dataset.preset)) || null;
+                g.trig.className = 'preset-btn preset-group-btn preset-group-plain';
+                g.trig.classList.toggle('active', !!src);
+                g.trig.style.borderColor = src ? getComputedStyle(src).color : '';
+                if (!g.trig.innerHTML) g.trig.innerHTML = `<span class="preset-text">${name}</span><span class="material-symbols-outlined text-[14px] preset-caret">expand_more</span>`;
+                g.trig.setAttribute('aria-label', `${name} presets${src ? `, current: ${src.querySelector('.preset-text')?.textContent}` : ''}`);
+                g.trig.disabled = members.length > 0 && members.every(b => b.disabled);
+            }
         }
 
         // Resolve a preset into a panel state object, inheriting QC settings from the toolbar.
@@ -3589,6 +3845,8 @@
                 return '';
             };
             s.x = findBest(p.x); s.y = findBest(p.y); s.c = findBest(p.c);
+            s.lines = resolveLines(p);
+            if (s.lines && !s.y) s.y = s.lines[0];
             s.cmap = p.cmap; s.invertY = p.invert; s.preset = presetKey;
             s.drawOrder = p.drawOrder || 'normal';
             s.drawOrderSize = p.drawOrderSize || defaultDrawOrderSize(s.drawOrder);
@@ -3867,9 +4125,6 @@
             _viewKind = 'dashboard'; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
 
-            // Suppress time-axis alignment while the batch loads; cleared once settled.
-            _bulkLoading = true;
-            clearTimeout(_bulkLoadTimer);
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
@@ -3877,7 +4132,6 @@
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);   // runs after the iframes have a src, so placeholders clear
             markViewApplied();
-            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
         // Bio-optics: temperature, chlorophyll and backscatter each twice (smallest / largest first), then PAR.
@@ -3908,16 +4162,12 @@
             _viewKind = 'biooptics'; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
 
-            // Suppress time-axis alignment while the batch loads (see applyDashboard).
-            _bulkLoading = true;
-            clearTimeout(_bulkLoadTimer);
             renderLayout();
             plotIds.forEach(id => renderPanel(panels[id]));
             if (!keepMap) renderPanel(map);
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
             markViewApplied();
-            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
         // Copernicus overlay per Duo globe (by panel id), reapplied on mapReady. Cleared for non-Duo views.
@@ -3961,8 +4211,6 @@
             plotIframe = bbp.iframe;
             activePlotPanelId = bbp.id;
 
-            _bulkLoading = true;
-            clearTimeout(_bulkLoadTimer);
             renderLayout();
             renderPanel(bbp);
             renderPanel(sal);
@@ -3978,7 +4226,6 @@
             if (keepMap) applyDuoOverlay(topMap, 'chla');
             if (keepMap2) applyDuoOverlay(bottomMap, 'currents');
 
-            _bulkLoadTimer = setTimeout(() => { _bulkLoading = false; }, 1500);
         }
 
         // "Map" preset: globe + 3D, no plot; the colour rail greys out.
@@ -4062,7 +4309,6 @@
             plotIframe?.classList.add('hidden');
             emptyState.classList.remove('hidden');
             emptyState.innerHTML = `<span class="material-symbols-outlined" style="font-size: 40px;">query_stats</span><p class="text-sm">Select variables to Plot</p>`;
-            downloadBtn.disabled = true;
 
             if (fullReset) {
                 setColourRail(false);
@@ -4220,7 +4466,7 @@
             const match = cmapOptions.find(b => b.dataset.val === cmapVal);
             if (match) {
                 cmapTrigger.style.background = match.style.background;
-                cmapTrigger.setAttribute('aria-label', 'Colour palette: ' + match.title);
+                cmapTrigger.setAttribute('aria-label', `Colour palette, currently ${match.title}. Opens a list of palettes`);
                 const bg = match.style.background.replace('to right', 'to top');
                 
                 const gradEl = document.getElementById('cTrimGradient');
@@ -4831,10 +5077,113 @@
             `;
         }
 
+        // Click a variable in the Variables list to show it against TIME (coloured by its _QC if the
+        // file has one); click again to hide. A static canvas sketch, fetched once per row.
+        const VAR_PLOT_FLAG_COLOURS = {
+            0: '#9aa5ad', 1: '#1f6fd6', 2: '#7fb2e5', 3: '#e8912b', 4: '#d6392f',
+            5: '#9aa5ad', 6: '#9aa5ad', 7: '#9aa5ad', 8: '#17b6c4', 9: '#111111',
+        };
+        const VAR_PLOT_FLAG_MEANINGS = { 0: 'no QC', 1: 'good', 2: 'prob good', 3: 'prob bad', 4: 'bad', 5: 'changed', 8: 'interp', 9: 'missing' };
+        const _utcMs = str => new Date(String(str).replace(' ', 'T') + 'Z').getTime();
+        function drawVarPlot(canvas, name, d) {
+            const ink = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#8b95a1';
+            const W = canvas.clientWidth || 300, H = 150, dpr = window.devicePixelRatio || 1;
+            canvas.width = W * dpr; canvas.height = H * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            ctx.clearRect(0, 0, W, H);
+            const xs = d.x_is_time ? d.x.map(_utcMs) : d.x;
+            const ys = d.y_is_time ? d.y.map(_utcMs) : d.y;
+            let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+            for (let i = 0; i < xs.length; i++) {
+                if (xs[i] < x0) x0 = xs[i]; if (xs[i] > x1) x1 = xs[i];
+                if (ys[i] < y0) y0 = ys[i]; if (ys[i] > y1) y1 = ys[i];
+            }
+            if (!isFinite(x0) || !isFinite(y0)) return;
+            if (x1 === x0) x1 = x0 + 1;
+            if (y1 === y0) { y0 -= 1; y1 += 1; }
+            const flip = /^(PRES|DEPTH)/.test(name);
+            const L = 6, R = 6, T = 14, B = 16;
+            const px = x => L + (x - x0) / (x1 - x0) * (W - L - R);
+            const py = y => { const f = (y - y0) / (y1 - y0); return T + (flip ? f : 1 - f) * (H - T - B); };
+            // Axes.
+            ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+            ctx.beginPath(); ctx.moveTo(L, T); ctx.lineTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
+            ctx.globalAlpha = 0.7;
+            const flags = d.flags;
+            for (let i = 0; i < xs.length; i++) {
+                ctx.fillStyle = flags ? (VAR_PLOT_FLAG_COLOURS[flags[i]] || '#9aa5ad') : '#0984e3';
+                ctx.fillRect(px(xs[i]) - 1, py(ys[i]) - 1, 2, 2);
+            }
+            // Extents as labels: y range on the left, x range along the bottom.
+            ctx.globalAlpha = 1; ctx.fillStyle = ink; ctx.font = '9px sans-serif';
+            const fmtY = v => d.y_is_time ? new Date(v).toISOString().slice(0, 10) : Number(v).toPrecision(4).replace(/\.?0+$/, '');
+            const fmtX = v => d.x_is_time ? new Date(v).toISOString().slice(0, 16).replace('T', ' ') : String(v);
+            ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+            ctx.fillText(fmtY(flip ? y0 : y1), L + 3, T - 1);
+            ctx.textBaseline = 'top';
+            ctx.fillText(fmtY(flip ? y1 : y0), L + 3, H - B - 10);
+            ctx.fillText(fmtX(x0), L, H - B + 3);
+            ctx.textAlign = 'right';
+            ctx.fillText(fmtX(x1), W - R, H - B + 3);
+            if (flags) {   // legend: flags present, top right
+                const present = [...new Set(flags)].sort((a, b) => a - b);
+                let x = W - R;
+                present.slice().reverse().forEach(f => {
+                    const label = VAR_PLOT_FLAG_MEANINGS[f] ? `${f} ${VAR_PLOT_FLAG_MEANINGS[f]}` : String(f);
+                    ctx.textBaseline = 'bottom'; ctx.fillStyle = ink;
+                    ctx.fillText(label, x, T - 1);
+                    x -= ctx.measureText(label).width + 4;
+                    ctx.fillStyle = VAR_PLOT_FLAG_COLOURS[f] || '#9aa5ad';
+                    ctx.fillRect(x - 6, T - 9, 6, 6);
+                    x -= 12;
+                });
+            }
+        }
+        function toggleVarPlot(row, name) {
+            let host = row.querySelector('.var-plot');
+            if (host) {
+                host.classList.toggle('hidden');
+                row.classList.toggle('var-open', !host.classList.contains('hidden'));
+                return;
+            }
+            const fileId = datasetSelect.value;
+            if (!fileId) return;
+            host = document.createElement('div');
+            host.className = 'var-plot';
+            host.textContent = 'Plotting…';
+            row.appendChild(host);
+            row.classList.add('var-open');
+            fetch(`/api/var_plot?id=${encodeURIComponent(fileId)}&var=${encodeURIComponent(name)}`)
+                .then(async r => {
+                    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Could not plot.');
+                    return r.json();
+                })
+                .then(d => {
+                    if (d.value !== undefined) { host.textContent = d.value; return; }
+                    const fmt = n => n.toLocaleString();
+                    const shown = d.n_shown < d.n_valid ? ` (${fmt(d.n_shown)} shown)` : '';
+                    const units = fmtUnits(d.units);
+                    host.innerHTML = `<canvas class="var-plot-chart"></canvas><div class="var-plot-note">${fmt(d.n_valid)} points${shown}${units ? ` · ${escapeHtmlText(units)}` : ''}${d.x_is_time ? ' · vs TIME' : ' · vs index'}</div>`;
+                    const canvas = host.firstElementChild;
+                    canvas._varPlot = { name, d };
+                    drawVarPlot(canvas, name, d);
+                })
+                .catch(e => { host.textContent = e.message; });
+        }
+        const escapeHtmlText = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Redraw open previews (theme switch, panel resize).
+        function redrawVarPlots() {
+            document.querySelectorAll('canvas.var-plot-chart').forEach(c => { if (c._varPlot) drawVarPlot(c, c._varPlot.name, c._varPlot.d); });
+        }
+        window.addEventListener('resize', redrawVarPlots);
+
         async function loadDatasetInfo(fileId) {
             try {
                 const res = await fetch(`/api/dataset_info?id=${encodeURIComponent(fileId)}`);
                 const data = await res.json();
+                datasetTimeExtent = (data.time_min && data.time_max)
+                    ? { min: Date.parse(data.time_min), max: Date.parse(data.time_max) } : null;
 
                 const varRows = document.getElementById('varRows');
                 const attrRows = document.getElementById('attrRows');
@@ -4856,7 +5205,7 @@
                     const row = document.createElement('div');
                     const isQc = v.name.endsWith('_QC');
                     row.className = 'var-row' + (isQc ? ' is-qc' : '');
-                    const units = (v.units || '').trim();
+                    const units = fmtUnits(v.units);
                     const desc = (v.description || '').trim();
                     const tw = v.time_warning;
                     const twTip = tw
@@ -4866,7 +5215,7 @@
                         <div class="var-head">
                             <span class="var-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
                             <div class="var-tags">
-                                ${units && units.toLowerCase() !== 'no units' ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
+                                ${units ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
                                 ${v.derived ? `<span class="var-derived" title="Calculated by Glider Playground — not present in the original file">derived</span>` : ''}
                                 ${tw ? `<span class="var-time-warning" title="${escapeHtml(twTip)}">${tw.dropped} dropped</span>` : ''}
                             </div>
@@ -4877,8 +5226,10 @@
                         row.setAttribute('data-tip', desc + (units ? `  ·  ${units}` : ''));
                     }
                     // Searchable haystack: name, units and description.
-                    row.dataset.search = `${v.name} ${units} ${desc} ${v.derived ? 'derived' : ''}`.toLowerCase();
+                    row.dataset.search = `${v.name} ${units} ${v.units || ''} ${desc} ${v.derived ? 'derived' : ''}`.toLowerCase();
                     row.dataset.name = v.name;
+                    row.classList.add('var-plottable');
+                    row.addEventListener('click', () => toggleVarPlot(row, v.name));
                     varRows.appendChild(row);
                 });
 
@@ -4946,6 +5297,7 @@
             if (!p) return;
 
             const findBest = (arr) => {
+                if (!arr.length) return '';
                 for (let v of arr) {
                     const adj = v + '_ADJUSTED';
                     if (variableCache.some(vc => vc.name === adj)) return adj;
@@ -4957,6 +5309,8 @@
             xSelect.value = findBest(p.x);
             ySelect.value = findBest(p.y);
             cVarSelect.value = findBest(p.c);
+            currentLines = resolveLines(p);
+            if (currentLines && !variableCache.some(vc => vc.name === ySelect.value)) ySelect.value = currentLines[0];
             
             cmapInput.value = p.cmap;
             updateCmapGradient(p.cmap);
@@ -5014,11 +5368,7 @@
             const isValidKey = (k) => validPresets.has(k);
 
             Object.entries(OceanPresets).forEach(([key, p]) => {
-                const hasX = p.x.some(v => isValid(v));
-                const hasY = p.y.some(v => isValid(v));
-                const hasC = p.c.some(v => isValid(v));
-                
-                const isValidPreset = hasX && hasY && hasC;
+                const isValidPreset = presetAvailable(key);
                 
                 const btn = presetContainer.querySelector(`[data-preset="${key}"]`);
                 if (btn) btn.disabled = !isValidPreset;
@@ -5107,12 +5457,14 @@
             scheduleSaveLayout();
         });
         cVarSelect.addEventListener('change', () => {
+            currentLines = null;
             checkAndUpdatePreset();
             resetPlotState(false); 
             updatePlot(); 
         });
 
         xSelect.addEventListener('change', () => { 
+            currentLines = null;
             checkAndUpdatePreset();
             resetPlotState(true);
             const xInfo = variableCache.find(v => v.name === xSelect.value);
@@ -5121,6 +5473,7 @@
         });
         
         ySelect.addEventListener('change', () => { 
+            currentLines = null;
             checkAndUpdatePreset();
             resetPlotState(true);
             updateToggleBtn(invertYBtn, (PRESET_VIEWS.invert_y_vars || []).includes(ySelect.value.toUpperCase().replace(/_ADJUSTED$/, '')));
@@ -5136,10 +5489,100 @@
             updatePlot();
         });
 
-        downloadBtn.addEventListener('click', () => {
-            if (plotIframe && plotIframe.contentWindow) {
-                plotIframe.contentWindow.postMessage({ type: 'downloadPlot' }, '*');
+        // ---- Download: one high-res PNG of the whole workspace ----
+        // Each iframe panel renders itself (js/snapshot.js), DOM panels are drawn here; the tiles are laid out
+        // exactly as on screen, on the app background, with the panel chrome (headers, +, dividers) left out.
+        const SNAP_SCALE = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+        let _snapSeq = 0, _snapBusy = false;
+        function snapshotFrame(iframe, scale) {
+            return new Promise(resolve => {
+                if (!iframe || !iframe.contentWindow || !iframe.getAttribute('src') || iframe.classList.contains('hidden')) return resolve(null);
+                const id = 'snap' + (++_snapSeq);
+                const done = r => { window.removeEventListener('message', onMsg); clearTimeout(t); resolve(r); };
+                const onMsg = e => { const m = e.data; if (m && m.type === 'snapshotResult' && m.id === id) done(m.dataUrl || null); };
+                const t = setTimeout(() => done(null), 20000);
+                window.addEventListener('message', onMsg);
+                iframe.contentWindow.postMessage({ type: 'snapshot', id, scale }, '*');
+            });
+        }
+        const loadSnapImage = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+        const missionOpen = () => document.documentElement.classList.contains('gp-mission') && document.getElementById('missionFrame');
+
+        async function snapshotWorkspace(scale) {
+            if (missionOpen()) {
+                const url = await snapshotFrame(document.getElementById('missionFrame'), scale);
+                if (!url) throw new Error('The mission view did not answer');
+                return url;
             }
+            const host = panelHost, hr = host.getBoundingClientRect();
+            const leaves = treeLeafIds(layoutTree, []).map(id => panels[id]).filter(Boolean);
+            if (!leaves.length) throw new Error('Nothing to snapshot yet');
+            const out = document.createElement('canvas');
+            out.width = Math.round(hr.width * scale); out.height = Math.round(hr.height * scale);
+            const ctx = out.getContext('2d'); ctx.scale(scale, scale);
+            const rootStyle = getComputedStyle(document.documentElement);
+            ctx.fillStyle = rootStyle.getPropertyValue('--bg-app').trim() || '#fff';
+            ctx.fillRect(0, 0, hr.width, hr.height);
+            const tiles = await Promise.all(leaves.map(async p => {
+                const r = gpSnapshot.rectIn(p.body, host);
+                let img = null;
+                try {
+                    if (p.iframe) { const url = await snapshotFrame(p.iframe, scale); if (url) img = await loadSnapImage(url); }
+                    else if (p.hostedEl) img = await gpSnapshot.capture(p.hostedEl, { scale, hide: '.gp-resize-veil,input,button' });
+                } catch (e) { console.warn('snapshot panel', p.id, e); }
+                return { r, img };
+            }));
+            const radius = parseFloat(getComputedStyle(leaves[0].body).borderRadius) || 0;
+            for (const { r, img } of tiles) {
+                ctx.save();
+                ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, radius); ctx.clip();
+                ctx.fillStyle = rootStyle.getPropertyValue('--plot-bg').trim() || '#fff';
+                ctx.fillRect(r.x, r.y, r.w, r.h);
+                if (img) ctx.drawImage(img, r.x, r.y, r.w, r.h);
+                ctx.restore();
+            }
+            return out.toDataURL('image/png');
+        }
+
+        // <file>_<what>_<date_time>.png — "what" is the plot's axes for a lone plot, else the view (dashboard, stats…).
+        function snapshotFilename() {
+            const clean = v => String(v || '').replace(/\.nc$/i, '').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+            const d = new Date(), pad = n => String(n).padStart(2, '0');
+            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+            if (missionOpen()) {
+                const m = location.pathname.match(/^\/missions\/([^/]+)/);
+                return `mission_${clean(m ? decodeURIComponent(m[1]) : 'view')}_${stamp}.png`;
+            }
+            const opt = datasetSelect.selectedOptions && datasetSelect.selectedOptions[0];
+            const file = clean(opt ? (opt.dataset.name || opt.text) : '');
+            const leaves = treeLeafIds(layoutTree, []).map(id => panels[id]).filter(Boolean);
+            let what;
+            if (leaves.length === 1 && leaves[0].type === 'plot') {
+                const s = leaves[0].state || {};
+                what = s.x && s.y ? `${clean(s.x)}_vs_${clean(s.y)}${s.c ? '_by_' + clean(s.c) : ''}` : 'plot';
+            } else if (leaves.length === 1) {
+                what = clean((PANEL_DEFS[leaves[0].type] || {}).label).toLowerCase();
+            } else {
+                const active = viewSelector.querySelector('.view-seg-btn.active');
+                what = clean(active && active.dataset.view) || 'workspace';
+            }
+            return [file || 'glider_playground', what, stamp].filter(Boolean).join('_') + '.png';
+        }
+
+        downloadBtn.addEventListener('click', async () => {
+            if (_snapBusy) return;
+            _snapBusy = true; downloadBtn.classList.add('active');
+            showActionToast('Rendering snapshot…');
+            try {
+                const url = await snapshotWorkspace(SNAP_SCALE);
+                const name = snapshotFilename();
+                const a = document.createElement('a'); a.href = url; a.download = name;
+                document.body.appendChild(a); a.click(); a.remove();
+                showActionToast(`Saved ${name}`);
+            } catch (e) {
+                console.error('snapshot', e);
+                showActionToast(`Snapshot failed: ${e.message || e}`);
+            } finally { _snapBusy = false; downloadBtn.classList.remove('active'); }
         });
 
 
@@ -5404,7 +5847,6 @@
             emptyState.classList.add('hidden');
             demoPrompt.classList.add('hidden');
             plotIframe?.classList.add('hidden');
-            downloadBtn.disabled = true;
             processingTitle.textContent = rec.status === 'error'
                 ? 'Failed to process file'
                 : `Processing ${rec.name}…`;
@@ -5717,7 +6159,13 @@
             if (filesPanel.hidden) openFilesPanel(); else closeFilesPanel();
         });
 
-        filesPanelCloseBtn.addEventListener('click', () => closeFilesPanel());
+        filesPanelCloseBtn.addEventListener('click', () => { closeFilesPanel(); datasetTrigger.focus(); });
+        filesPanel.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            closeFilesPanel();
+            datasetTrigger.focus();
+        });
 
         document.addEventListener('click', (e) => {
             if (filesPanel.hidden) return;
@@ -5860,7 +6308,6 @@
 
                 p.iframe.classList.remove('hidden');
                 emptyState.classList.add('hidden');
-                downloadBtn.disabled = false;
                 refreshPanelPlaceholders();
 
             } catch (err) {

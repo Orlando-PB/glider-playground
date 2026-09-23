@@ -14,7 +14,7 @@ export function createTimeline(el, t0, t1, onTime, { speed: startSpeed, defaultS
     const btn = el.querySelector('.play'), icon = btn.querySelector('.icon'), scrub = el.querySelector('.scrub'), clock = el.querySelector('.clock'), speedBtn = el.querySelector('.speed');
     const speed = { value: SPEEDS.some(([x]) => x === startSpeed) ? startSpeed : defaultSpeed };
     // The speed tag steps through SPEEDS on each tap, wrapping round.
-    const showSpeed = () => { const [, short, long] = SPEEDS.find(([x]) => x === speed.value); speedBtn.textContent = short; speedBtn.title = `Playback speed: ${long.toLowerCase()} — tap for the next`; };
+    const showSpeed = () => { const [, short, long] = SPEEDS.find(([x]) => x === speed.value); speedBtn.textContent = short; speedBtn.title = `Playback speed: ${long.toLowerCase()} — tap for the next`; speedBtn.setAttribute('aria-label', `Playback speed ${long.toLowerCase()}, press for the next speed`); };
     speedBtn.addEventListener('click', () => { const k = SPEEDS.findIndex(([x]) => x === speed.value); speed.value = SPEEDS[(k + 1) % SPEEDS.length][0]; showSpeed(); if (onSpeed) onSpeed(speed.value); });
     showSpeed();
     const ICON = { play: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
@@ -24,7 +24,10 @@ export function createTimeline(el, t0, t1, onTime, { speed: startSpeed, defaultS
     const setTime = (t, fromScrub) => {
         now = Math.max(t0, Math.min(t1, t));
         if (!fromScrub) scrub.value = Math.round((now - t0) / (t1 - t0) * 1000);
-        clock.firstChild.textContent = fmt(now) + ' UTC'; clock.lastChild.textContent = fmtShort(now);
+        // Write the clock only when its text changes (playback ticks every frame; the minute doesn't).
+        const full = fmt(now) + ' UTC', short = fmtShort(now);
+        if (clock.firstChild.textContent !== full) clock.firstChild.textContent = full;
+        if (clock.lastChild.textContent !== short) clock.lastChild.textContent = short;
         onTime(now, playing);
     };
     const tick = ts => {

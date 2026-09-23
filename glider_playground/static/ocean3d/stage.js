@@ -107,5 +107,7 @@ export function createStage(canvas) {
         const target = new THREE.Vector3().fromArray(at), away = camera.position.clone().sub(controls.target).setLength(size.x * FOLLOW_DISTANCE);
         flyTo({ position: target.clone().add(away), target });
     };
-    return { scene, content, camera, beforeRender, setBackground: colour => { scene.background = new THREE.Color(colour || '#dcebf5'); }, redraw, frame, goHome, follow, onHold, setVertical };
+    // The current view drawn at `scale` device pixels per CSS pixel, as a copy of the canvas (for snapshots).
+    const snapshot = scale => gpSnapshot.threeFrame(renderer, () => renderer.render(scene, camera), scale);
+    return { scene, content, camera, beforeRender, snapshot, setBackground: colour => { scene.background = new THREE.Color(colour || '#dcebf5'); }, redraw, frame, goHome, follow, onHold, setVertical };
 }

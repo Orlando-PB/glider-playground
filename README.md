@@ -148,7 +148,7 @@ By default, presets drive the plots. Open **Settings** (top bar) to change the p
 - **Phases** — show only selected glider phases
 - **Sync time** — zooming one plot zooms all
 - **Share** — copy a link that reopens this exact view
-- **Download** — save the current plot as a PNG
+- **Download** — save a high-resolution PNG of the whole workspace (every panel as shown, without the controls)
 - **Dark theme** — toggle from the top bar
 
 ![Overview in the dark theme](glider_playground/static/readme_images/dark_theme.webp)

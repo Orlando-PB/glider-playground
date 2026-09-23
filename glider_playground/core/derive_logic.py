@@ -511,6 +511,14 @@ def _classify_profiles(df_raw, depth_col, transect_phase=_PARKING):
     out[_PROF_DERIVED_COLUMNS] = result.reindex(out.index)
     out["SCI_PHASE"] = out["SCI_PHASE"].fillna(_UNKNOWN).astype(int)
     out["CYCLE"] = out["CYCLE"].ffill().fillna(1).astype(int)
+    # Rows with no depth sample (other sensors' timestamps) sit between classified rows. Give them the
+    # profile / direction of their neighbours when both sides agree, so a profile filter keeps e.g.
+    # pitch or altitude samples; gaps between profiles stay NaN.
+    by_time = out["TIME"].sort_values(na_position="last", kind="stable").index
+    for col in ("PROFILE_NUMBER", "PROFILE_DIRECTION"):
+        s = out.loc[by_time, col]
+        f, b = s.ffill(), s.bfill()
+        out[col] = s.fillna(f.where(f == b)).reindex(out.index)
     return out
 
 

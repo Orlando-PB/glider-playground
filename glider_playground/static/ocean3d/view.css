@@ -34,27 +34,29 @@ button { border: 0; background: none; cursor: pointer; }
 
 /* Style panel: a round button that opens a flat card of rows upwards; the header stays at the bottom. */
 #corner { position: fixed; right: 10px; bottom: 10px; z-index: 2; }
-#panel { border-radius: 8px; background: var(--card); box-shadow: var(--lift); box-sizing: border-box; }
-#panel summary { list-style: none; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 8px; cursor: pointer; user-select: none; color: var(--muted); }
-#panel summary:hover { background: var(--hover); color: var(--ink); }
+#panel { border-radius: 8px; background: color-mix(in srgb, var(--card) 82%, transparent); backdrop-filter: blur(4px); box-shadow: var(--lift); box-sizing: border-box; }
+#panel summary { list-style: none; display: flex; align-items: center; justify-content: center; gap: 6px; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; user-select: none; color: var(--muted); }
+#panel summary:hover { color: var(--ink); }
 #panel summary::-webkit-details-marker { display: none; }
 #panel:not([open]) summary span { display: none; }
-#panel[open] { width: 172px; max-width: calc(100vw - 20px); display: flex; flex-direction: column-reverse; }
-#panel[open] summary { border-radius: 0 0 8px 8px; box-shadow: inset 0 1px var(--line); color: var(--ink); font-weight: 500; }
-#panel[open] summary::after { content: ""; margin-left: auto; width: 5px; height: 5px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
-#options, #legend { padding: 6px; }
-#options { max-height: calc(100vh - 110px); overflow-y: auto; }
-#options .head, #legend label { display: block; margin: 8px 6px 2px; font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-#options .head:first-child { margin-top: 2px; }
+#panel[open] { width: 168px; max-width: calc(100vw - 20px); max-height: calc(100vh - 20px); padding: 6px; border-radius: 10px; display: flex; flex-direction: column-reverse; gap: 4px; }
+#panel[open] summary { width: 100%; height: auto; justify-content: flex-start; padding: 2px 4px; border-radius: 6px; color: var(--ink); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+#panel[open] summary::after { content: ""; margin-left: auto; width: 5px; height: 5px; border: solid var(--ink); border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
+#options, #legend { padding: 0; }
+#panel[open] #rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+#options { display: flex; flex-direction: column; gap: 4px; }
+#options .head, #legend label { display: block; margin: 6px 6px 0; font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#options .head:first-child { margin-top: 0; }
 /* Each option is a text row; a check on the right while on. */
-#options button { display: flex; align-items: center; gap: 6px; width: 100%; height: 24px; padding: 0 6px; border-radius: 6px; text-align: left; }
-#options button:hover { background: var(--hover); }
+#options button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 6px; text-align: left; font-size: 11px; font-weight: 600; }
+#options button:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+#options button.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 #options button svg { flex: none; color: var(--muted); }
 #options button .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #options button .sw { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 #options button.on { color: var(--accent); }
 #options button.on::after { content: ""; flex: none; width: 4px; height: 8px; margin: 0 4px 2px 0; border: solid var(--accent); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
-#legend { box-shadow: inset 0 -1px var(--line); }
+#panel #legend { padding-bottom: 4px; }
 #legend:empty { display: none; }
 #legend label { margin-top: 2px; }
 #legend select { display: block; width: 100%; height: 24px; padding: 0 4px; border: 0; border-radius: 6px; background: var(--hover); color: var(--ink); font-size: 11.5px; }

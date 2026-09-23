@@ -81,7 +81,7 @@ DATA_DIR = _resolve_data_dir()
 
 # Part of every cache key: bump when a processing change alters cached output
 # (history: OVERVIEW.md, "Cache version history").
-CACHE_VERSION = "31"
+CACHE_VERSION = "32"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -820,6 +820,30 @@ def put_plot_binary(file_id: str, params_str: str, data: bytes):
             pass
 
 
+def get_var_preview(file_id: str, var: str) -> dict:
+    """The Stats view's variable-vs-time preview, from the binary cache when it's
+    there (prewarmed for every variable at processing time), else computed and
+    stored now."""
+    key = f"varpreview:{var}"
+    raw = get_plot_binary(file_id, key)
+    if raw is not None:
+        return json.loads(raw)
+    out = plot_logic.get_var_time_series(resolve_path(file_id), var)
+    if "error" not in out:
+        put_plot_binary(file_id, key, json.dumps(out, separators=(",", ":")).encode())
+    return out
+
+
+def _prewarm_var_previews(rec: dict):
+    for v in rec.get("variables") or []:
+        if _is_removed(rec):
+            return
+        try:
+            get_var_preview(rec["id"], v["name"])
+        except Exception:
+            pass
+
+
 def clear_plot_binary(file_id: str):
     """Drop a file's cached plot payloads (on reprocess / removal). The disk dir
     is keyed by file_id; the RAM tier isn't file-indexed, so on these rare events
@@ -1116,6 +1140,7 @@ def _process(file_id: str):
         if not _is_done(STEP_PLOT_PREWARM) and not _is_removed(rec):
             try:
                 _prewarm_default_plots(rec)
+                _prewarm_var_previews(rec)
             except Exception:
                 traceback.print_exc()
             _mark_step_done(rec, STEP_PLOT_PREWARM)

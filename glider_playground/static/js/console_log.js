@@ -207,8 +207,5 @@
             `background:${modeBg};color:${modeColor};padding:2px 6px;border-radius:0 3px 3px 0`,
         ];
         console.log(...parts);
-        if (!window.GP_DEBUG) {
-            console.log('%cdiagnostics off — run gpSetDebug(true) for API/PLOT/RENDER timing logs', 'color:#5b6472');
-        }
     };
 })();

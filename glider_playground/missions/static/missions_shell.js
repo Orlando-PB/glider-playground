@@ -23,7 +23,7 @@
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:55;display:none;background:var(--bg-app,#fff)';
     const frame = document.createElement('iframe');
-    frame.style.cssText = 'width:100%;height:100%;border:0;display:block'; frame.title = 'Missions';
+    frame.style.cssText = 'width:100%;height:100%;border:0;display:block'; frame.title = 'Missions'; frame.id = 'missionFrame';
     overlay.appendChild(frame); document.body.appendChild(overlay);
 
     const back = wrap.lastElementChild;      // second half of the button, once a mission has been opened

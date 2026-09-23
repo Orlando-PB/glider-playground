@@ -25,6 +25,8 @@ const recall = store => { try { return JSON.parse(localStorage.getItem(store) ||
 export function createView(seabed, { floatTraces = true, store = 'gp_ocean3d', ownLayers = false, defaultSpeed, speed } = {}) {
     const saved = recall(store), keep = patch => { Object.assign(saved, patch); try { localStorage.setItem(store, JSON.stringify(saved)); } catch (_) {} };
     const stage = createStage($('view')), world = createWorld(seabed), platforms = [];
+    // The shell's snapshot: the scene at the asked scale with the labels, key and legend on top, controls left out.
+    if (window.gpSnapshot) gpSnapshot.listen(scale => gpSnapshot.capture(document.body, { scale, hide: '#timebar,#corner,#loader,#note,#key button', canvasImage: c => c === $('view') ? stage.snapshot(scale) : null }));
     const floor = buildSeabed(world);
     stage.content.add(floor, buildGround(world), buildWater(world));
     stage.frame(world.size, world.heightAt);

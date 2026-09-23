@@ -2,7 +2,7 @@
 // scale, and the small legend card that picks the variable and shows its colourbar.
 import * as THREE from 'three';
 
-const UNITS = { degree_Celsius: '°C', degrees_Celsius: '°C', degC: '°C', '1': '' };      // CF spellings -> what people write
+const fmtUnits = u => window.fmtUnits ? window.fmtUnits(u) : (u ?? '');      // js/units.js, loaded by the page
 const FALLBACK = ['#440154', '#21918c', '#fde725'];
 
 // Integer flags (science phases and the like): one fixed colour per value, as main_plot.html draws them.
@@ -52,7 +52,7 @@ export function createLegend(el, options, remembered, onPick) {
         if (!opt || !got) { if (opt) select.value = ''; return; }
         const stops = palette(opt.cmap);
         bar.style.background = `linear-gradient(to right, ${stops.discrete ? stops.map((c, q) => `${c} ${q / stops.length * 100}% ${(q + 1) / stops.length * 100}%`).join(', ') : stops.join(', ')})`;
-        lo.textContent = stops.discrete ? '0' : num(got.limits[0]); hi.textContent = stops.discrete ? String(stops.length - 1) : num(got.limits[1]); units.textContent = UNITS[got.units] ?? got.units ?? '';
+        lo.textContent = stops.discrete ? '0' : num(got.limits[0]); hi.textContent = stops.discrete ? String(stops.length - 1) : num(got.limits[1]); units.textContent = fmtUnits(got.units);
     };
     select.addEventListener('change', pick);
     const choose = opt => {

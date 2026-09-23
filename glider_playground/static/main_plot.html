@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <title>Glider Plot</title>
     <script src="/static/js/console_log.js"></script>
+    <script src="/static/js/units.js"></script>
+    <script src="/static/js/snapshot.js"></script>
     <script src="/api/plot_presets.js"></script>
     <link rel="stylesheet" href="/static/vendor/tailwind.css">
     <!-- Self-hosted partial Plotly (gl2d bundle), not the full build. -->
@@ -34,29 +36,32 @@
             --anno-bg: rgba(255,255,255,0.9);
         }
         body { margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-panel); font-family: 'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: var(--text-primary); }
-        #plotDiv { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        /* A title row sits above the plot; plot, sidebar and colour bar start beneath it. */
+        :root { --title-h: 26px; }
+        #plotDiv { position: absolute; top: var(--title-h); left: 0; width: 100%; height: calc(100% - var(--title-h)); }
         /* Depth-profile marginal (SVG) on the far left; the main plot shifts right (see layoutPlotArea). */
-        #profileDiv { position: absolute; top: 0; left: 0; height: 100%; display: none; }
+        #profileDiv { position: absolute; top: var(--title-h); left: 0; height: calc(100% - var(--title-h)); display: none; }
+        /* The marginal is shown as a bitmap of Plotly's SVG (#profileRaster); the live SVG stays for Plotly's state but
+           is kept out of painting. Thousands of SVG points per panel made the compositor re-walk them all every frame,
+           which is what made zoom-box drags stutter across a multi-plot view. */
+        #profileDiv.raster .main-svg { visibility: hidden; }
+        #profileRaster { position: absolute; top: var(--title-h); left: 0; height: calc(100% - var(--title-h)); display: none; pointer-events: none; z-index: 4; }
 
         /* Compact, non-interactive colour bar strip on the right, multiview only. */
         #cbar {
-            position: absolute; top: 0; bottom: 0; right: 0; z-index: 6; display: none;
+            position: absolute; top: var(--title-h); bottom: 0; right: 0; z-index: 6; display: none;
             flex-direction: row; align-items: stretch; gap: 3px;
             padding: 10px 5px 10px 0; box-sizing: border-box;
             pointer-events: none;
         }
         #cbar.active { display: flex; }
-        #cbarTitle {
-            writing-mode: vertical-rl; transform: rotate(180deg);
-            text-align: center; font-size: 9px; font-weight: 600; letter-spacing: 0.03em;
-            color: var(--text-secondary); white-space: nowrap; overflow: hidden;
-        }
         #cbarBar {
             width: 13px; align-self: stretch;
             border-left: 1px solid var(--border);
         }
         #cbarTicks {
             display: flex; flex-direction: column; justify-content: space-between;
+            width: 40px; flex: none;   /* fixed so the bar sits at the same x on every stacked plot */
             font-size: 8.5px; color: var(--text-secondary); line-height: 1; padding: 1px 0;
         }
         #cbarTicks span { white-space: nowrap; }
@@ -78,15 +83,24 @@
             position: absolute; top: 12px; left: 12px;
             width: 16px; height: 16px;
             border: 2px solid var(--spinner-track); border-top: 2px solid var(--accent); border-radius: 50%;
-            animation: spin 0.8s linear infinite;
             opacity: 0; transition: opacity 0.2s ease-in-out;
             pointer-events: none; z-index: 40;
         }
-        #bgSpinner.active { opacity: 1; }
+        /* Animate only while shown: an always-running transform animation in every plot iframe forced a
+           compositor pass on the whole page each frame, which is what made zoom-box drags stutter in multi-plot views. */
+        #bgSpinner.active { opacity: 1; animation: spin 0.8s linear infinite; }
 
         /* Zoom hint / reset pill — replaces Plotly's stock notifier (showTips:false). */
+        #plotTitle {
+            position: absolute; top: 0; left: 0; right: 0; height: var(--title-h); z-index: 5;
+            display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 60px;
+            font-size: 12.5px; line-height: 1; letter-spacing: 0.01em; color: var(--text-primary);
+            pointer-events: none; user-select: none; white-space: nowrap; overflow: hidden;
+        }
+        #plotTitle b { font-weight: 700; }
+        #plotTitle .sub { color: var(--text-muted); font-weight: 500; }
         #zoomHint {
-            position: absolute; top: 4px; right: 56px;
+            position: absolute; top: calc(var(--title-h) + 4px); right: 56px;
             display: flex; align-items: center; gap: 6px;
             padding: 4px 10px; border-radius: 999px;
             font-size: 11px; line-height: 1; letter-spacing: 0.01em;
@@ -107,7 +121,7 @@
 
         /* Clicked-point readout; its close button also clears the pin on every open globe. */
         #point-bubble {
-            display: none; position: absolute; top: 8px; left: 50%;
+            display: none; position: absolute; top: calc(var(--title-h) + 6px); left: 50%;
             transform: translateX(-50%); z-index: 30;
             align-items: flex-start; gap: 8px; padding: 6px 6px 6px 11px;
             border-radius: 8px; color: var(--text-primary);
@@ -169,6 +183,8 @@
     </div>
 
     <div id="plotDiv" role="img" aria-label="Plot" tabindex="0"></div>
+    <!-- What this plot shows (Y vs X), so a panel is readable at a glance in multiview. -->
+    <div id="plotTitle" aria-hidden="true"></div>
     <div id="point-pin"></div>
 
     <div id="cbar" aria-hidden="true">
@@ -178,11 +194,11 @@
             <span id="cbarMid"></span>
             <span id="cbarMin"></span>
         </div>
-        <div id="cbarTitle"></div>
     </div>
 
     <!-- Depth-profile marginal (profile_sidebar param). -->
     <div id="profileDiv"></div>
+    <canvas id="profileRaster"></canvas>
 
     <!-- Clicked-point readout (top-centre). Populated when a point is clicked. -->
     <div id="point-bubble">
@@ -254,6 +270,11 @@
         // Aborts the previous main fetch on a warm 'replot' so stale data can't draw over a newer plot.
         let _mainFetchController = null;
         let _pendingBounds = null;
+        // Delay from a zoom to its hi-res fetch. Own zooms wait for a wheel/pan stream to settle (each event
+        // resets the timer; a box zoom is one event). Sync-driven zooms are already final, so they wait
+        // only long enough to absorb a burst of updates.
+        const OWN_FETCH_DELAY_MS = 150;
+        const DRIVEN_FETCH_DELAY_MS = 50;
         let _originalPlotData = null;
         let _currentZoom = null;
         let _globalExtent = null;  // full data extent for fallback when autorange hides layout.xaxis.range
@@ -311,7 +332,7 @@
         const SIDE_PAD_FRAC = 0.015;
 
         // ---- Compact multiview colour bar (mirrors the active colour range) ----
-        const CBAR_W = 58;   // px reserved on the right for the colour bar strip
+        const CBAR_W = 64;   // px reserved on the right for the colour bar strip (bar 13 + gap 3 + ticks 40 + padding 5)
         let _multiview = false;   // set from the URL once urlParams is initialised
         let _cbarMin = null, _cbarMax = null;   // current colour range shown on the bar
 
@@ -339,12 +360,15 @@
             return 0;
         }
 
-        function fmtCbar(v) {
-            if (v === null || v === undefined || isNaN(v)) return '';
-            const a = Math.abs(v);
-            if (a !== 0 && (a < 0.01 || a >= 100000)) return v.toExponential(1);
-            const decimals = a >= 100 ? 0 : a >= 1 ? 1 : 2;
-            return Number(v.toFixed(decimals)).toString();
+        // One format for all three ticks, chosen from the range (as an axis would): enough decimals to
+        // tell the ticks apart, exponent form only when the whole range is tiny or huge.
+        function cbarFormatter(lo, hi) {
+            if (!isFinite(lo) || !isFinite(hi)) return () => '';
+            const big = Math.max(Math.abs(lo), Math.abs(hi));
+            if (big !== 0 && (big < 0.01 || big >= 100000)) return v => v.toExponential(1);
+            const step = Math.abs(hi - lo) / 2;
+            const decimals = step > 0 ? Math.min(4, Math.max(0, 1 - Math.floor(Math.log10(step)))) : 2;
+            return v => (Math.abs(v) < 0.5 * Math.pow(10, -decimals) ? 0 : v).toFixed(decimals);
         }
 
         // Show/hide + rebuild the colour bar; idempotent.
@@ -362,19 +386,12 @@
             document.getElementById('cbarBar').style.background =
                 `linear-gradient(to top, ${stops.join(', ')})`;
 
-            const label = (() => {
-                const name = (plotData.c_var || '').trim();
-                if (!name) return '';
-                const u = (plotData.c_units || '').trim();
-                return (u && u !== 'No units') ? `${name} (${u})` : name;
-            })();
-            document.getElementById('cbarTitle').textContent = label;
-
             if (_cbarMin === null) _cbarMin = plotData.c_min;
             if (_cbarMax === null) _cbarMax = plotData.c_max;
-            document.getElementById('cbarMax').textContent = fmtCbar(_cbarMax);
-            document.getElementById('cbarMin').textContent = fmtCbar(_cbarMin);
-            document.getElementById('cbarMid').textContent = fmtCbar((_cbarMin + _cbarMax) / 2);
+            const fmt = cbarFormatter(_cbarMin, _cbarMax);
+            document.getElementById('cbarMax').textContent = fmt(_cbarMax);
+            document.getElementById('cbarMin').textContent = fmt(_cbarMin);
+            document.getElementById('cbarMid').textContent = fmt((_cbarMin + _cbarMax) / 2);
         }
 
         // Size the main plot around the left sidebar / right colour bar, then resize Plotly.
@@ -444,12 +461,57 @@
         // (payload filtered) needs a fetch — see _profileNeedsFetch.
         let _profileFetchSeq = 0;
 
+        function hideProfileSidebar() {
+            const profileDiv = document.getElementById('profileDiv'), raster = document.getElementById('profileRaster');
+            profileDiv.style.display = 'none';
+            if (raster) raster.style.display = 'none';
+        }
+
+        // Draw the marginal, then swap its SVG for a bitmap (see the #profileDiv.raster CSS note).
+        let _profileRasterSeq = 0;
+        function drawProfilePlot(traces, layout) {
+            const seq = ++_profileRasterSeq;
+            // Through the draw gate: never mid zoom-drag, and after any queued main draw.
+            return drawPlot('sidebar', () => {
+                if (seq !== _profileRasterSeq) return;   // superseded while queued
+                const p = Plotly.react('profileDiv', traces, layout, { displayModeBar: false, responsive: true, staticPlot: true });
+                return Promise.resolve(p).then(() => { if (seq === _profileRasterSeq) rasteriseProfile(seq); });
+            }, { suppress: false });
+        }
+        function rasteriseProfile(seq) {
+            const profileDiv = document.getElementById('profileDiv'), raster = document.getElementById('profileRaster');
+            if (!raster || profileDiv.style.display === 'none' || !profileDiv._fullLayout) return;
+            let svg;
+            try { svg = Plotly.Snapshot.toSVG(profileDiv, 'png', 1); } catch (_) { profileDiv.classList.remove('raster'); return; }
+            const w = profileDiv.clientWidth, h = profileDiv.clientHeight;
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            const img = new Image();
+            img.onload = () => {
+                if (seq !== _profileRasterSeq) return;   // a newer draw is on its way
+                raster.width = Math.round(w * dpr); raster.height = Math.round(h * dpr);
+                raster.style.width = w + 'px'; raster.style.height = h + 'px';
+                const ctx = raster.getContext('2d');
+                ctx.clearRect(0, 0, raster.width, raster.height);
+                ctx.drawImage(img, 0, 0, raster.width, raster.height);
+                raster.style.display = 'block';
+                profileDiv.classList.add('raster');
+            };
+            img.onerror = () => { profileDiv.classList.remove('raster'); raster.style.display = 'none'; };
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        }
+        // Plotly resizes the SVG itself (responsive); the bitmap has to follow.
+        let _rasterResizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(_rasterResizeTimer);
+            _rasterResizeTimer = setTimeout(() => rasteriseProfile(++_profileRasterSeq), 150);
+        });
+
         async function renderProfileSidebar() {
             const profileDiv = document.getElementById('profileDiv');
             if (!profileDiv) return;
             const cVar = urlParams.get('c_var');
             if (!_profileSidebar || !plotData || !cVar || cVar === 'black') {
-                profileDiv.style.display = 'none';
+                hideProfileSidebar();
                 try { Plotly.purge('profileDiv'); } catch (_) {}
                 layoutPlotArea();
                 return;
@@ -460,6 +522,16 @@
 
             return _profileNeedsFetch() ? _renderProfileSidebarFetch()
                                         : _renderProfileSidebarLocal();
+        }
+
+        // Zoom paths refresh the marginal from here. It's 2.5k SVG points (~0.4 s of layout per panel): run
+        // synchronously it lands ahead of the queued main draw, and even idle-deferred it slips in between
+        // sibling panels' draws, so a synced zoom-out flips the stack one panel at a time over seconds.
+        // A trailing debounce lets every panel's main draw land first; the marginals follow.
+        let _sidebarTimer = null;
+        function scheduleProfileSidebar() {
+            clearTimeout(_sidebarTimer);
+            _sidebarTimer = setTimeout(() => { _sidebarTimer = null; renderProfileSidebar(); }, 350);
         }
 
         // True when a filter prunes the main payload, so the greyed context must be fetched.
@@ -482,6 +554,18 @@
             const t = Date.parse(String(v).replace(' ', 'T') + 'Z');   // axis not ready yet
             return isNaN(t) ? Date.parse(v) : t;
         }
+
+        // TIMEZONE: epoch-ms → the traces' naive-UTC string. Never hand a NUMBER to a date axis `range`
+        // (layout or relayout): Plotly round-trips it through a browser-local string and shifts the axis.
+        function toNaiveStr(v) {
+            if (typeof v !== 'number') return v;
+            const pad2 = n => String(n).padStart(2, '0');
+            const d = new Date(v);
+            return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
+        }
+
+        // The synced union range the shell last drove (updateLimits with `union`), used as the zoom-out reset.
+        let _unionRange = null;
 
         // Per-point in-zoom flag (null = no zoom); mirrors the server's zoom_mask.
         function _zoomSelectionMask(src) {
@@ -545,7 +629,7 @@
             const profileDiv = document.getElementById('profileDiv');
             const src = _originalPlotData;
             if (!src || !src.c || !src.c.length || src.c.length !== src.y.length) {
-                profileDiv.style.display = 'none'; layoutPlotArea(); return null;
+                hideProfileSidebar(); layoutPlotArea(); return null;
             }
             ++_profileFetchSeq;   // supersede any in-flight fetch from a previous render
             const t0 = performance.timeOrigin + performance.now();
@@ -561,8 +645,7 @@
                 profile_highlight: !!sel,
                 in_selection: sel ? (keep ? keep.map(i => sel[i]) : sel) : [],
             };
-            Plotly.react('profileDiv', buildProfileTraces(pdata), buildProfileLayout(pdata),
-                { displayModeBar: false, responsive: true, staticPlot: true });
+            drawProfilePlot(buildProfileTraces(pdata), buildProfileLayout(pdata));
             const t1 = performance.timeOrigin + performance.now();
             return { points: pdata.x.length, fetchMs: 0, drawMs: t1 - t0 };
         }
@@ -607,13 +690,12 @@
                 const pdata = await resp.json();
                 const tFetched = performance.timeOrigin + performance.now();
                 if (seq !== _profileFetchSeq) return null;   // a newer render superseded this one
-                if (pdata.error || !pdata.x || !pdata.x.length) { profileDiv.style.display = 'none'; layoutPlotArea(); return null; }
-                Plotly.react('profileDiv', buildProfileTraces(pdata), buildProfileLayout(pdata),
-                    { displayModeBar: false, responsive: true, staticPlot: true });
+                if (pdata.error || !pdata.x || !pdata.x.length) { hideProfileSidebar(); layoutPlotArea(); return null; }
+                drawProfilePlot(buildProfileTraces(pdata), buildProfileLayout(pdata));
                 const tDrawn = performance.timeOrigin + performance.now();
                 return { points: pdata.x.length, fetchMs: tFetched - t0, drawMs: tDrawn - tFetched };
             } catch (_) {
-                if (seq === _profileFetchSeq) { profileDiv.style.display = 'none'; layoutPlotArea(); }
+                if (seq === _profileFetchSeq) { hideProfileSidebar(); layoutPlotArea(); }
                 return null;
             }
         }
@@ -757,7 +839,7 @@
             try {
                 // Strip our timing params before forwarding to the API.
                 const apiParams = new URLSearchParams(urlParams.toString());
-                apiParams.delete('_gpt0'); apiParams.delete('_gpt1');
+                ['_gpt0', '_gpt1', '_seq', 'xr0', 'xr1'].forEach(k => apiParams.delete(k));
 
                 // Binary payload: arrays map straight into TypedArrays (no big JSON.parse).
                 apiParams.set('binary', '1');
@@ -768,7 +850,30 @@
                 if (_mainFetchController) _mainFetchController.abort();   // supersede a prior warm replot's fetch
                 const mainController = new AbortController();
                 _mainFetchController = mainController;
-                const response = await fetch(fetchUrl, { signal: mainController.signal });
+                const readBody = async (response) => {
+                    // Binary on success; JSON when the server returned an error dict.
+                    const ctype = (response.headers && response.headers.get('Content-Type')) || '';
+                    return ctype.indexOf('application/octet-stream') !== -1 ? parsePlotBinary(await response.arrayBuffer()) : response.json();
+                };
+                // `lines`: several variables against the same x, drawn as connected lines on one plot (Dive).
+                // One request per variable, in parallel; variables the file lacks (or that come back empty) are dropped.
+                const lineVars = (urlParams.get('lines') || '').split(',').filter(Boolean);
+                let response;
+                if (lineVars.length) {
+                    const responses = await Promise.all(lineVars.map(v => {
+                        const q = new URLSearchParams(apiParams.toString()); q.set('y_var', v); q.delete('c_var');
+                        return fetch(`/api/plot_data?${q.toString()}`, { signal: mainController.signal });
+                    }));
+                    if (mainController.signal.aborted) return;
+                    response = responses[0];
+                    const parts = (await Promise.all(responses.map(readBody))).filter(d => d && !d.error && d.y && d.y.length);
+                    if (!parts.length) { const e = new Error('None of the Dive variables have data here.'); e.expected = true; throw e; }
+                    plotData = parts[0];
+                    plotData.c = null; plotData.c_var = ''; plotData.c_min = null; plotData.c_max = null;
+                    plotData.lines = parts.map(d => ({ name: d.y_var, units: d.y_units || '', x: d.x, y: d.y }));
+                } else {
+                    response = await fetch(fetchUrl, { signal: mainController.signal });
+                }
                 // Superseded after the response resolved — bail rather than race the newer render.
                 if (mainController.signal.aborted) return;
                 const tFetchResolved = now();
@@ -777,13 +882,8 @@
                 const serverMs = serverHdr ? parseFloat(serverHdr) * 1000 : 0;
                 const serverChildren = parseServerTiming(response.headers && response.headers.get('Server-Timing'));
 
-                // Binary on success; JSON when the server returned an error dict.
-                const ctype = (response.headers && response.headers.get('Content-Type')) || '';
-                if (ctype.indexOf('application/octet-stream') !== -1) {
-                    plotData = parsePlotBinary(await response.arrayBuffer());
-                } else {
-                    plotData = await response.json();
-                }
+                if (!lineVars.length) plotData = await readBody(response);
+                if (mainController.signal.aborted) return;   // replot landed while the body was parsing
                 const tJsonParsed = now();
 
                 if (plotData.error) {
@@ -886,20 +986,31 @@
                 document.getElementById('statusText').textContent = err.message || "Failed to load plot data.";
                 if (err && err.expected && window.logNote) window.logNote(err.message);
                 else console.error(err);
-                window.parent.postMessage({ type: 'plotError', message: err.message }, '*');
+                window.parent.postMessage({ type: 'plotError', seq: urlParams.get('_seq') || null, message: err.message }, '*');
             }
         }
 
         function buildLayout(xRange, yRange) {
             const isXDate = plotData.is_x_dt;
             const isInverted = urlParams.get('invert_y') === 'true';
-            const axisLabel = (name, units) => {
-                if (!name) return '';
-                const u = (units || '').trim();
-                return (u && u !== 'No units') ? `${name} (${u})` : name;
-            };
+            const axisLabel = (name, units) => name ? withUnits(name, units) : '';
             const xLabel = isXDate ? '' : axisLabel(plotData.x_var, plotData.x_units);
-            const yLabel = axisLabel(plotData.y_var, plotData.y_units);
+            const lineGroups = plotData.lines ? lineAxisGroups(plotData.lines) : null;
+            const yLabel = lineGroups ? lineGroups.units[0] : axisLabel(plotData.y_var, plotData.y_units);
+            const y2Label = lineGroups && lineGroups.units.length > 1 ? lineGroups.units[1] : '';
+            // Title row: the colour variable leads (that's what the plot is about), then how it's laid out.
+            try {
+                const t = document.getElementById('plotTitle');
+                const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+                const x = plotData.x_var || '', y = plotData.y_var || '', c = plotData.c_var || '';
+                const units = fmtUnits(plotData.c_units);
+                const cU = units ? ` (${units})` : '';
+                let html = '';
+                if (plotData.lines) html = `<b>Dive</b><span class="sub">· ${esc(plotData.lines.map(l => l.name).join(', '))} over time</span>`;
+                else if (c) html = `<b>${esc(c)}${esc(cU)}</b><span class="sub">· ${esc(y)} ${isXDate ? 'over time' : 'vs ' + esc(x)}</span>`;
+                else if (y) html = `<b>${esc(y)}</b><span class="sub">· ${isXDate ? 'over time' : 'vs ' + esc(x)}</span>`;
+                t.innerHTML = html;
+            } catch (_) {}
             // Screen-reader summary of the plot (axes, colour variable, extents).
             try {
                 const ext = (arr, isDt) => {
@@ -908,8 +1019,9 @@
                 };
                 const xr = ext(plotData.x, isXDate), yr = ext(plotData.y, false);
                 const cLabel = axisLabel(plotData.c_var, plotData.c_units);
-                document.getElementById('plotDiv').setAttribute('aria-label',
-                    `Scatter plot. X axis: ${isXDate ? 'time' : xLabel}, from ${xr[0]} to ${xr[1]}. ` +
+                document.getElementById('plotDiv').setAttribute('aria-label', plotData.lines
+                    ? `Line plot of ${plotData.lines.map(l => l.name).join(', ')} over time, from ${xr[0]} to ${xr[1]}.`
+                    : `Scatter plot. X axis: ${isXDate ? 'time' : xLabel}, from ${xr[0]} to ${xr[1]}. ` +
                     `Y axis: ${yLabel}, from ${yr[0]} to ${yr[1]}${isInverted ? ', inverted' : ''}.` +
                     (cLabel ? ` Coloured by ${cLabel}.` : '') +
                     ` ${(plotData.x || []).length} points. Click a point to read its values.`);
@@ -924,7 +1036,7 @@
             const layout = {
                 // Tight margins for multiview stacking. Right margin keys on _multiview (NOT on whether
                 // this plot has a bar) so synced plots share an identical plotting box.
-                margin: { l: 60, r: _multiview ? 5 : 20, t: 8, b: isXDate ? 26 : (xLabel ? 46 : 38) },
+                margin: { l: 60, r: y2Label ? 52 : (_multiview ? 5 : 20), t: 4, b: isXDate ? 26 : (xLabel ? 46 : 38) },
                 font: { color: AXIS_COLOR, family: "'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" },
                 xaxis: {
                     type: isXDate ? 'date' : 'linear', showgrid: !isTSMode, zeroline: false,
@@ -949,7 +1061,7 @@
                 plot_bgcolor: 'transparent',
                 paper_bgcolor: 'transparent',
                 dragmode: 'zoom',
-                showlegend: (urlParams.get('cmap') || 'thermal') === 'discrete_09',
+                showlegend: !!plotData.lines || (urlParams.get('cmap') || 'thermal') === 'discrete_09',
                 // Legend overlays the plot (top-left) so the plotting area stays full width in multiview.
                 legend: { font: { size: 10, color: AXIS_COLOR }, bgcolor: TC.anno, bordercolor: GRID_COLOR, borderwidth: 1, x: 0.01, xanchor: 'left', y: 0.99, yanchor: 'top' },
             };
@@ -962,6 +1074,11 @@
                 // (converted to naive-UTC strings below).
                 const zx0 = urlParams.get('zXmin'), zx1 = urlParams.get('zXmax');
                 layout.xaxis.range = isXDate ? [Number(zx0), Number(zx1)] : [zx0, zx1];
+                layout.xaxis.autorange = false;
+            } else if (isXDate && (_unionRange || (urlParams.has('xr0') && urlParams.has('xr1')))) {
+                // Synced full extent: the union the shell last drove (exact), else its estimate from the URL
+                // (epoch-ms) — so the first draw and a zoom-out land aligned instead of moving afterwards.
+                layout.xaxis.range = _unionRange || [Number(urlParams.get('xr0')), Number(urlParams.get('xr1'))];
                 layout.xaxis.autorange = false;
             } else {
                 // No explicit range: pin one with the SAME side padding as the parent's union range
@@ -976,15 +1093,8 @@
                 }
             }
 
-            // TIMEZONE: never pass epoch-ms NUMBERS into a date axis `range` — Plotly round-trips them via a
-            // browser-local string and shifts the axis. Convert to the trace's naive-UTC string format (toNaiveStr).
+            // TIMEZONE: see toNaiveStr — a date axis range must be strings, never epoch-ms numbers.
             if (isXDate && Array.isArray(layout.xaxis.range)) {
-                const pad2 = n => String(n).padStart(2, '0');
-                const toNaiveStr = (v) => {
-                    if (typeof v !== 'number') return v;
-                    const d = new Date(v);
-                    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
-                };
                 layout.xaxis.range = layout.xaxis.range.map(toNaiveStr);
             }
 
@@ -996,8 +1106,32 @@
                 const zYmax = urlParams.get('zYmax');
                 layout.yaxis.range = isInverted ? [zYmax, zYmin] : [zYmin, zYmax];
                 layout.yaxis.autorange = false;
+            } else if (!plotData.lines) {
+                const yMin = getSafeMin(plotData.y), yMax = getSafeMax(plotData.y);
+                if (isFinite(yMin) && isFinite(yMax) && yMax > yMin) {
+                    const pad = (yMax - yMin) * 0.015;
+                    layout.yaxis.range = isInverted ? [yMax + pad, yMin - pad] : [yMin - pad, yMax + pad];
+                    layout.yaxis.autorange = false;
+                } else {
+                    layout.yaxis.autorange = isInverted ? 'reversed' : true;
+                }
             } else {
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
+            }
+
+            // Dive: one overlaid, independently autoranged axis per line; ticks only on the first line of the second unit.
+            if (lineGroups) {
+                const secondUnit = lineGroups.units[1];
+                let labelled2 = false;
+                plotData.lines.forEach((l, i) => {
+                    if (i === 0) return;
+                    const showTicks = fmtUnits(l.units) === secondUnit && !labelled2;
+                    if (showTicks) labelled2 = true;
+                    layout[`yaxis${i + 1}`] = { overlaying: 'y', side: 'right', showgrid: false, zeroline: false, autorange: true,
+                        showticklabels: showTicks, ticks: showTicks ? 'outside' : '', showline: showTicks,
+                        linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
+                        title: showTicks && y2Label ? { text: y2Label, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined };
+                });
             }
 
             // Clicked-point marker is a DOM overlay (#point-pin, see positionPin), not a shape.
@@ -1017,8 +1151,10 @@
                 + 4.8314e-4 * S * S;
         }
 
-        const TS_SALINITY_VARS = ['PRAC_SALINITY', 'ABS_SALINITY'];
+        const TS_SALINITY_VARS = ['ABS_SALINITY', 'PRAC_SALINITY'];
         const TS_TEMP_VARS = ['TEMP', 'CONS_TEMP'];
+        // dens0 wants practical salinity; SA (g/kg) is ~SP × 35.16504/35 (TEOS-10 reference ratio).
+        const SA_TO_SP = 35 / 35.16504;
 
         // Bisect for T at fixed S where dens0(S,T)-1000 == target (density falls monotonically with T).
         function solveIsopycnalT(S, target, tLo, tHi) {
@@ -1037,6 +1173,7 @@
 
         function buildDensityContourTraces(data) {
             if (!TS_SALINITY_VARS.includes(data.x_var) || !TS_TEMP_VARS.includes(data.y_var)) return [];
+            const sScale = data.x_var === 'ABS_SALINITY' ? SA_TO_SP : 1;
             const sExt = xDataExtent(data.x, false);
             const tExt = xDataExtent(data.y, false);
             if (!isFinite(sExt.min) || !isFinite(sExt.max) || !isFinite(tExt.min) || !isFinite(tExt.max)) return [];
@@ -1047,8 +1184,8 @@
             const tLo = tExt.min - tPad, tHi = tExt.max + tPad;
 
             // Extreme corners bound the sigma-t range (density falls with T, rises with S).
-            const sigLo = dens0(sLo, tHi) - 1000;
-            const sigHi = dens0(sHi, tLo) - 1000;
+            const sigLo = dens0(sLo * sScale, tHi) - 1000;
+            const sigHi = dens0(sHi * sScale, tLo) - 1000;
             const STEP = 0.5;
             const levelStart = Math.ceil(sigLo / STEP) * STEP;
             const levelEnd = Math.floor(sigHi / STEP) * STEP;
@@ -1064,7 +1201,7 @@
                 let lastValid = null;
                 for (let i = 0; i <= N_SAMPLES; i++) {
                     const s = sLo + (sHi - sLo) * i / N_SAMPLES;
-                    const t = solveIsopycnalT(s, level, tLo, tHi);
+                    const t = solveIsopycnalT(s * sScale, level, tLo, tHi);
                     if (t === null) {
                         lineX.push(null); lineY.push(null);
                     } else {
@@ -1095,7 +1232,26 @@
             ];
         }
 
+        // Dive: every line gets its own y axis so each fills the height. Ticks are shown once per unit — the first
+        // unit's on the left (inverted when invert_y, i.e. depth), the second's on the right; the rest are unlabelled.
+        // Units are compared once tidied (fmtUnits), so 'kg/m3' and 'kg m-3' share an axis.
+        const LINE_COLOURS = ['#41658a', '#e0813d', '#3fa66b', '#b5488f', '#8a7d3f', '#4fa3c7'];
+        function lineAxisGroups(lines) {
+            const units = []; lines.forEach(l => { const u = fmtUnits(l.units); if (!units.includes(u)) units.push(u); });
+            return { units, axisOf: (l, i) => i === 0 ? 'y' : `y${i + 1}` };
+        }
+        function createLineTraces(data) {
+            const { axisOf } = lineAxisGroups(data.lines);
+            return data.lines.map((l, i) => ({
+                x: l.x, y: l.y, mode: 'lines', type: 'scattergl', yaxis: axisOf(l, i),
+                name: withUnits(l.name, l.units),
+                line: { width: 1.3, color: LINE_COLOURS[i % LINE_COLOURS.length] },
+                connectgaps: false, showlegend: true, hoverinfo: 'none', customdata: [],
+            }));
+        }
+
         function createTraces(data) {
+            if (data.lines) return createLineTraces(data);
             const densityContourTraces = buildDensityContourTraces(data);
             let cmapName = urlParams.get('cmap') || 'thermal';
             const isDiscrete09 = cmapName === 'discrete_09';
@@ -1218,6 +1374,7 @@
 
                 window.parent.postMessage({
                     type: 'plotLoaded',
+                    seq: urlParams.get('_seq') || null,   // the shell's render generation, so it can drop stale loads
                     globalLimits: { xMin, xMax, yMin, yMax, cMin: plotData.c_min, cMax: plotData.c_max },
                     hasC: plotData.c && plotData.c.length > 0,
                     stats: plotData.stats
@@ -1316,7 +1473,7 @@
                 clearTimeout(_pendingBounds);
                 // Fast path: the current chunk already holds every raw point in this window — skip the fetch.
                 if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
-                    _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
+                    _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), OWN_FETCH_DELAY_MS);
                 }
             });
 
@@ -1394,7 +1551,7 @@
             const hasSelection = urlParams.has('cycle_num') || urlParams.has('profile_num');
             const limits = (hasSelection && _globalExtent) ? { ..._globalExtent } : {};
             window.parent.postMessage({ type: 'plotZoomed', limits }, '*');
-            renderProfileSidebar();   // zoom cleared → drop the marginal greying
+            scheduleProfileSidebar();   // zoom cleared → drop the marginal greying
         }
 
         // Zoom window in numeric space (epoch-ms for date x), lo<=hi; null if unresolvable.
@@ -1462,11 +1619,12 @@
             const r = _autoColourInView(box);
             window.parent.postMessage({ type: 'bgFetchComplete',
                 cMin: r.cMin, cMax: r.cMax, plotted: r.plotted }, '*');
-            renderProfileSidebar();
+            scheduleProfileSidebar();
             return true;
         }
 
         async function triggerBgFetch(xMin, xMax, yMin, yMax) {
+            if (plotData && plotData.lines) return;   // Dive lines: no per-zoom refetch
             bgSpinner.classList.add('active'); 
             const params = new URLSearchParams(urlParams);
             
@@ -1510,12 +1668,14 @@
 
             const controller = new AbortController();
             _bgFetchController = controller;
+            params.set('binary', '1');   // typed arrays, as for the main load (an error still arrives as JSON)
 
             try {
                 const res = await fetch(`/api/plot_data_bounds?${params.toString()}`, {
                     signal: controller.signal
                 });
-                const newData = await res.json();
+                const ctype = (res.headers && res.headers.get('Content-Type')) || '';
+                const newData = ctype.indexOf('application/octet-stream') !== -1 ? parsePlotBinary(await res.arrayBuffer()) : await res.json();
                 if (newData.error) return;
 
                 // abort() is a no-op once the response resolved, so re-check: a stale continuation reacting
@@ -1553,8 +1713,15 @@
                 if (err.name !== 'AbortError') console.error('Background fetch failed:', err);
             } finally {
                 bgSpinner.classList.remove('active');
+                // The marginal follows the main draw rather than racing it (N panels' sidebar fetches and
+                // redraws would otherwise land on the server and the shared thread at the same moment).
+                if (!controller.signal.aborted) scheduleProfileSidebar();
             }
         }
+
+        // The shell's snapshot: the page as drawn (Plotly's WebGL canvases keep their buffer, so they're read in place —
+        // no clone, no extra GL context), with title / colour bar / pinned readout and the controls left out.
+        gpSnapshot.listen(scale => gpSnapshot.capture(document.body, { scale, hide: '#overlay,#bgSpinner,#zoomHint,#point-close,.gl-canvas-pick' }));
 
         window.addEventListener('message', function(event) {
             if (!event.data) return;
@@ -1570,7 +1737,7 @@
                 urlParams = new URLSearchParams(msg.params || '');
                 _multiview = urlParams.get('multiview') === '1';
                 _profileSidebar = urlParams.get('profile_sidebar') === 'true';
-                _currentZoom = null; _originalPlotData = null; _dblClickPending = false;
+                _currentZoom = null; _originalPlotData = null; _dblClickPending = false; _unionRange = null;
                 setZoomHint(false);
                 _cbarMin = null; _cbarMax = null;
                 _profileFetchSeq++;   // supersede any in-flight profile render
@@ -1621,6 +1788,7 @@
                 const invY = urlParams.get('invert_y') === 'true';
                 if (!hasX && !hasY) return;
 
+                if (msg.limits.union && hasX && plotData.is_x_dt) _unionRange = [msg.limits.xMin, msg.limits.xMax];
                 // Bound → comparable number (ms for date axes) via Plotly's own conversion.
                 const toNumX = axisXToMs;
                 const gl = _globalExtent || {};
@@ -1678,7 +1846,10 @@
                 } else {
                     // Right data already shown — relayout only, skipping the WebGL rebuild a react would do.
                     const update = {};
-                    if (hasX) update['xaxis.range'] = [msg.limits.xMin, msg.limits.xMax];
+                    // TIMEZONE: synced limits arrive as epoch-ms numbers (plotZoomed); a date axis needs strings.
+                    if (hasX) update['xaxis.range'] = plotData.is_x_dt
+                        ? [toNaiveStr(msg.limits.xMin), toNaiveStr(msg.limits.xMax)]
+                        : [msg.limits.xMin, msg.limits.xMax];
                     else if (showBase) update['xaxis.autorange'] = true;
                     if (hasY) update['yaxis.range'] = invY ? [msg.limits.yMax, msg.limits.yMin] : [msg.limits.yMin, msg.limits.yMax];
                     else if (showBase) update['yaxis.autorange'] = invY ? 'reversed' : true;
@@ -1701,15 +1872,18 @@
                     // Base record already covers this range — skip the hi-res fetch (N synced panels would
                     // serialise on the server's NetCDF lock) and report done.
                     window.parent.postMessage({ type: 'bgFetchComplete', cMin: plotData.c_min, cMax: plotData.c_max, stats: plotData.stats }, '*');
-                    renderProfileSidebar();   // match the marginal greying to the synced view
+                    scheduleProfileSidebar();   // match the marginal greying to the synced view
                 } else if (!_skipFetchIfCovered(xMin, xMax, yMin, yMax)) {
                     // True zoom-IN we don't hold detail for: fetch hi-res (unless _skipFetchIfCovered took over).
-                    _pendingBounds = setTimeout(() => { triggerBgFetch(xMin, xMax, yMin, yMax); renderProfileSidebar(); }, 400);
+                    // Short debounce: the master's zoom is already final, so the wait only needs to absorb a
+                    // burst of driven updates, not a drag in progress.
+                    _pendingBounds = setTimeout(() => triggerBgFetch(xMin, xMax, yMin, yMax), DRIVEN_FETCH_DELAY_MS);
                 }
             }
             
             // Driven reset — same as a double-click zoom-out, but initiated by the parent.
             if (msg.type === 'resetZoom') {
+                urlParams.delete('xr0'); urlParams.delete('xr1'); _unionRange = null;   // shell-driven reset: back to our own extent
                 if (_bgFetchController) { _bgFetchController.abort(); _bgFetchController = null; }
                 clearTimeout(_pendingBounds);
                 _currentZoom = null;
@@ -1724,7 +1898,7 @@
                     drawPlot('axes', gd => Plotly.relayout(gd, { 'xaxis.autorange': true, 'yaxis.autorange': invY ? 'reversed' : true }));
                 }
                 window.parent.postMessage({ type: 'plotZoomed', driven: true, limits: {} }, '*');
-                renderProfileSidebar();   // zoom cleared remotely → drop the marginal greying
+                scheduleProfileSidebar();   // zoom cleared remotely → drop the marginal greying
                 return;
             }
 
@@ -1750,15 +1924,6 @@
                 }
             }
             
-            if (msg.type === 'downloadPlot') {
-                Plotly.downloadImage('plotDiv', {
-                    format: 'png',
-                    width: 1200,
-                    height: 800,
-                    filename: `glider_plot_${urlParams.get('x')}_vs_${urlParams.get('y')}`
-                });
-            }
-
             if (msg.type === 'autoColour') {
                 if (!plotData || !plotData.c || !plotData.c.length) return;
 
@@ -1810,10 +1975,8 @@
 
 
         function _unitSuffix(u) {
-            u = (u || '').trim();
-            // '1' / 'dimensionless' are placeholder units — drop them.
-            if (!u || u === 'No units' || u === '1' || u === '1.0' || u.toLowerCase() === 'dimensionless') return '';
-            return ' ' + u;
+            u = fmtUnits(u);
+            return u ? ' ' + u : '';
         }
 
         function _fmtVal(v) {

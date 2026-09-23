@@ -530,6 +530,59 @@ def get_location_summary(filepath):
     }
 
 
+_TIME_EXTENT = {}   # (path, size, mtime) -> (first_iso, last_iso)
+
+
+def get_time_extent_iso(filepath):
+    """(first, last) ISO timestamps of the file's plottable TIME samples, or (None, None).
+
+    Same validity rule as every plot (plot_logic._hard_time_valid_mask), so the
+    shell can pre-align synced time axes to the range the plots will report.
+    """
+    import pandas as pd
+    try:
+        st = os.stat(filepath)
+        key = (filepath, st.st_size, st.st_mtime)
+    except OSError:
+        return (None, None)
+    hit = _TIME_EXTENT.get(key)
+    if hit is not None:
+        return hit
+    pre = plot_logic._get_preloaded(filepath)
+    time_arr = None
+    if pre is not None:
+        for k in ('TIME', 'TIME_GPS'):
+            if k in pre:
+                time_arr = pre[k]
+                break
+    if time_arr is None:
+        try:
+            with plot_logic.NETCDF_LOCK, Dataset(filepath, 'r') as nc:
+                for k in ('TIME', 'TIME_GPS'):
+                    if k in nc.variables:
+                        time_arr = nc.variables[k][:]
+                        break
+        except Exception:
+            return (None, None)
+    out = (None, None)
+    try:
+        if time_arr is not None and len(time_arr):
+            # Preloaded TIME is datetime64; raw netCDF TIME is CF epoch seconds. Naive UTC for the mask
+            # (tz-aware -> datetime64 warns); the offset goes back on for the shell.
+            arr = np.ma.filled(time_arr, np.nan) if np.ma.isMaskedArray(time_arr) else np.asarray(time_arr)
+            ts = (pd.to_datetime(arr, errors='coerce') if np.issubdtype(arr.dtype, np.datetime64)
+                  else pd.to_datetime(arr.astype(float), unit='s', errors='coerce'))
+            ts = ts[plot_logic._hard_time_valid_mask(ts)]
+            if len(ts):
+                out = (ts.min().isoformat() + '+00:00', ts.max().isoformat() + '+00:00')
+    except Exception:
+        out = (None, None)
+    if len(_TIME_EXTENT) > 512:
+        _TIME_EXTENT.clear()
+    _TIME_EXTENT[key] = out
+    return out
+
+
 def get_last_time_iso(filepath):
     """Return ISO timestamp of the most recent fix, or None.
 

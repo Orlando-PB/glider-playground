@@ -10,6 +10,9 @@
     "  invert_y   - true for depth/pressure on the y axis.",
     "  draw_order - optional: normal | outliers | smallest | largest (which points are drawn on top).",
     "  prewarm    - true = pre-cache this plot when a file is first processed, so the first click is instant. Only applies to files processed after the change.",
+    "  group      - optional: presets sharing a group name fold into one toolbar chip that opens a menu on hover (the chip shows whichever member is active). Presets without a group stay as their own chip.",
+    "  c: []      - no colour variable: points are drawn in one colour (use cmap 'black').",
+    "  lines      - optional: several variables drawn as connected lines against x on ONE plot (e.g. Dive). Each entry is a variable name, a candidate list, or a shared list from 'axes'; variables the file lacks are skipped. Variables with the same units share an axis: the first unit on the left (inverted if invert_y), the second on the right.",
     "ADD A PALETTE: add a name + list of hex colours to 'palettes', LOW value first -> HIGH value last. (Gradients copied top-to-bottom from a colour bar are high-first: reverse them.)",
     "VIEWS: which presets each built-in view shows, in order. Presets the file can't satisfy are skipped. An entry is a preset key, or {\"preset\": key, \"draw_order\": ...} to override. 'duo' uses exactly two. 'new_plot_order' is the preference order when adding a new plot panel. 'invert_y_vars' are y variables that auto-switch Invert-Y on when picked by hand."
   ],
@@ -27,7 +30,20 @@
       "c": ["SCI_PHASE"],
       "cmap": "discrete_09",
       "invert_y": true,
-      "prewarm": false
+      "prewarm": false,
+      "group": "Core"
+    },
+    "preset_dive": {
+      "label": "Dive",
+      "icon": "airline_stops",
+      "colour": "gray",
+      "group": "Core",
+      "x": "time",
+      "y": "depth",
+      "c": [],
+      "cmap": "black",
+      "invert_y": true,
+      "lines": ["depth", "ALTITUDE", ["GLIDER_PITCH", "PITCH"], ["GLIDER_ROLL", "ROLL"]]
     },
     "preset_temp": {
       "label": "Thermal",
@@ -38,18 +54,20 @@
       "c": ["TEMP", "CONS_TEMP"],
       "cmap": "temp",
       "invert_y": true,
-      "prewarm": true
+      "prewarm": true,
+      "group": "Physics"
     },
     "preset_ts": {
       "label": "T-S Diagram",
       "icon": "scatter_plot",
       "colour": "purple",
-      "x": ["PRAC_SALINITY", "ABS_SALINITY", "CNDC"],
+      "x": ["ABS_SALINITY", "PRAC_SALINITY", "CNDC"],
       "y": ["TEMP", "CONS_TEMP"],
       "c": "depth",
       "cmap": "deep",
       "invert_y": false,
-      "prewarm": false
+      "prewarm": false,
+      "group": "Physics"
     },
     "preset_sal": {
       "label": "Salinity",
@@ -57,10 +75,11 @@
       "colour": "blue",
       "x": "time",
       "y": "depth",
-      "c": ["PRAC_SALINITY", "ABS_SALINITY"],
+      "c": ["ABS_SALINITY", "PRAC_SALINITY"],
       "cmap": "sal",
       "invert_y": true,
-      "prewarm": true
+      "prewarm": true,
+      "group": "Physics"
     },
     "preset_density": {
       "label": "Density",
@@ -71,7 +90,8 @@
       "c": ["DENSITY"],
       "cmap": "dense",
       "invert_y": true,
-      "prewarm": true
+      "prewarm": true,
+      "group": "Physics"
     },
     "preset_chla": {
       "label": "Chlorophyll",
@@ -83,7 +103,8 @@
       "cmap": "chla",
       "invert_y": true,
       "draw_order": "outliers",
-      "prewarm": true
+      "prewarm": true,
+      "group": "Bio-optics"
     },
     "preset_doxy": {
       "label": "Oxygen",
@@ -94,7 +115,8 @@
       "c": ["MOLAR_DOXY", "DOXY", "OXYSAT_DOXY", "DPHASE_DOXY", "TPHASE_DOXY", "BPHASE_DOXY", "FREQUENCY_DOXY"],
       "cmap": "oxy",
       "invert_y": true,
-      "prewarm": true
+      "prewarm": true,
+      "group": "Bio-optics"
     },
     "preset_bbp": {
       "label": "Backscatter",
@@ -106,7 +128,8 @@
       "cmap": "bbp",
       "invert_y": true,
       "draw_order": "outliers",
-      "prewarm": true
+      "prewarm": true,
+      "group": "Bio-optics"
     },
     "preset_par": {
       "label": "PAR",
@@ -118,7 +141,8 @@
       "cmap": "sunset",
       "invert_y": true,
       "draw_order": "outliers",
-      "prewarm": true
+      "prewarm": true,
+      "group": "Bio-optics"
     }
   },
   "views": {

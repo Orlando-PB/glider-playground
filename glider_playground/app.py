@@ -637,9 +637,24 @@ def api_variables(id: str):
     return {"variables": plot_logic.get_variables(_resolve_path(id))}
 
 
+@app.get("/api/var_plot")
+def api_var_plot(id: str, var: str):
+    """Stats view: a clicked variable against TIME (see plot_logic.get_var_time_series)."""
+    _resolve_path(id)
+    out = cache_logic.get_var_preview(id, var)
+    if "error" in out:
+        raise HTTPException(status_code=400, detail=out["error"])
+    return out
+
+
 @app.get("/api/dataset_info")
 def api_dataset_info(id: str):
-    return _cached_or_live(id, "dataset_info", plot_logic.get_dataset_info)
+    info = _cached_or_live(id, "dataset_info", plot_logic.get_dataset_info)
+    if isinstance(info, dict) and not info.get("error"):
+        # Plottable TIME extent, so the shell can pre-align synced time axes (not part of the cached payload).
+        t0, t1 = spatial_logic.get_time_extent_iso(_resolve_path(id))
+        info = {**info, "time_min": t0, "time_max": t1}
+    return info
 
 
 @app.get("/api/profiles")
@@ -729,10 +744,12 @@ def api_plot_data_bounds(
     cycle_num: float = None, cycle_var: str = None, sci_phases: str = "", direction_filter: str = "",
     highlight_profile: bool = False,
     max_points: int = None,
+    binary: bool = False,
 ) -> dict:
     phases = [int(p) for p in sci_phases.split(",") if p.strip().lstrip("-").isdigit()] if sci_phases else None
     dirs = [int(d) for d in direction_filter.split(",") if d.strip().lstrip("-").isdigit()] if direction_filter else None
-    return plot_logic.get_plot_data_bounds(
+    # binary=True: the same packed container as /api/plot_data (an error still comes back as JSON).
+    result = plot_logic.get_plot_data_bounds(
         _resolve_path(id), x_var, y_var, c_var,
         qc_flags=qc_flags,
         x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
@@ -740,8 +757,11 @@ def api_plot_data_bounds(
         profile_num=profile_num,
         cycle_num=cycle_num, cycle_var=cycle_var, sci_phases=phases, direction_filter=dirs,
         highlight_profile=highlight_profile,
-        max_points=max_points,
+        max_points=max_points, binary=binary,
     )
+    if isinstance(result, (bytes, bytearray)):
+        return Response(content=bytes(result), media_type="application/octet-stream")
+    return result
 
 
 # ---------- satellite / model overlays ----------

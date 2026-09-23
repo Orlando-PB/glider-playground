@@ -195,13 +195,24 @@ async function start() {
     html.push('<div class="krow head plain"><span>Scene</span></div>', ...layers.map(([layer, text, sw]) => `<div class="krow sub" data-layer="${esc(layer)}"><span class="sw">${sw}</span><span>${esc(text)}</span>${eye}</div>`));
     const keyRows = $('keyRows'), shipByKey = Object.fromEntries(view.platforms.filter(v => v.ship).map(v => [v.key, v]));
     keyRows.innerHTML = html.join(''); $('key').hidden = false;
+    // Screen readers: each eye says what it shows/hides; platform rows that open a file act as buttons.
+    keyRows.querySelectorAll('.krow').forEach(r => {
+        const name = r.querySelector('span:not(.sw)')?.textContent || '';
+        const eyeBtn = r.querySelector('.eye');
+        if (eyeBtn) eyeBtn.setAttribute('aria-label', `Show or hide ${name}`);
+        if (r.classList.contains('open')) { r.setAttribute('role', 'button'); r.tabIndex = 0; r.setAttribute('aria-label', `${name}: open this platform's data`); }
+    });
+    keyRows.addEventListener('keydown', e => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('krow')) { e.preventDefault(); e.target.click(); }
+    });
     const membersOf = group => view.platforms.filter(p => group === 'floats' ? p.float : group.startsWith('ship:') ? p.ship && p.key === group.slice(5) : p.fileId && 'kind:' + p.kind === group);
-    const paint = () => keyRows.querySelectorAll('.krow:not(.plain)').forEach(r => {
+    const paint = () => { keyRows.querySelectorAll('.krow:not(.plain)').forEach(r => {
         const layer = r.dataset.layer;
         if (layer) { if (layer === 'scenery') r.classList.toggle('hiddenRow', !view.sceneryOn()); else if (layer === 'traces') r.classList.toggle('hiddenRow', !view.tracesOn() || membersOf('floats').every(p => p.hidden)); else if (layer.startsWith('legs:')) r.classList.toggle('hiddenRow', !view.linesOn(shipByKey[layer.slice(5)]) || shipByKey[layer.slice(5)].hidden); return; }      // a track goes with its owner
         const who = r.dataset.key ? [byKey[r.dataset.key]].filter(Boolean) : membersOf(r.dataset.group);
         r.classList.toggle('hiddenRow', who.length > 0 && who.every(p => p.hidden));
     });
+    keyRows.querySelectorAll('.krow .eye').forEach(b => b.setAttribute('aria-pressed', !b.closest('.krow').classList.contains('hiddenRow'))); };
     keyRows.addEventListener('click', e => {
         const r = e.target.closest('.krow'); if (!r) return;
         if (!e.target.closest('.eye')) { const p = byKey[r.dataset.key]; if (p && !p.hidden && r.classList.contains('open')) open(p); return; }

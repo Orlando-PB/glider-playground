@@ -86,6 +86,16 @@ const CycleProfile = (() => {
         return p;
     }
 
+    /** Time window [ms, ms] of the selected profile (else cycle), or null when nothing is selected. */
+    function getSelectedTimeRange() {
+        const pick = (list, num) => {
+            if (num === null) return null;
+            const e = list.find(x => x.number === num);
+            return (e && e.time_min && e.time_max) ? [_parseUTC(e.time_min), _parseUTC(e.time_max)] : null;
+        };
+        return pick(_profileList, _profileNum) || pick(_cycleList, _cycleNum);
+    }
+
     /** Returns which features are available in the current file. */
     function getCapabilities() {
         return {
@@ -134,7 +144,7 @@ const CycleProfile = (() => {
         if (cached) {
             cached.hasProfiles ? _showElement(_els.profileContainer) : _hideElement(_els.profileContainer);
             cached.hasCycles   ? _showElement(_els.cycleContainer)   : _hideElement(_els.cycleContainer);
-            cached.hasSciPhase ? _showElement(_els.phaseContainer, 'contents')   : _hideElement(_els.phaseContainer);
+            cached.hasSciPhase ? _showElement(_els.phaseContainer)   : _hideElement(_els.phaseContainer);
             cached.hasSciPhase ? _showElement(_els.phaseDivider, 'block') : _hideElement(_els.phaseDivider);
             cached.hasDirection ? _showElement(_els.dirContainer) : _hideElement(_els.dirContainer);
             _syncNavigateContainer();
@@ -156,7 +166,7 @@ const CycleProfile = (() => {
         const cycleVis = _els.cycleContainer   && _els.cycleContainer.style.display   !== 'none';
         const anyVis   = profVis || cycleVis;
         if (anyVis) {
-            _showElement(_els.navigateContainer, 'contents');
+            _showElement(_els.navigateContainer);
             _showElement(_els.navigateDivider, 'block');
         } else {
             _hideElement(_els.navigateContainer);
@@ -271,16 +281,16 @@ const CycleProfile = (() => {
         if (_profileNum === null) {
             inp.value = '';
             if (icon) { icon.textContent = ''; icon.title = ''; }
-            if (clr)  clr.style.display = 'none';
+            if (clr)  clr.disabled = true;
         } else {
             inp.value = _profileNum;
-            if (clr) clr.style.display = 'inline-flex';
+            if (clr) clr.disabled = false;
             const entry = _profileList.find(p => p.number === _profileNum);
             const dir   = entry && entry.direction !== undefined ? entry.direction : null;
             if (icon) {
-                if (dir !== null && DIR_ICONS[dir] !== undefined) {
-                    icon.textContent = DIR_ICONS[dir];
-                    icon.title = DIR_LABELS[dir] || '';
+                if (dir !== null && DIR_LABELS[dir] !== undefined) {
+                    icon.textContent = DIR_LABELS[dir];
+                    icon.title = `This profile is ${DIR_LABELS[dir].toLowerCase()}`;
                 } else {
                     icon.textContent = '';
                     icon.title = '';
@@ -356,7 +366,7 @@ const CycleProfile = (() => {
             _syncNavigateContainer();
 
             if (_hasSciPhase) {
-                _showElement(_els.phaseContainer, 'contents');
+                _showElement(_els.phaseContainer);
                 _showElement(_els.phaseDivider, 'block');
                 _buildPhaseChips();
             } else {
@@ -388,10 +398,10 @@ const CycleProfile = (() => {
         if (!inp) return;
         if (_cycleNum === null) {
             inp.value = '';
-            if (clr) clr.style.display = 'none';
+            if (clr) clr.disabled = true;
         } else {
             inp.value = _cycleNum;
-            if (clr) clr.style.display = 'inline-flex';
+            if (clr) clr.disabled = false;
         }
 
         const nums = _cycleList.map(c => c.number);
@@ -444,13 +454,14 @@ const CycleProfile = (() => {
     function _bindCycleEvents() {
         _els.cyclePrevBtn  ?.addEventListener('click',  () => _stepCycle(-1));
         _els.cycleNextBtn  ?.addEventListener('click',  () => _stepCycle(1));
+        // The profile arrows are limited to the selected cycle, so a cycle change re-syncs them too.
         _els.cycleClearBtn ?.addEventListener('click',  () => {
-            _cycleNum = null; _syncCycleUI(); _fire();
+            _cycleNum = null; _syncCycleUI(); _syncProfileUI(); _fire();
         });
         _els.cycleNumInput?.addEventListener('change', () => {
             const v = _els.cycleNumInput.value.trim();
             _cycleNum = v === '' ? null : (isNaN(Number(v)) ? _cycleNum : Number(v));
-            _syncCycleUI(); _fire();
+            _syncCycleUI(); _syncProfileUI(); _fire();
         });
     }
 
@@ -545,5 +556,5 @@ const CycleProfile = (() => {
 
     // ── Exports ───────────────────────────────────────────────────────────────
 
-    return { init, loadFile, setZoomBounds, getParams, getCapabilities, resetState, fullReset, setPhases, setDirection, PHASE_COLORS, PHASE_NAMES };
+    return { init, loadFile, setZoomBounds, getParams, getSelectedTimeRange, getCapabilities, resetState, fullReset, setPhases, setDirection, PHASE_COLORS, PHASE_NAMES };
 })();

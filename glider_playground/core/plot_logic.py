@@ -122,7 +122,7 @@ def plot_cache_params_str(*, x_var, y_var, c_var, qc_flags,
     ))
 
 
-# Preloaded arrays and CTD overlays live on disk (.npy / .npz), never permanently
+# Preloaded arrays and CTD overlays live on disk (.npy), never permanently
 # in RAM — the same on a laptop and on the Pi. Each request memory-maps only the
 # variables it needs, so RAM stays flat however many files are registered and a
 # restart is warm. Costs ~10-30 ms per request against holding everything in RAM.
@@ -139,8 +139,41 @@ def _preload_dir(filepath: str) -> Path:
 
 
 def _ctd_cache_path(filepath: str, interpolate: bool, apply_ctd_qc: bool) -> Path:
+    """Directory of one .npy per overlay array (memory-mapped on read, like the preload)."""
     h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
-    return _CTD_CACHE_DIR / f"{h}_{int(interpolate)}_{int(apply_ctd_qc)}.npz"
+    return _CTD_CACHE_DIR / f"{h}_{int(interpolate)}_{int(apply_ctd_qc)}"
+
+
+def _clear_ctd_cache(filepath: str):
+    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
+    for f in _CTD_CACHE_DIR.glob(f"{h}_*"):
+        if f.is_dir():
+            shutil.rmtree(f, ignore_errors=True)
+        else:
+            f.unlink(missing_ok=True)
+
+
+def _save_ctd_overlay(cache_dir: Path, overlay: dict):
+    tmp = cache_dir.with_name(cache_dir.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    for name, arr in overlay.items():
+        arr = np.asarray(arr)
+        # Flags are 0-9: int8 is lossless and a quarter of the pages to fault in.
+        if name.endswith("_QC") and np.issubdtype(arr.dtype, np.integer):
+            arr = arr.astype(np.int8)
+        np.save(str(tmp / f"{name}.npy"), arr)
+    (tmp / "_names.json").write_text(json.dumps(list(overlay.keys())))
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    tmp.rename(cache_dir)
+
+
+def _load_ctd_overlay(cache_dir: Path):
+    """{name: read-only memmap} or None. Nothing is read until a page is touched."""
+    names_f = cache_dir / "_names.json"
+    if not names_f.exists():
+        return None
+    return {n: _load_npy(cache_dir / f"{n}.npy") for n in json.loads(names_f.read_text())}
 
 
 # --- Derived variable store (GSW salinity/density etc.) ---
@@ -268,9 +301,8 @@ def stream_preload_to_disk(filepath: str, is_removed_fn=None):
     d = _preload_dir(filepath)
     d.mkdir(parents=True, exist_ok=True)
     # A fresh preload makes anything computed from the previous one stale.
-    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
-    for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
-        f.unlink(missing_ok=True)
+    _clear_ctd_cache(filepath)
+    (d / _TIME_VALID_NAME).unlink(missing_ok=True)
     names = []
     # cache=False: by default xarray keeps every array it has read inside the open
     # dataset, which quietly accumulated the whole file in RAM here.
@@ -316,9 +348,7 @@ def clear_preloaded(filepath: str):
     with _PRELOADED_LOCK:
         _PRELOADED.pop(filepath, None)
     shutil.rmtree(_preload_dir(filepath), ignore_errors=True)
-    h = hashlib.sha256(filepath.encode()).hexdigest()[:16]
-    for f in _CTD_CACHE_DIR.glob(f"{h}_*.npz"):
-        f.unlink(missing_ok=True)
+    _clear_ctd_cache(filepath)
     clear_derived(filepath)
     _bust_caches()
     # The file changed on disk, so the (filepath, interp, clean) cache key is stale for this path too;
@@ -453,9 +483,9 @@ def _report_ctd_stage(msg: str):
 def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
     """Disk-backed CTD overlay.
 
-    On first call (during prewarm): compute overlay and save as .npz.
-    On subsequent calls (plot requests): load .npz, return, GC'd after use.
-    No arrays are kept in RAM between requests.
+    On first call (during prewarm): compute overlay and save one .npy per array.
+    On subsequent calls (plot requests): memory-map them, so only the pages a
+    request touches are read. No arrays are kept in RAM between requests.
 
     For the (interp=True, qc=True) combo the result is composed from the
     already-cached clean result + a single interpolation pass rather than
@@ -471,17 +501,32 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
     if not var_map:
         return None
 
+    legacy = cache_path.with_suffix(".npz")
+    if legacy.exists():
+        # Pre-directory cache: unpack it once rather than recompute (minutes on a big file).
+        if not cache_path.exists():
+            try:
+                with np.load(str(legacy)) as f:
+                    _save_ctd_overlay(cache_path, dict(f))
+            except Exception:
+                pass
+        legacy.unlink(missing_ok=True)
     if cache_path.exists():
         try:
-            with np.load(str(cache_path)) as f:
-                cached = dict(f)
+            alias = cache_path / "_alias"
+            if alias.exists():
+                # Composed overlay that turned out identical to another combo (see below).
+                i, q = alias.read_text().strip().split("_")
+                return _ctd_from_disk(filepath, bool(int(i)), bool(int(q)))
+            cached = _load_ctd_overlay(cache_path)
             # The overlay replaces the raw arrays row-for-row, so it must match their
             # current length. A mismatch means it was computed from an older copy of
             # the file (e.g. a live glider that has since grown) — recompute it.
             n_raw = next((len(pre[actual]) for actual in var_map.values() if actual in pre), None)
-            if n_raw is not None and all(len(v) == n_raw for v in cached.values()):
+            if cached and n_raw is not None and all(len(v) == n_raw for v in cached.values()):
                 return cached
-            cache_path.unlink(missing_ok=True)
+            cached = None
+            shutil.rmtree(cache_path, ignore_errors=True)
         except Exception:
             pass
 
@@ -500,6 +545,12 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
             for c in CTD_VARS
         )
         if not clean_changed:
+            # Remember the answer, so later requests skip re-reading + comparing the clean overlay.
+            try:
+                cache_path.mkdir(parents=True, exist_ok=True)
+                (cache_path / "_alias").write_text("1_0")
+            except Exception:
+                pass
             return _ctd_from_disk(filepath, True, False)
 
         for k, arr in clean_canon.items():
@@ -519,7 +570,8 @@ def _ctd_from_disk(filepath, interpolate: bool, apply_ctd_qc: bool):
 
     if overlay:
         try:
-            np.savez(str(cache_path), **overlay)
+            _save_ctd_overlay(cache_path, overlay)
+            overlay = _load_ctd_overlay(cache_path) or overlay
         except Exception:
             pass
 
@@ -531,6 +583,16 @@ def _ctd_processed_arrays(filepath, interpolate: bool, apply_ctd_qc: bool):
     return _ctd_from_disk(filepath, interpolate, apply_ctd_qc)
 
 
+def _isnull(a):
+    """pd.isnull without its generic path: NaT / NaN tests straight on the array."""
+    a = np.asarray(a)
+    if np.issubdtype(a.dtype, np.datetime64):
+        return np.isnat(a)
+    if np.issubdtype(a.dtype, np.floating):
+        return np.isnan(a)
+    return np.asarray(pd.isnull(a))
+
+
 def _hard_time_valid_mask(t_vals):
     """Unconditional TIME validity: NaT and any timestamp that runs backwards
     relative to everything before it are always dropped, regardless of QC flag
@@ -539,8 +601,7 @@ def _hard_time_valid_mask(t_vals):
     here; that's flagged QC=4 (see derive_logic._compute_time_qc) and left to
     the normal per-variable flag filtering, like everything else."""
     t_int = np.asarray(t_vals).astype('datetime64[ns]').view('int64')
-    nat_mask = pd.isnull(t_vals)
-    valid = ~np.asarray(nat_mask)
+    valid = ~_isnull(t_vals)
     INT_MIN = np.iinfo(np.int64).min
     safe = np.where(valid, t_int, INT_MIN)
     running_max = np.maximum.accumulate(safe)
@@ -548,6 +609,51 @@ def _hard_time_valid_mask(t_vals):
     prev_max[0] = INT_MIN
     prev_max[1:] = running_max[:-1]
     return valid & (t_int >= prev_max)
+
+
+# The TIME validity mask depends only on the preloaded TIME column, so it's computed once
+# per file and kept beside the preload (memory-mapped like everything else there).
+_TIME_VALID_NAME = "_time_valid.npy"
+
+
+def _time_valid_mask_cached(filepath, t_vals):
+    d = _preload_dir(filepath)
+    f = d / _TIME_VALID_NAME
+    try:
+        if f.exists():
+            m = _load_npy(f)
+            if m.dtype == np.bool_ and len(m) == len(t_vals):
+                return m
+    except Exception:
+        pass
+    m = _hard_time_valid_mask(t_vals)
+    if d.exists():
+        try:
+            np.save(str(f), m)
+        except Exception:
+            pass
+    return m
+
+
+def _qc_pass_mask(qc_vals, allowed_flags):
+    """Per-sample "flag is one of allowed_flags". NaN/missing counts as flag 0 (no QC
+    performed) rather than silently failing every check. A lookup table indexed by the
+    flag value, instead of np.isin, since flags are small integers."""
+    arr = np.asarray(qc_vals)
+    n = max(256, (max(allowed_flags) + 1) if allowed_flags else 0)
+    lut = np.zeros(n, dtype=bool)
+    lut[[f for f in allowed_flags if 0 <= f < n]] = True
+    if np.issubdtype(arr.dtype, np.integer) and arr.dtype.itemsize == 1:
+        # The common int8 case: one gather over the raw bytes, negatives (128-255 as
+        # unsigned) mapped to False by the table itself.
+        lut8 = lut[:256].copy()
+        if arr.dtype == np.int8:
+            lut8[128:] = False
+        return lut8[arr.view(np.uint8)]
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.nan_to_num(arr, nan=0.0)
+    idx = np.clip(arr.astype(np.intp), 0, n - 1)
+    return lut[idx] & (arr >= 0) & (arr < n)
 
 
 def _normalize_qc(qc_vals):
@@ -1021,7 +1127,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
         "valid": 0
     }
 
-    current_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
+    current_mask = ~_isnull(x_vals) & ~_isnull(y_vals)
 
     profile_mask = _apply_profile_mask(data_dict, profile_num)
     cycle_mask = _apply_cycle_mask(data_dict, cycle_num, cycle_var)
@@ -1081,18 +1187,19 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
         if np.issubdtype(c_vals.dtype, np.datetime64):
             c_vals_numeric = np.zeros(len(c_vals), dtype=float)
             c_vals_numeric[:] = np.nan
-            valid_dt_mask = ~pd.isnull(c_vals)
+            valid_dt_mask = ~_isnull(c_vals)
             c_vals_numeric[valid_dt_mask] = c_vals[valid_dt_mask].astype('datetime64[s]').astype(float)
             c_vals = c_vals_numeric
-        else:
+        elif not np.issubdtype(c_vals.dtype, np.floating):
             c_vals = c_vals.astype(float)
+        # Floats are tested in place (no full-column float64 copy); cast after the gather.
         current_mask &= ~np.isnan(c_vals)
-        
+
     stats["nan_removed"] = int(stats["total"] - current_mask.sum())
 
     if actual_time_var in data_dict:
         old_sum = current_mask.sum()
-        current_mask &= _hard_time_valid_mask(data_dict[actual_time_var])
+        current_mask &= _time_valid_mask_cached(filepath, data_dict[actual_time_var])
         stats["time_removed"] = int(old_sum - current_mask.sum())
 
     try:
@@ -1103,7 +1210,7 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
     qc_pass_mask = np.ones(len(x_vals), dtype=bool)
     for v in [x_var, y_var, c_var]:
         if v and f"{v}_QC" in data_dict:
-            qc_pass_mask &= np.isin(_normalize_qc(data_dict[f"{v}_QC"]), allowed_flags)
+            qc_pass_mask &= _qc_pass_mask(data_dict[f"{v}_QC"], allowed_flags)
 
     old_sum = current_mask.sum()
     current_mask &= qc_pass_mask
@@ -1112,16 +1219,16 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
     stats["valid"] = int(current_mask.sum())
     _mark("filter")
 
-    plot_x = x_vals[current_mask]
-    plot_y = y_vals[current_mask]
-    plot_c = c_vals[current_mask] if c_vals is not None else None
+    # Gather once by index: masking the whole (memory-mapped) columns and then striding
+    # would copy every valid sample only to keep one in `step`.
+    keep = np.flatnonzero(current_mask)
     # Per-point "is in the active selection" flag (highlight mode only).
-    plot_sel = selection_mask[current_mask] if (highlight_profile and selection_mask is not None) else None
+    plot_sel = selection_mask[keep] if (highlight_profile and selection_mask is not None) else None
 
     if stats["valid"] == 0:
         return {"error": "No valid data points remain.", "stats": stats}
 
-    is_x_dt = np.issubdtype(plot_x.dtype, np.datetime64)
+    is_x_dt = np.issubdtype(x_vals.dtype, np.datetime64)
 
     render_cap = max_points if (max_points and max_points > 0) else MAX_RENDER_POINTS
     if plot_sel is not None and plot_sel.any() and not plot_sel.all():
@@ -1135,18 +1242,18 @@ def get_plot_data_json(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8", p
             sel_idx = sel_idx[:: int(np.ceil(len(sel_idx) / SEL_CAP))]
         if len(ctx_idx) > render_cap:
             ctx_idx = ctx_idx[:: int(np.ceil(len(ctx_idx) / render_cap))]
-        keep = np.sort(np.concatenate([sel_idx, ctx_idx]))
-        plot_x = plot_x[keep]; plot_y = plot_y[keep]; plot_sel = plot_sel[keep]
-        if plot_c is not None: plot_c = plot_c[keep]
+        sub = np.sort(np.concatenate([sel_idx, ctx_idx]))
+        keep = keep[sub]; plot_sel = plot_sel[sub]
     elif stats["valid"] > render_cap:
         # ceil, not floor: valid // cap floors to step=1 whenever valid < 2*cap
         # (e.g. 245386 // 200000 == 1), so the cap leaked up to ~2x its limit and
         # decimated nothing. ceil guarantees the result is <= render_cap.
         step = int(np.ceil(stats["valid"] / render_cap))
-        plot_x = plot_x[::step]
-        plot_y = plot_y[::step]
-        if plot_c is not None: plot_c = plot_c[::step]
+        keep = keep[::step]
         if plot_sel is not None: plot_sel = plot_sel[::step]
+    plot_x = x_vals[keep]
+    plot_y = y_vals[keep]
+    plot_c = c_vals[keep].astype(float) if c_vals is not None else None
     _mark("downsample")
 
     # Colour range: needed by both serializers, independent of array encoding.
@@ -1199,7 +1306,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
                           x_min=None, x_max=None, y_min=None, y_max=None, is_x_dt=False,
                           view_x_min=None, view_x_max=None, view_y_min=None, view_y_max=None,
                           profile_num=None, cycle_num=None, cycle_var=None, sci_phases=None, direction_filter=None,
-                          highlight_profile=False, max_points=None):
+                          highlight_profile=False, max_points=None, binary=False):
     if c_var == "None":
         c_var = ""
 
@@ -1265,7 +1372,7 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
     if len(x_vals) == 0:
         return {"error": "No data found."}
 
-    valid_mask = ~pd.isnull(x_vals) & ~pd.isnull(y_vals)
+    valid_mask = ~_isnull(x_vals) & ~_isnull(y_vals)
     qc_pass_mask = np.ones(len(x_vals), dtype=bool)
 
     profile_mask = _apply_profile_mask(data_dict, profile_num)
@@ -1289,16 +1396,16 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
         allowed_flags = [0, 1, 2, 5, 8]
     for v in [x_var, y_var, c_var]:
         if v and f"{v}_QC" in data_dict:
-            qc_pass_mask &= np.isin(_normalize_qc(data_dict[f"{v}_QC"]), allowed_flags)
+            qc_pass_mask &= _qc_pass_mask(data_dict[f"{v}_QC"], allowed_flags)
     valid_mask &= qc_pass_mask
 
     if actual_time_var in data_dict:
-        valid_mask &= _hard_time_valid_mask(data_dict[actual_time_var])
+        valid_mask &= _time_valid_mask_cached(filepath, data_dict[actual_time_var])
 
     if c_vals is not None:
         if np.issubdtype(c_vals.dtype, np.datetime64):
             c_num = np.full(len(c_vals), np.nan)
-            ok = ~pd.isnull(c_vals)
+            ok = ~_isnull(c_vals)
             c_num[ok] = c_vals[ok].astype('datetime64[s]').astype(float)
             c_vals = c_num
         else:
@@ -1374,22 +1481,16 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
         if plot_sel is not None:
             plot_sel = plot_sel[::step]
 
-    x_out = pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x)
-    y_out = _floats_to_list(plot_y)
-
-    c_out, c_min, c_max = [], 0.0, 1.0
-    if plot_c is not None:
-        c_out = _floats_to_list(plot_c)
-        if len(plot_c) > 0:
-            c_min = float(np.nanpercentile(plot_c, 0.1))
-            c_max = float(np.nanpercentile(plot_c, 99.9))
+    c_min, c_max = 0.0, 1.0
+    if plot_c is not None and len(plot_c) > 0:
+        c_min = float(np.nanpercentile(plot_c, 0.1))
+        c_max = float(np.nanpercentile(plot_c, 99.9))
 
     units_map = _get_var_units(filepath)
-    return {
-        "x": x_out, "y": y_out, "c": c_out, "is_x_dt": bool(is_x_dt),
+    meta = {
+        "is_x_dt": bool(is_x_dt),
         "c_min": c_min, "c_max": c_max,
         "profile_highlight": bool(highlight_profile and selection_mask is not None),
-        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
         "x_var": x_var, "y_var": y_var, "c_var": c_var,
         "x_units": units_map.get(x_var, ""),
         "y_units": units_map.get(y_var, ""),
@@ -1401,3 +1502,78 @@ def get_plot_data_bounds(filepath, x_var, y_var, c_var="", qc_flags="0,1,2,5,8",
         # box, so the client can skip a redundant refetch on a deeper zoom-in.
         "complete": bool(complete),
     }
+    if binary:
+        # Same container as get_plot_data_json (see _pack_plot_binary).
+        x_arr = (plot_x.astype('datetime64[ms]').astype('int64') if is_x_dt else plot_x)
+        arrays = [("x", x_arr, "f64"), ("y", plot_y, "f32")]
+        if plot_c is not None:
+            arrays.append(("c", plot_c, "f32"))
+        if plot_sel is not None:
+            arrays.append(("in_selection", plot_sel, "u8"))
+        return _pack_plot_binary(meta, arrays)
+    return {
+        "x": pd.to_datetime(plot_x).strftime('%Y-%m-%d %H:%M:%S').tolist() if is_x_dt else _floats_to_list(plot_x),
+        "y": _floats_to_list(plot_y),
+        "c": _floats_to_list(plot_c) if plot_c is not None else [],
+        **meta,
+        "in_selection": plot_sel.tolist() if plot_sel is not None else [],
+    }
+
+
+# ---- Variable-vs-time preview (Stats view: click a variable) ----------------
+_VAR_PREVIEW_MAX = 5_000
+
+
+def get_var_time_series(filepath, var):
+    """``var`` against TIME for the Stats view's inline preview: evenly subsampled
+    to at most _VAR_PREVIEW_MAX valid points, times as naive-UTC strings, plus
+    ``{var}_QC`` flags when the file has them and point counts. Reads the
+    preloaded/derived arrays, never the NetCDF. ``{"error": ...}`` when not plottable."""
+    names = _get_var_names(filepath)
+    if var not in names:
+        return {"error": f"'{var}' not in file."}
+    time_var = "TIME" if "TIME" in names else next((n for n in names if n.upper() == "TIME"), None)
+    want = (var,) + ((f"{var}_QC",) if f"{var}_QC" in names else ()) + \
+           ((time_var,) if time_var and time_var != var else ())
+    data = _read_vars_cached(filepath, want) or {}
+    if var not in data:
+        return {"error": f"Could not read '{var}'."}
+    y = np.asarray(data[var]).ravel()
+    is_time = np.issubdtype(y.dtype, np.datetime64)
+    if y.size == 1:
+        return {"value": str(y[0])}
+    if not (np.issubdtype(y.dtype, np.number) or is_time):
+        if y.size <= 200:
+            return {"value": ", ".join(str(v) for v in y)}
+        return {"error": f"{y.dtype} ({y.size} values), not plotted."}
+
+    t = data.get(time_var) if time_var and time_var != var else None
+    x_is_time = t is not None and np.asarray(t).size == y.size
+    x = np.asarray(t).ravel() if x_is_time else np.arange(y.size)
+    flags = data.get(f"{var}_QC")
+    if flags is not None and np.asarray(flags).size != y.size:
+        flags = None
+
+    valid = ~pd.isnull(y)
+    if x_is_time:
+        valid &= ~pd.isnull(x)
+    idx = np.flatnonzero(valid)
+    if idx.size > _VAR_PREVIEW_MAX:
+        idx = idx[np.linspace(0, idx.size - 1, _VAR_PREVIEW_MAX).astype(int)]
+
+    def _times(a):
+        return np.datetime_as_string(np.asarray(a).astype("datetime64[s]"), unit="s").tolist()
+
+    out = {
+        "x": _times(x[idx]) if x_is_time else idx.tolist(),
+        "y": _times(y[idx]) if is_time else y[idx].astype(float).tolist(),
+        "x_is_time": bool(x_is_time),
+        "y_is_time": bool(is_time),
+        "units": _get_var_units(filepath).get(var, ""),
+        "n_total": int(y.size),
+        "n_valid": int(valid.sum()),
+        "n_shown": int(idx.size),
+    }
+    if flags is not None:
+        out["flags"] = np.nan_to_num(np.asarray(flags)[idx].astype(float), nan=-1).astype(int).tolist()
+    return out

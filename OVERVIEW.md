@@ -131,6 +131,7 @@ change alters cached output, and add a line here.
 
 | Version | Change |
 |---|---|
+| v32 | PROFILE_NUMBER / PROFILE_DIRECTION filled onto rows without a depth sample inside a profile (profile filter kept only the CTD grid, so Dive lines vanished profile-by-profile) |
 | v31 | 3D view bathymetry grid widened by one cell and keeps its far edges, so the scene box always contains the track |
 | v30 | map track and 3D track point caps are now the same locally and on the server (5000 / 20000; the server was 1000 / 4000) — LOW_MEMORY mode removed |
 | v29 | 3D view compass heading bridged across gaps and smoothed |
@@ -173,8 +174,9 @@ arrays and roughly halves payload size.
   `Uint8Array` views directly out of the response `ArrayBuffer` (no copy-then-parse). Datetime
   x-values are packed as epoch-ms `f64` and converted client-side to Plotly's expected date-string
   format.
-- The plot fetch requests this path explicitly with `?binary=1` and branches on
-  `Content-Type: application/octet-stream` vs JSON (JSON responses are the error/fallback case).
+- The plot fetch (`/api/plot_data`) and the zoom refine fetch (`/api/plot_data_bounds`) both request this
+  path explicitly with `?binary=1` and branch on `Content-Type: application/octet-stream` vs JSON (JSON
+  responses are the error/fallback case).
 - Separately, `core/plot_logic.py` also uses `.npy` files for **on-disk** array persistence (always, locally and on the server) — this is a different thing from the binary-over-HTTP format above;
   it's the disk-backed cache tier, not the wire format.
 - Non-binary JSON responses still get a size-reduction pass: floats are trimmed to 7 significant
