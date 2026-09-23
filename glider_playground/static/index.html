@@ -1362,13 +1362,13 @@
                     </span>
                     <button id="datasetTrigger" class="dataset-trigger" type="button" aria-haspopup="dialog">
                         <span class="material-symbols-outlined text-[16px]" id="datasetTriggerIcon">database</span>
-                        <img id="datasetTriggerPlatform" class="dataset-trigger-platform" alt="" hidden>
+                        <img id="datasetTriggerPlatform" class="dataset-trigger-platform" alt="" aria-hidden="true" hidden>
                         <span id="datasetTriggerLabel" class="dataset-trigger-label">No files</span>
                         <span id="datasetTriggerCount" class="dataset-trigger-count" style="display:none;"></span>
                         <span class="material-symbols-outlined text-[16px] dataset-trigger-caret">expand_more</span>
                     </button>
-                    <select id="dataset" hidden></select>
-                    <input type="file" id="filesUploadInput" multiple accept=".nc" hidden>
+                    <select id="dataset" aria-label="Selected file" hidden></select>
+                    <input type="file" id="filesUploadInput" multiple accept=".nc" aria-label="Upload NetCDF files" hidden>
 
                     <div id="filesPanel" class="files-panel" hidden role="dialog" aria-label="Files">
                         <div class="files-panel-header">
@@ -1493,15 +1493,15 @@
                 <div class="settings-controls">
                     <div class="field">
                         <span class="field-label">X</span>
-                        <select id="xVar" class="p-1.5 w-28 transition-all"></select>
+                        <select id="xVar" class="p-1.5 w-28 transition-all" aria-label="X variable"></select>
                     </div>
                     <div class="field">
                         <span class="field-label">Y</span>
-                        <select id="yVar" class="p-1.5 w-28 transition-all"></select>
+                        <select id="yVar" class="p-1.5 w-28 transition-all" aria-label="Y variable"></select>
                     </div>
                     <div class="field">
                         <span class="field-label">Colour</span>
-                        <select id="cVar" class="p-1.5 w-28 transition-all">
+                        <select id="cVar" class="p-1.5 w-28 transition-all" aria-label="Colour variable">
                             <option value="">None</option>
                         </select>
                         <!-- Colour palette picker -->
@@ -1567,7 +1567,7 @@
                 <div class="settings-controls">
                     <div id="qcFlagsContainer" class="chip-row">
                         <!-- QC flag chips 0-9 built by buildQcChips() -->
-                        <input type="text" id="qcFlags" value="0,1,2,5,8" hidden>
+                        <input type="text" id="qcFlags" value="0,1,2,5,8" aria-label="QC flags" hidden>
                     </div>
                     <button id="qcDefaultBtn" class="toggle-btn px-2.5 rounded" title="Reset to the default flags (0,1,2,5,8)">Default</button>
                 </div>
@@ -1677,7 +1677,7 @@
             <div id="varList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
                 <div class="ds-search-wrap">
                     <span class="material-symbols-outlined ds-search-icon">search</span>
-                    <input id="varSearch" class="ds-search" type="text" placeholder="Search variables…" autocomplete="off" spellcheck="false">
+                    <input id="varSearch" class="ds-search" type="text" aria-label="Search variables" placeholder="Search variables…" autocomplete="off" spellcheck="false">
                 </div>
                 <div id="varRows"></div>
                 <div id="varNoMatch" class="ds-nomatch hidden">No matching variables.</div>
@@ -1685,7 +1685,7 @@
             <div id="attrList" class="flex-col w-full overflow-y-auto bg-white flex-grow relative">
                 <div class="ds-search-wrap">
                     <span class="material-symbols-outlined ds-search-icon">search</span>
-                    <input id="attrSearch" class="ds-search" type="text" placeholder="Search attributes…" autocomplete="off" spellcheck="false">
+                    <input id="attrSearch" class="ds-search" type="text" aria-label="Search attributes" placeholder="Search attributes…" autocomplete="off" spellcheck="false">
                 </div>
                 <div id="attrRows"></div>
                 <div id="attrNoMatch" class="ds-nomatch hidden">No matching attributes.</div>
@@ -1739,7 +1739,7 @@
 
                 <div id="cTrimContainer" class="flex cTrim-inactive flex-col items-center pt-2 pb-3 px-0.5 shrink-0 gap-2 z-10 w-[66px]" style="margin-right: 8px;">
                     <span id="cTrimLabel" class="font-bold uppercase tracking-wide text-center w-full pb-1.5 whitespace-nowrap overflow-hidden" style="color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 9px;">Colour</span>
-                    <input type="number" step="any" id="cTrimMaxInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
+                    <input type="number" step="any" id="cTrimMaxInput" aria-label="Colour scale maximum" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Max">
                     <div class="flex-grow relative w-4 flex justify-center items-center my-1 h-full">
                         <div id="cTrimGradient" class="absolute w-full opacity-100 rounded" style="background: linear-gradient(to top, #440154, #21918c, #fde725); bottom: 0%; top: 0%;"></div>
                         <div class="absolute h-full w-full cursor-pointer z-10" id="cTrimTrack">
@@ -1749,7 +1749,7 @@
                             <div class="absolute w-6 h-3 bg-gray-400 cursor-grab transition-colors z-20 rounded border-none" id="cTrimBottomHandle" style="left: 50%; bottom: 0%; transform: translate(-50%, 50%);"></div>
                         </div>
                     </div>
-                    <input type="number" step="any" id="cTrimMinInput" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Min">
+                    <input type="number" step="any" id="cTrimMinInput" aria-label="Colour scale minimum" class="border border-gray-300 p-1 text-[11px] text-gray-700 bg-white w-full text-center rounded" placeholder="Min">
                     <button id="autoColorBtn" class="toggle-btn px-1 py-1 rounded w-full">Auto</button>
                     <button id="resetColorBtn" class="toggle-btn px-1 py-1 rounded w-full">Reset</button>
                 </div>
@@ -3499,6 +3499,12 @@
                 const seq = Number(msg.seq);
                 if (msg.seq != null && isFinite(seq) && srcPanel._loadSeq && seq < srcPanel._loadSeq) return;
                 srcPanel._loading = false;
+                // An empty result (e.g. a profile this variable has no points in) must not keep contributing
+                // its previous extent to the synced union, and the panels waiting on it need the union re-run.
+                if (msg.type === 'plotError') {
+                    srcPanel.state.xFullMin = null; srcPanel.state.xFullMax = null;
+                    if (alignTimeAxes && isTimeseriesPanel(srcPanel)) applyUnionRange();
+                }
             }
 
             // First successful draw: this iframe is warm and can be re-driven via 'replot'.
@@ -5682,7 +5688,7 @@
             if (!datasetTriggerPlatform) return;
             if (kind) {
                 datasetTriggerPlatform.src = `/static/icons/${kind}-mapicon.svg`;
-                datasetTriggerPlatform.title = kind;
+                datasetTriggerPlatform.dataset.kind = kind;
                 datasetTriggerPlatform.hidden = false;
                 datasetTriggerIcon.hidden = true;
                 datasetTriggerPlatform.onerror = () => { datasetTriggerPlatform.hidden = true; datasetTriggerIcon.hidden = false; };

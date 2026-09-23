@@ -4,8 +4,8 @@ const CycleProfile = (() => {
     'use strict';
 
     // ── Display maps ─────────────────────────────────────────────────────────
-    const DIR_ICONS  = { 1: 'arrow_upward', '-1': 'arrow_downward', 0: 'swap_horiz' };
-    const DIR_LABELS = { 1: 'Ascending', '-1': 'Descending', 0: 'Transect' };
+    const DIR_ICONS  = { 1: 'arrow_downward', '-1': 'arrow_upward', 0: 'swap_horiz' };
+    const DIR_LABELS = { 1: 'Descending', '-1': 'Ascending', 0: 'Transect' };
 
     const PHASE_NAMES = {
         0: 'Unknown', 1: 'Ascent', 2: 'Descent', 3: 'Surfacing',

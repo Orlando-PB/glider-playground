@@ -35,7 +35,7 @@ button { border: 0; background: none; cursor: pointer; }
 #timebar .speed { padding: 0 7px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent); background: var(--accent-soft); }
 #timebar .speed:hover { background: var(--accent); color: #fff; }
 #timebar .clock { flex: none; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
-#timebar .clock .short { display: none; }
+#timebar .clock .short { display: none; min-width: 7em; text-align: right; }      /* fixed width: month names differ in width, and the bar must not shift */
 /* The ring that counts down to playback carrying on after the camera was moved. pathLength=100 keeps the dash maths simple. */
 #timebar .play { position: relative; overflow: visible; }
 #timebar .play .icon { display: grid; }
@@ -45,7 +45,7 @@ button { border: 0; background: none; cursor: pointer; }
 #timebar .play.cooldown .ring rect { animation: ringFill var(--resume, 1.5s) linear forwards; }
 @keyframes ringFill { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 /* Narrow panels: a short clock, then none. */
-@media (max-width: 480px) { #timebar .clock .full { display: none; } #timebar .clock .short { display: inline; } }
+@media (max-width: 480px) { #timebar .clock .full { display: none; } #timebar .clock .short { display: inline-block; } }
 @media (max-width: 320px) { #timebar .clock { display: none; } }
 
 /* Style panel: a round button that opens a flat card of rows upwards; the header stays at the bottom. */

@@ -4,7 +4,8 @@
 const SPEEDS = [[1, '1×', 'Real time'], [60, '1 min/s', '1 minute / sec'], [600, '10 min/s', '10 minutes / sec'], [3600, '1 h/s', '1 hour / sec'], [36000, '10 h/s', '10 hours / sec'], [86400, '1 day/s', '1 day / sec']], DEFAULT_SPEED = 3600;
 const RESUME_MS = 1500;
 const fmt = ms => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');      // data is UTC throughout
-const fmtShort = ms => new Date(ms).toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtShort = ms => { const d = new Date(ms), p = n => String(n).padStart(2, '0'); return `${p(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; };
 
 // `speed`: the speed to start at (one of SPEEDS, else `defaultSpeed`, else the default); `onSpeed(x)` when the user changes it.
 // `onWindow(a, b)`: the span of track drawn (ms) whenever it changes — set by the clip handles at either end of the
@@ -50,8 +51,9 @@ export function createTimeline(el, t0, t1, onTime, { speed: startSpeed, defaultS
     for (const k of ['l', 'r']) {
         const clip = clips[k];
         const at = e => { const r = wrap.getBoundingClientRect(); return t0 + (t1 - t0) * Math.max(0, Math.min(1, (e.clientX - r.left - PAD) / (r.width - 2 * PAD))); };
-        // A handle never crosses the playhead and snaps onto it when close: the right one dragged onto it leaves a trail only.
-        const move = t => { if (Math.abs(t - now) < (t1 - t0) * 0.015) t = now; if (k === 'l') win.a = Math.min(t, now); else win.b = Math.max(t, now); setTime(now); };
+        // A handle snaps onto the playhead when close (the right one dragged onto it leaves a trail only) and pushes it
+        // along when dragged past it, as the playhead pushes the handles.
+        const move = t => { if (Math.abs(t - now) < (t1 - t0) * 0.015) t = now; if (k === 'l') win.a = t; else win.b = t; setTime(k === 'l' ? Math.max(now, t) : Math.min(now, t)); };
         clip.addEventListener('pointerdown', e => { e.preventDefault(); clip.setPointerCapture(e.pointerId); clip.classList.add('drag'); move(at(e)); });
         clip.addEventListener('pointermove', e => { if (clip.classList.contains('drag')) move(at(e)); });
         for (const ev of ['pointerup', 'pointercancel']) clip.addEventListener(ev, () => clip.classList.remove('drag'));
