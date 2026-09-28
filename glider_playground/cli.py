@@ -105,7 +105,8 @@ def main():
         host = "127.0.0.1"
         print("Running in Local Mode (localhost)")
 
-    print("Starting Glider Playground...")
+    from glider_playground.core import presets_logic
+    print(f"Starting {presets_logic.app_name()}...")
 
     threading.Thread(target=_check_for_update, daemon=True).start()
 

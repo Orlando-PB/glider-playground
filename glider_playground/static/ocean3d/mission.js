@@ -70,7 +70,7 @@ async function start() {
     const missionP = getJSON(api);
     missionP.then(m => { $('loaderTitle').textContent = m.title || id; }).catch(() => {});
     const [mission, scene] = await Promise.all([missionP, getJSON(`${api}/scene?grid=${SEABED_GRID}`)]);
-    document.title = `${String(mission.title || id).replace(/\s+/g, ' ')} · Glider Playground`;
+    document.title = `${String(mission.title || id).replace(/\s+/g, ' ')} · ${window.GP_APP_NAME || 'Glider Playground'}`;
     $('title').textContent = mission.title || id;
     loading('Loading tracks…');
     const view = createView(scene, { store: 'gp_mission_view', ownLayers: true, defaultSpeed: 36000, speed: (mission.time || {}).speed }), world = view.world;

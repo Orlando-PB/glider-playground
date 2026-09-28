@@ -1,5 +1,6 @@
 {
   "_help": [
+    "APP NAME: 'app.name' is the name shown everywhere (tab titles, link previews, console, startup message); 'app.site_url' is the public site's address. Change them here only.",
     "ONE FILE for plot presets, dashboard views and colour palettes. Read by the backend (startup pre-caching) and by every page (served as /api/plot_presets.js). Restart the app after editing.",
     "ADD A PRESET: copy a block in 'presets', give it a new key (preset_<something>), and edit it. It appears as a toolbar button automatically, greyed out for files that lack its variables.",
     "  label      - button text.",
@@ -16,6 +17,10 @@
     "ADD A PALETTE: add a name + list of hex colours to 'palettes', LOW value first -> HIGH value last. (Gradients copied top-to-bottom from a colour bar are high-first: reverse them.)",
     "VIEWS: which presets each built-in view shows, in order. Presets the file can't satisfy are skipped. An entry is a preset key, or {\"preset\": key, \"draw_order\": ...} to override. 'duo' uses exactly two. 'new_plot_order' is the preference order when adding a new plot panel. 'invert_y_vars' are y variables that auto-switch Invert-Y on when picked by hand."
   ],
+  "app": {
+    "name": "Glider Playground",
+    "site_url": "https://glider-playground.co.uk"
+  },
   "axes": {
     "time": ["TIME", "TIME_GPS"],
     "depth": ["PRES", "GLIDER_DEPTH", "DEPTH", "PRES_ENG"]

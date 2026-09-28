@@ -2,7 +2,7 @@
   "_help": [
     "Mission template. Replace the values, delete the blocks you don't need (only 'title' and 'platforms' matter), then Save.",
     "Easiest route: give this template, missions/README.md and your data files' names + date ranges to an AI and ask it to write the mission.",
-    "'file' is the filename of a .nc already added to Glider Playground. Dates are naive UTC. 'offset' is [right, down] in pixels."
+    "'file' is the filename of a .nc already added to the app. Dates are naive UTC. 'offset' is [right, down] in pixels."
   ],
   "id": "my-mission",
   "title": "My mission",

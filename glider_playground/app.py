@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -76,11 +77,12 @@ missions.attach(app)   # experimental, self-contained: see missions/README.md
 
 # ---------- SEO (server deployment only) ----------
 # These tags are injected into index.html and the robots/sitemap routes are only
-# meaningful for the public deployment at glider-playground.co.uk. Local (pip)
+# meaningful for the public deployment (app.site_url in plot_presets.json). Local (pip)
 # installs run on 127.0.0.1, so injecting canonical/OG/sitemap there would be
 # noise — IS_SERVER gates all of it (see cli.py / the publish workflow).
-SITE_URL = "https://glider-playground.co.uk"
-SEO_TITLE = "Glider Playground — OG1 Glider Data Viewer | National Oceanography Centre"
+APP_NAME = presets_logic.app_name()
+SITE_URL = presets_logic.site_url()
+SEO_TITLE = f"{APP_NAME} — OG1 Glider Data Viewer | National Oceanography Centre"
 SEO_DESCRIPTION = (
     "A free tool for exploring OG1 glider data, from the National Oceanography "
     "Centre. View, plot and map ocean glider profiles and trajectories in your "
@@ -91,13 +93,13 @@ SEO_DESCRIPTION = (
 # dashboard screenshot (1600x847, ~1.9:1 — the size link previews want).
 _SEO_HEAD = f"""\
     <meta name="description" content="{SEO_DESCRIPTION}">
-    <meta name="keywords" content="OG1, glider data viewer, ocean glider, OG1 data viewer, National Oceanography Centre, NOC OG1, glider playground, ocean data tool, oceanography">
+    <meta name="keywords" content="OG1, glider data viewer, ocean glider, OG1 data viewer, National Oceanography Centre, NOC OG1, {APP_NAME.lower()}, ocean data tool, oceanography">
     <meta name="author" content="National Oceanography Centre">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="{SITE_URL}/">
     <!-- Open Graph (link previews on Slack, Teams, Discord, Facebook, etc.) -->
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="Glider Playground">
+    <meta property="og:site_name" content="{APP_NAME}">
     <meta property="og:title" content="{SEO_TITLE}">
     <meta property="og:description" content="{SEO_DESCRIPTION}">
     <meta property="og:url" content="{SITE_URL}/">
@@ -105,20 +107,20 @@ _SEO_HEAD = f"""\
     <meta property="og:image:type" content="image/webp">
     <meta property="og:image:width" content="1600">
     <meta property="og:image:height" content="847">
-    <meta property="og:image:alt" content="The Glider Playground dashboard showing OG1 glider data plots and a map">
+    <meta property="og:image:alt" content="The {APP_NAME} dashboard showing OG1 glider data plots and a map">
     <meta property="og:locale" content="en_GB">
     <!-- Twitter / X large-image card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{SEO_TITLE}">
     <meta name="twitter:description" content="{SEO_DESCRIPTION}">
     <meta name="twitter:image" content="{SITE_URL}/static/readme_images/dashboard.webp">
-    <meta name="twitter:image:alt" content="The Glider Playground dashboard showing OG1 glider data plots and a map">
+    <meta name="twitter:image:alt" content="The {APP_NAME} dashboard showing OG1 glider data plots and a map">
     <!-- Structured data: helps search engines understand this is a web app/tool -->
     <script type="application/ld+json">
     {{
       "@context": "https://schema.org",
       "@type": "WebApplication",
-      "name": "Glider Playground",
+      "name": "{APP_NAME}",
       "alternateName": "OG1 Glider Data Viewer",
       "url": "{SITE_URL}/",
       "description": "{SEO_DESCRIPTION}",
@@ -156,10 +158,10 @@ def _index_html() -> str:
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         # Use an SEO-rich <title> for search results / link previews; the in-app
         # UI doesn't rely on the tab title, so this is safe to override.
-        html = html.replace(
-            "<title>Glider Playground</title>",
-            f"<title>{SEO_TITLE}</title>\n{_SEO_HEAD.rstrip()}",
-            1,
+        html = re.sub(
+            r"<title>.*?</title>",
+            lambda _m: f"<title>{SEO_TITLE}</title>\n{_SEO_HEAD.rstrip()}",
+            html, count=1,
         )
         # Let server plugins (e.g. the private analytics beacon) inject markup
         # right before </body>.
@@ -172,7 +174,7 @@ def _index_html() -> str:
 # Versioned vendor bundles and images are cached forever; our own HTML/JS/CSS must revalidate
 # every load so an auto-update never leaves users on stale code.
 _IMMUTABLE_SUFFIXES = (".min.js", ".woff", ".woff2", ".ttf", ".png", ".webp",
-                       ".svg", ".jpg", ".jpeg", ".gif", ".ico", ".icns")
+                       ".svg", ".jpg", ".jpeg", ".gif", ".ico")
 
 
 @app.middleware("http")

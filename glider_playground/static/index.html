@@ -13,9 +13,12 @@
     <script src="/static/js/units.js"></script>
     <script src="/static/js/snapshot.js"></script>
     <script src="/api/plot_presets.js"></script>
+    <script>if (window.GP_APP_NAME) document.title = window.GP_APP_NAME;</script>
     <!-- Prebuilt Tailwind; regenerate with the Tailwind CLI when classes change. -->
     <link rel="stylesheet" href="/static/vendor/tailwind.css">
     <script src="/static/js/cycle_profile.js"></script>
+    <!-- Logo wordmark font (the app name in the toolbar). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Ubuntu:wght@500&display=swap">
     <!-- Icon font loaded non-render-blocking; <noscript> keeps icons without JS. -->
     <link rel="preload" as="style"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0"
@@ -917,6 +920,15 @@
         /* Re-assert .hidden at higher specificity: the row rules' display:flex otherwise wins by cascade order. */
         .var-row.hidden, .attr-row.hidden { display: none !important; }
         .var-row .var-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        /* Toolbar logo: NOC square + the app name (app.name in plot_presets.json) as text */
+        .app-logo { --logo-h: 28px; display: flex; align-items: center; font-size: var(--logo-h); }
+        .app-logo img { height: 1em !important; width: 1em; }
+        .app-logo-text { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; margin-left: 0.23em;
+                         height: 1em; white-space: nowrap; }
+        /* Sizes are set by fitLogo(): both lines the same width, together the height of the icon. */
+        .app-logo-name { font-family: 'Bebas Neue', 'DIN Condensed', 'Arial Narrow', sans-serif; font-weight: 400; font-size: var(--name-fs, 0.75em);
+                         line-height: 0.7; position: relative; text-transform: uppercase; color: #00b4ff; }
+        .app-logo-org { font-family: 'Ubuntu', 'Inter', sans-serif; font-weight: 500; font-size: var(--org-fs, 0.34em); line-height: 0.9; position: relative; color: #a3a3a3; }
         .var-row .var-name { font-size: 11px; font-weight: 500; color: var(--text-primary); font-family: 'SF Mono','Menlo','Monaco', ui-monospace, monospace; letter-spacing: -0.01em; }
         .var-row .var-units { font-size: 9.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
         .var-row .var-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
@@ -1186,6 +1198,7 @@
             .toolbar-main { gap: 6px; }
             .toolbar-main > div:first-child { padding-right: 8px; }
             .toolbar-main img { height: 24px !important; }
+            .app-logo { --logo-h: 22px; }
             #datasetGroup { flex: 1 1 auto; min-width: 0; padding: 0; }
             .dataset-trigger { max-width: 100%; min-width: 0; width: 100%; }
             .toolbar-actions .toggle-btn { padding-left: 6px; padding-right: 6px; }
@@ -1348,10 +1361,48 @@
             <div class="toolbar-topline">
             <div class="toolbar-main">
                 <!-- Logo -->
-                <div class="flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
+                <div class="app-logo flex items-center pr-3 shrink-0" style="border-right: 1px solid var(--border);"
                      title="© National Oceanography Centre · Developed by Orlando Prugel-Bennett">
-                    <img src="/static/icons/logo_with_text.webp" width="178" height="30" alt="Glider Playground · National Oceanography Centre" class="shrink-0"
-                         style="height:30px;width:auto;">
+                    <img src="/static/icons/noc_logo_square.svg" width="30" height="30" alt="" class="shrink-0">
+                    <div class="app-logo-text">
+                        <span id="appLogoName" class="app-logo-name"></span>
+                        <span class="app-logo-org">National Oceanography Centre</span>
+                    </div>
+                    <script>
+                        (function () {
+                            const name = document.getElementById('appLogoName'), org = name.nextElementSibling, box = name.parentElement;
+                            name.textContent = window.GP_APP_NAME || '';
+                            // Measured from the glyphs' real ink (canvas), not the fonts' nominal line boxes, so the top of the
+                            // name and the bottom of the subtitle sit exactly on the icon's edges.
+                            const GAP = 0.06;   // space between the two lines, as a share of the icon's height
+                            const ctx = document.createElement('canvas').getContext('2d');
+                            function ink(el, text) {
+                                const cs = getComputedStyle(el), R = 200;
+                                ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${R}px ${cs.fontFamily}`;
+                                const m = ctx.measureText(text);
+                                const asc = m.actualBoundingBoxAscent / R, desc = m.actualBoundingBoxDescent / R;
+                                const A = m.fontBoundingBoxAscent / R, D = m.fontBoundingBoxDescent / R;
+                                const h = asc + desc;
+                                // With line-height h the baseline lands at (h - (A + D)) / 2 + A below the line's top; it should be at asc.
+                                return { w: m.width / R, h, shift: asc - ((h - (A + D)) / 2 + A) };
+                            }
+                            function fitLogo() {
+                                const n = ink(name, name.textContent.toUpperCase()), o = ink(org, org.textContent);
+                                if (!n.w || !o.w || !isFinite(n.shift) || !isFinite(o.shift)) return;
+                                const ratio = n.w / o.w;   // org size / name size that makes the widths equal
+                                const nameFs = (1 - GAP) / (n.h + o.h * ratio);
+                                box.style.setProperty('--name-fs', nameFs.toFixed(4) + 'em');
+                                box.style.setProperty('--org-fs', (nameFs * ratio).toFixed(4) + 'em');
+                                name.style.lineHeight = n.h.toFixed(4); name.style.top = n.shift.toFixed(4) + 'em';
+                                org.style.lineHeight = o.h.toFixed(4); org.style.top = o.shift.toFixed(4) + 'em';
+                                window.dispatchEvent(new Event('resize'));   // the toolbar re-fits to the logo's new width
+                            }
+                            fitLogo();
+                            if (document.fonts && document.fonts.load) {
+                                Promise.all([document.fonts.load("1em 'Bebas Neue'"), document.fonts.load("500 1em 'Ubuntu'")]).then(fitLogo, () => {});
+                            }
+                        })();
+                    </script>
                 </div>
 
                 <!-- Files -->
@@ -5259,7 +5310,7 @@
                             <span class="var-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
                             <div class="var-tags">
                                 ${units ? `<span class="var-units" title="${escapeHtml(units)}">${escapeHtml(units)}</span>` : ''}
-                                ${v.derived ? `<span class="var-derived" title="Calculated by Glider Playground — not present in the original file">derived</span>` : ''}
+                                ${v.derived ? `<span class="var-derived" title="Calculated by ${escapeHtml(window.GP_APP_NAME || 'the app')} — not present in the original file">derived</span>` : ''}
                                 ${tw ? `<span class="var-time-warning" title="${escapeHtml(twTip)}">${tw.dropped} dropped</span>` : ''}
                             </div>
                         </div>

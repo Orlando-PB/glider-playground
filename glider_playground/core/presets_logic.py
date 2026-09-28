@@ -1,5 +1,5 @@
 """Loader for glider_playground/plot_presets.json — the single source of truth for plot
-presets, dashboard views and colour palettes. The backend uses it for the
+the app's name, plot presets, dashboard views and colour palettes. The backend uses it for the
 default-plot prewarm (cache_logic); pages get it as a blocking script from
 /api/plot_presets.js so it's available synchronously at first paint."""
 import json
@@ -22,7 +22,7 @@ def load() -> dict:
     except Exception as e:
         print(f"[presets] could not load {CONFIG_PATH.name}: {e}")
         if _cache["cfg"] is None:
-            _cache["cfg"] = {"axes": {}, "presets": {}, "views": {}, "palettes": {}}
+            _cache["cfg"] = {"app": {}, "axes": {}, "presets": {}, "views": {}, "palettes": {}}
     return _cache["cfg"]
 
 
@@ -43,5 +43,15 @@ def prewarm_candidates() -> list:
     ]
 
 
+def app_name() -> str:
+    """The name shown to users ('app.name' in plot_presets.json)."""
+    return load().get("app", {}).get("name") or "Glider Playground"
+
+
+def site_url() -> str:
+    return (load().get("app", {}).get("site_url") or "https://glider-playground.co.uk").rstrip("/")
+
+
 def as_script() -> str:
-    return "window.GP_PLOT_PRESETS = " + json.dumps(load(), separators=(",", ":")) + ";"
+    return ("window.GP_PLOT_PRESETS = " + json.dumps(load(), separators=(",", ":")) + ";"
+            + "window.GP_APP_NAME = " + json.dumps(app_name()) + ";")
