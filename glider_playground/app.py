@@ -69,6 +69,7 @@ _threading.Thread(target=copernicus_fetch.warm_up, name="cm-warmup", daemon=True
 # fetched once and stored on disk (see copernicus_prefetch).
 copernicus_prefetch.start()
 bathy_prefetch.start()
+erddap_fetch.start()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -556,17 +557,6 @@ def api_waypoints(glider: str | None = None):
     tag. Read-only here — managed from the admin panel on the server
     deployment (a server-only plugin)."""
     return {"waypoints": waypoint_logic.list_waypoints(glider)}
-
-
-@app.get("/api/3d_data")
-def api_3d_data(id: str):
-    payload = _cached_or_live(id, "spatial_3d", spatial_logic.generate_3d_data)
-    # A bathymetry fetch that failed during processing is cached as a flat floor; retry it here.
-    if spatial_logic.retry_bathy(payload):
-        rec = cache_logic.get_record(id)
-        if rec and rec.get("spatial_3d") is payload:
-            cache_logic._save_payload_sidecar(rec)
-    return payload
 
 
 @app.get("/api/3d_bathy")

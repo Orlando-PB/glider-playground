@@ -5,13 +5,12 @@ days, downloads them into `DATA_DIR`, and tracks ownership in a marker file
 so that deletes only ever touch files we wrote — never user-placed data.
 
 Designed to run on a small server (Raspberry Pi) shared between users:
-  * The ERDDAP scan result is cached in-process for `SCAN_CACHE_TTL` seconds;
-    scans are single-flight and run in the background — `list_live` never
-    waits on ERDDAP, it reports `scanning` and the client polls.
+  * One background thread (`start`, at app startup) scans ERDDAP every
+    `SCAN_INTERVAL` and then downloads / updates / prunes managed files. Requests
+    never start a scan: `list_live` answers from the last result, and the
+    Refresh button only wakes the scanner early.
   * Downloads are serialised on a single background worker.
-  * Auto-update of locally-managed files runs as a side-effect of `list_live`
-    but is rate-limited and never blocks the response.
-  * Files that have aged past `DAYS_ACTIVE` are pruned automatically.
+  * Files the server hasn't updated for `PRUNE_DAYS` are pruned automatically.
 """
 
 from __future__ import annotations
@@ -32,11 +31,12 @@ import requests
 from ..core import cache_logic
 
 SERVER_FILES_URL = "https://linkedsystems.uk/erddap/files/"
+SERVER_INFO_URL = "https://linkedsystems.uk/erddap/info/"
 DAYS_ACTIVE = 7
 PRUNE_DAYS = 30               # a managed file not updated on the server for this long is deleted
 FILE_SUFFIX = "_R.nc"
-SCAN_CACHE_TTL = 120          # seconds — 2 min server-side cache for the listing
-AUTO_UPDATE_COOLDOWN = 300    # seconds — minimum gap between auto-update sweeps
+SCAN_INTERVAL = 900           # seconds between scans (each is ~80 folder listings on BODC)
+SCAN_RETRY = 120              # seconds before retrying a scan BODC didn't answer
 HTTP_TIMEOUT = 15
 LISTING_TIMEOUT = 6           # seconds per directory-listing attempt
 LISTING_ATTEMPTS = 3
@@ -45,17 +45,16 @@ MARKER_FILE = cache_logic.DATA_DIR / ".glider_playground_managed.json"
 # Gliders the user "binned": never auto-download these again until they ask
 # for one explicitly (a manual download clears the suppression).
 SUPPRESS_FILE = cache_logic.DATA_DIR / ".glider_playground_suppressed.json"
-SCANNER_INTERVAL = 1800       # seconds — background re-scan to pick up new gliders
 
 log = logging.getLogger(__name__)
 
 _lock = threading.RLock()
-_scan_cache: dict = {"at": 0.0, "data": None, "tried": 0.0, "scanning": False, "error": False}
-_scan_lock = threading.Lock()  # held for the duration of a scan (single-flight)
-_kick_pending = False
-SCAN_RETRY = 30               # seconds — gap before retrying a failed scan
-_last_auto_update: float = 0.0
+_scan_cache: dict = {"at": 0.0, "data": None, "scanning": True, "error": False}
+_wake = threading.Event()     # set by the Refresh button to scan now
 _in_flight: set[str] = set()  # filenames currently downloading
+# filename -> {"error", "server_mtime", "gone"} for its last failed download (shown on its card until retried).
+# "gone" (a 404) skips auto-download until the server lists a newer copy.
+_failed: dict[str, dict] = {}
 _scanner_started = False
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-dl")
 
@@ -147,7 +146,7 @@ def _erddap_listing(base_url: str) -> Optional[list]:
             r = requests.get(json_url, timeout=LISTING_TIMEOUT)
             r.raise_for_status()
             rows = r.json().get("table", {}).get("rows", []) or []
-            return [{"name": row[0], "last_modified": (row[1] or 0) / 1000.0} for row in rows]
+            return [{"name": row[0], "last_modified": (row[1] or 0) / 1000.0, "size": row[2]} for row in rows]
         except Exception as e:
             log.warning("ERDDAP listing failed (%d/%d) %s: %s", attempt + 1, LISTING_ATTEMPTS, json_url, e)
             time.sleep(0.5)
@@ -185,61 +184,15 @@ def _scan_active(previous: Optional[list] = None) -> Optional[list[dict]]:
                 "filename": f["name"],
                 "url": urljoin(SERVER_FILES_URL, name) + f["name"],
                 "server_mtime": f["last_modified"],
+                "size": f["size"],
             })
     out.sort(key=lambda x: x["server_mtime"], reverse=True)
     return out
 
 
-def scan_cached(force: bool = False) -> list[dict]:
-    """Return the active-glider listing (blocking). Only one scan ever runs;
-    concurrent callers wait for it and share the result. A failed scan keeps
-    the previous listing."""
-    requested = time.time()
-    with _scan_lock:
-        with _lock:
-            at, data = _scan_cache["at"], _scan_cache["data"]
-        # Fresh enough, or someone else finished a scan while we waited.
-        if data is not None and (at >= requested or (not force and requested - at < SCAN_CACHE_TTL)):
-            return data
-        with _lock:
-            _scan_cache["scanning"] = True
-        new = None
-        try:
-            new = _scan_active(data)
-        finally:
-            with _lock:
-                _scan_cache["scanning"] = False
-                _scan_cache["tried"] = time.time()
-                _scan_cache["error"] = new is None
-                if new is not None:
-                    _scan_cache.update(at=time.time(), data=new)
-        return new if new is not None else (data or [])
-
-
-def _kick_scan(force: bool):
-    """Start a background scan unless one is already queued/running."""
-    global _kick_pending
-    with _lock:
-        if _kick_pending:
-            return
-        _kick_pending = True
-
-    def run():
-        global _kick_pending
-        try:
-            _maybe_auto_update(scan_cached(force=force))
-        except Exception:
-            pass
-        finally:
-            with _lock:
-                _kick_pending = False
-
-    threading.Thread(target=run, name="live-scan-kick", daemon=True).start()
-
-
 # ---------- download / update ----------
 
-def _download_to_data_dir(url: str, filename: str, server_mtime: float) -> Optional[Path]:
+def _download_to_data_dir(url: str, filename: str, server_mtime: float) -> Path:
     target = cache_logic.DATA_DIR / filename
     cache_logic.DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".part")
@@ -252,9 +205,8 @@ def _download_to_data_dir(url: str, filename: str, server_mtime: float) -> Optio
                         f.write(chunk)
         os.replace(tmp, target)
     except Exception:
-        try: tmp.unlink(missing_ok=True)
-        except Exception: pass
-        return None
+        tmp.unlink(missing_ok=True)
+        raise
 
     with _lock:
         marker = _load_marker()
@@ -280,17 +232,48 @@ def _remove_managed_file(filename: str):
             _save_marker(marker)
 
 
+DATASET_FIELDS = ("title", "Conventions", "processing_level", "time_coverage_start", "time_coverage_end", "date_modified")
+
+
+def _dataset_info(dataset: str) -> dict:
+    """The dataset's global attributes from ERDDAP that help a data manager place a failed file, or {}."""
+    try:
+        r = requests.get(f"{SERVER_INFO_URL}{dataset}/index.json", timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        rows = r.json()["table"]["rows"]
+    except Exception:
+        return {}
+    # rows are [row type, variable, attribute, data type, value]
+    return {row[2]: row[4] for row in rows if row[1] == "NC_GLOBAL" and row[2] in DATASET_FIELDS}
+
+
+def _failure_details(entry: dict, error: Exception) -> dict:
+    """What we know about a file BODC lists but we couldn't download, for the card's tooltip."""
+    details = {"url": entry["url"], "size": entry.get("size"), "server_mtime": entry["server_mtime"]}
+    response = getattr(error, "response", None)
+    if response is not None:
+        details["http_status"] = response.status_code
+        details["answered_by"] = response.headers.get("Server", "")
+    details["dataset"] = _dataset_info(entry["dataset"])
+    return details
+
+
 def _download_and_register(entry: dict):
     """Worker task: fetch the file, register it with the cache, mark as managed."""
     fname = entry["filename"]
     try:
         target = _download_to_data_dir(entry["url"], fname, entry["server_mtime"])
-        if target is None:
-            return
-        try:
-            cache_logic.register_path(str(target))
-        except Exception:
-            pass
+        cache_logic.register_path(str(target))
+    except Exception as e:
+        gone = isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 404
+        if gone:
+            log.warning("%s is listed on BODC but not served (404); skipping until BODC updates it.", fname)
+        else:
+            log.warning("Live download failed for %s: %s", fname, e)
+        details = _failure_details(entry, e)
+        with _lock:
+            _failed[fname] = {"error": str(e), "server_mtime": entry["server_mtime"], "gone": gone,
+                              "details": details}
     finally:
         with _lock:
             _in_flight.discard(fname)
@@ -302,13 +285,15 @@ def _enqueue_download(entry: dict):
         if fname in _in_flight:
             return False
         _in_flight.add(fname)
+        _failed.pop(fname, None)
     _executor.submit(_download_and_register, entry)
     return True
 
 
 def request_download(filename: str) -> dict:
     """Public: ask to download `filename` (from the active scan) into data/."""
-    listing = scan_cached(force=False)
+    with _lock:
+        listing = _scan_cache["data"] or []
     entry = next((e for e in listing if e["filename"] == filename), None)
     if entry is None:
         return {"status": "error", "message": "File not found in active listing"}
@@ -319,20 +304,39 @@ def request_download(filename: str) -> dict:
 
 # ---------- background scanner ----------
 
-def _scanner_loop():
-    """Periodically re-scan the feed so newly-active gliders get auto-downloaded
-    even while the Files panel is closed. Cheap: one ERDDAP listing per pass,
-    and _maybe_auto_update's own cooldown still applies."""
-    while True:
-        time.sleep(SCANNER_INTERVAL)
+def _scan_once():
+    with _lock:
+        previous = _scan_cache["data"]
+        _scan_cache["scanning"] = True
+    listing = None
+    try:
+        listing = _scan_active(previous)
+    except Exception:
+        log.exception("Live scan failed")
+    finally:
+        with _lock:
+            _scan_cache["scanning"] = False
+            _scan_cache["error"] = listing is None
+            if listing is not None:
+                _scan_cache.update(at=time.time(), data=listing)
+    if listing is not None:
         try:
-            _maybe_auto_update(scan_cached(force=True))
+            _sync_managed_files(listing)
         except Exception:
-            pass
+            log.exception("Live sync failed")
 
 
-def _ensure_background_scanner():
-    """Start the periodic scanner once (lazily, on first use of the feed)."""
+def _scanner_loop():
+    while True:
+        _wake.clear()
+        _scan_once()
+        with _lock:
+            failed = _scan_cache["error"]
+        _wake.wait(SCAN_RETRY if failed else SCAN_INTERVAL)
+
+
+def start():
+    """Start the background scanner (once). Called at app startup."""
     global _scanner_started
     with _lock:
         if _scanner_started:
@@ -341,28 +345,29 @@ def _ensure_background_scanner():
     threading.Thread(target=_scanner_loop, name="live-scanner", daemon=True).start()
 
 
-def _maybe_auto_update(listing: list[dict]):
+def _sync_managed_files(listing: list[dict]):
     """Keep the local copy in sync with the live feed (best-effort):
 
       * auto-download every active glider we don't already have,
       * re-download a managed file when the server has a newer copy, and
       * delete managed files the server has not updated for PRUNE_DAYS.
 
-    Gliders the user binned are skipped (suppressed).
+    Gliders the user binned are skipped (suppressed), and so are files the server
+    lists but answered 404 for, until it lists a newer copy.
     """
-    global _last_auto_update
     now = time.time()
     with _lock:
-        if (now - _last_auto_update) < AUTO_UPDATE_COOLDOWN:
-            return
-        _last_auto_update = now
         marker = _load_marker()
         suppressed = _load_suppressed()
+        failed_now = dict(_failed)
 
     for entry in listing:
         fname = entry["filename"]
         if fname in suppressed:
             continue                       # user removed this one — leave it
+        failed = failed_now.get(fname)
+        if failed and failed["gone"] and failed["server_mtime"] == entry["server_mtime"]:
+            continue                       # listed but not served (404) — wait for a newer copy
         info = marker.get(fname)
         if info is None:
             _enqueue_download(entry)        # new active glider → download it
@@ -380,24 +385,17 @@ def _maybe_auto_update(listing: list[dict]):
 # ---------- public API ----------
 
 def list_live(force_scan: bool = False) -> dict:
-    """Combined live feed: server-listed active gliders + uploaded files."""
-    _ensure_background_scanner()
-    # Never block on ERDDAP: answer from the cached listing and scan in the
-    # background; the client polls while `scanning` is true.
-    now = time.time()
+    """Combined live feed: the last scan's active gliders + uploaded files. Never waits on ERDDAP."""
+    if force_scan:
+        _wake.set()
     with _lock:
-        data, at, tried = _scan_cache["data"], _scan_cache["at"], _scan_cache["tried"]
-    stale = data is None or (now - at) >= SCAN_CACHE_TTL
-    if force_scan or (stale and (now - tried) >= SCAN_RETRY):
-        _kick_scan(force_scan)
-    listing = data or []
-    if data is not None:
-        _maybe_auto_update(listing)
+        listing = _scan_cache["data"] or []
 
     marker = _load_marker()
     suppressed = _load_suppressed()
     with _lock:
         in_flight = set(_in_flight)
+        failed = dict(_failed)
 
     # Active gliders (server-detected)
     active = []
@@ -417,6 +415,8 @@ def list_live(force_scan: bool = False) -> dict:
             "managed": downloaded,
             "needs_update": downloaded and e["server_mtime"] > local_mtime + 1,
             "downloading": fname in in_flight,
+            "download_error": (failed.get(fname) or {}).get("error"),
+            "download_details": (failed.get(fname) or {}).get("details"),
             "suppressed": fname in suppressed,
             "file_id": rid if rec else None,
             "status": (rec or {}).get("status") if rec else None,
@@ -449,9 +449,8 @@ def list_live(force_scan: bool = False) -> dict:
 
     return {
         "scanned_at": _scan_cache.get("at", 0),
-        "scanning": _kick_pending or _scan_cache["scanning"],
+        "scanning": _scan_cache["scanning"] or _wake.is_set(),
         "scan_error": _scan_cache["error"],
-        "scan_ttl": SCAN_CACHE_TTL,
         "days_active": DAYS_ACTIVE,
         "active": active,
         "uploads": uploads,

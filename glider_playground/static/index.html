@@ -2,7 +2,7 @@
 <html lang="en-GB">
 <head>
     <meta charset="UTF-8">
-    <title>Glider Playground</title>
+    <title>Ocean Playground</title>
     <link rel="icon" href="/static/icons/noc_logo_square.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -246,7 +246,24 @@
         #customTooltip .tip-rows { display: grid; grid-template-columns: auto auto 1fr; gap: 3px 8px; align-items: baseline; }
         #customTooltip .tip-rows .tip-id { font-weight: 700; text-align: right; opacity: 0.75; }
         #customTooltip .tip-rows .tip-label { font-weight: 600; white-space: nowrap; }
-        #customTooltip .tip-rows .tip-desc { opacity: 0.9; }
+        #customTooltip .tip-rows .tip-desc { opacity: 0.9; overflow-wrap: anywhere; }
+
+        /* ---------- Server stopped: blocks the app until it's back ---------- */
+        #serverDown {
+            position: fixed; inset: 0; z-index: 10000;
+            display: flex; align-items: center; justify-content: center; padding: 16px;
+            background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(3px);
+        }
+        #serverDown[hidden] { display: none; }
+        #serverDown .server-down-card {
+            max-width: 380px; padding: 20px 22px; text-align: center;
+            background: var(--bg-panel); color: var(--text-primary);
+            border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+        }
+        #serverDown .material-symbols-outlined { font-size: 32px; color: var(--danger); }
+        #serverDown h2 { margin: 6px 0 8px; font-size: 16px; font-weight: 600; }
+        #serverDown p { margin: 0 0 8px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+        #serverDown code { padding: 1px 5px; border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text-primary); }
 
         /* ---------- Toggle buttons ---------- */
         .toggle-btn {
@@ -574,6 +591,7 @@
         .file-card-meta { font-size: 9.5px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; }
         .file-card-stage { color: var(--text-secondary); }
         .file-card-error { color: var(--danger); }
+        .file-card-info { font-size: 12px; margin-left: -3px; color: var(--text-muted); cursor: help; }
         .file-card-progress {
             position: relative;
             height: 3px;
@@ -1354,6 +1372,14 @@
 </head>
 <body class="overflow-hidden">
     <div id="customTooltip"></div>
+    <div id="serverDown" role="alertdialog" aria-modal="true" aria-labelledby="serverDownTitle" hidden>
+        <div class="server-down-card">
+            <span class="material-symbols-outlined">cloud_off</span>
+            <h2 id="serverDownTitle">Server stopped</h2>
+            <p id="serverDownHint">Start it again in a terminal with <code>glider-playground</code>.</p>
+            <p>This page reconnects by itself once it's back.</p>
+        </div>
+    </div>
     <div id="shareToast" role="status" aria-live="polite"></div>
 
     <nav id="mainNav" class="flex flex-col bg-[#f8f9fa] border-b border-gray-200 w-full text-xs shrink-0 relative" style="z-index: 60;">
@@ -1518,6 +1544,7 @@
                     <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
                     <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
                     <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top), and PAR, with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
+                    <button class="view-seg-btn" data-view="chemistry" title="Nitrate, pH, DIC and redox, with a full-height globe on the right (files with chemistry sensors only)"><span class="material-symbols-outlined text-[14px]">science</span>Chemistry</button>
                     <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
                 </div>
             </div>
@@ -2344,11 +2371,16 @@
         }
         // Resolved variable names for a `lines` preset (candidates the file lacks are dropped), or null.
         let currentLines = null;
+        // A variable presets may use: in the file and not an all-fill placeholder.
+        function hasData(name) {
+            return variableCache.some(vc => vc.name === name && !vc.empty);
+        }
         function resolveLines(p) {
             if (!p || !p.lines) return null;
-            const have = (v) => variableCache.some(vc => vc.name === v);
-            const out = p.lines.map(cands => cands.map(v => have(v + '_ADJUSTED') ? v + '_ADJUSTED' : have(v) ? v : '').find(Boolean)).filter(Boolean);
-            return out.length ? out : null;
+            const resolved = p.lines
+                .map(cands => cands.map(v => hasData(v + '_ADJUSTED') ? v + '_ADJUSTED' : hasData(v) ? v : '').find(Boolean))
+                .filter(Boolean);
+            return resolved.length ? resolved : null;
         }
 
         // Push a panel's stored state into the toolbar without firing change handlers (_suspendToolbar).
@@ -2811,7 +2843,7 @@
         function presetAvailable(key) {
             const p = OceanPresets[key];
             if (!p) return false;
-            const isVal = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
+            const isVal = (val) => !val.endsWith('_QC') && (hasData(val) || hasData(val + '_ADJUSTED'));
             if (p.lines) return p.x.some(isVal) && p.lines.some(cands => cands.some(isVal));   // any one line is enough
             return p.x.some(isVal) && p.y.some(isVal) && (p.c.length === 0 || p.c.some(isVal));
         }
@@ -3905,8 +3937,8 @@
             const findBest = (arr) => {
                 for (const v of arr) {
                     const adj = v + '_ADJUSTED';
-                    if (variableCache.some(vc => vc.name === adj)) return adj;
-                    if (variableCache.some(vc => vc.name === v)) return v;
+                    if (hasData(adj)) return adj;
+                    if (hasData(v)) return v;
                 }
                 return '';
             };
@@ -3994,8 +4026,9 @@
             };
         }
 
-        // Bio-optics: globe only (no 3D) in the left column, plots stacked alongside.
-        function bioopticsLayoutTree(plotIds, mapId) {
+        // Bio-optics / Chemistry: globe only (no 3D) in the left column, plots stacked alongside.
+        const STACK_VIEWS = ['biooptics', 'chemistry'];
+        function stackLayoutTree(plotIds, mapId) {
             if (isPortrait()) {
                 return {
                     dir: 'col', ratio: 0.6,
@@ -4079,9 +4112,9 @@
             } else if (_viewKind === 'dashboard') {
                 if (!mapP || !tdP || !plotIds.length) return;
                 layoutTree = dashboardLayoutTree(plotIds, mapP.id, tdP.id);
-            } else if (_viewKind === 'biooptics') {
+            } else if (STACK_VIEWS.includes(_viewKind)) {
                 if (!mapP || !plotIds.length) return;
-                layoutTree = bioopticsLayoutTree(plotIds, mapP.id);
+                layoutTree = stackLayoutTree(plotIds, mapP.id);
             } else { // 'default'
                 if (!mapP || !tdP || plotIds.length !== 1) return;
                 const summaryP = Object.values(panels).find(p => p.type === 'summary');
@@ -4166,12 +4199,7 @@
 
         // Overview: globe + 3D + a 1×N stack of the headline biogeochemical presets.
         function applyOverview() {
-            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const candidates = viewSpecs('overview').map(s => s.key);
-            const avail = candidates.filter(key => {
-                const p = OceanPresets[key];
-                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
-            });
+            const avail = viewSpecs('overview').map(s => s.key).filter(presetAvailable);
             if (avail.length === 0) return;
 
             _pendingGlobeFit = false;
@@ -4196,12 +4224,7 @@
         // Dashboard: globe + 3D on the left, then the six core time-series plots (skipping any the file
         // lacks), each with its depth-profile sidebar on.
         function applyDashboard() {
-            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const order = viewSpecs('dashboard').map(s => s.key);
-            const avail = order.filter(key => {
-                const p = OceanPresets[key];
-                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
-            });
+            const avail = viewSpecs('dashboard').map(s => s.key).filter(presetAvailable);
             if (avail.length === 0) return;
 
             _pendingGlobeFit = false;
@@ -4228,23 +4251,18 @@
             markViewApplied();
         }
 
-        // Bio-optics: temperature, chlorophyll and backscatter each twice (smallest / largest first), then PAR.
-        function applyBioOptics() {
-            const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
-            const presetOk = (key) => {
-                const p = OceanPresets[key];
-                return p.x.some(isValid) && p.y.some(isValid) && p.c.some(isValid);
-            };
-            const specs = viewSpecs('biooptics')
+        // Bio-optics / Chemistry: the view's presets from plot_presets.json, stacked beside a globe.
+        // A preset can appear twice (e.g. chl, bbp in Bio-optics) with different draw orders.
+        function applyStackView(kind) {
+            const specs = viewSpecs(kind)
                 .map(s => ({ key: s.key, drawOrder: s.drawOrder || OceanPresets[s.key].drawOrder || 'normal' }))
-                .filter(s => presetOk(s.key));
-            if (specs.length === 0) return;
+                .filter(s => presetAvailable(s.key));
+            if (specs.length === 0) return false;
 
             _pendingGlobeFit = false;
-            const { map: keepMap } = keepGlobe();   // globe only — no 3D in Bio-optics
+            const { map: keepMap } = keepGlobe();   // globe only — no 3D
             const map = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
 
-            // Same preset can appear twice (chl, bbp) with different draw orders.
             const plotIds = specs.map(spec => {
                 const s = stateFromPreset(spec.key);
                 s.drawOrder = spec.drawOrder;
@@ -4252,8 +4270,8 @@
                 return createPanel('plot', s).id;
             });
 
-            layoutTree = bioopticsLayoutTree(plotIds, map.id);
-            _viewKind = 'biooptics'; _layoutPortrait = isPortrait();
+            layoutTree = stackLayoutTree(plotIds, map.id);
+            _viewKind = kind; _layoutPortrait = isPortrait();
             plotIframe = panels[plotIds[0]].iframe;
 
             renderLayout();
@@ -4262,6 +4280,7 @@
             refitReusedGlobe(keepMap, false);
             setActive(plotIds[0]);
             markViewApplied();
+            return true;
         }
 
         // Copernicus overlay per Duo globe (by panel id), reapplied on mapReady. Cleared for non-Duo views.
@@ -4663,12 +4682,10 @@
             );
         }
 
+        // Polls our own server (never BODC, which the server scans on its own timer), open or not.
         function scheduleLivePoll() {
             clearTimeout(_liveRefreshTimer);
-            const busy = liveIsBusy();
-            // Keep polling while a download/processing/delete/pending-open is in flight; when idle, only while open.
-            if (!busy && filesPanel.hidden) return;
-            const delay = busy ? 2000 : 30000;
+            const delay = liveIsBusy() ? 2000 : 60000;
             _liveRefreshTimer = setTimeout(() => refreshLive({ force: false }), delay);
         }
 
@@ -4704,10 +4721,14 @@
 
         function renderLive(data) {
             const active = data.active || [];
-            // Drop optimistic flags the server has confirmed.
+            // Drop optimistic flags the server has confirmed (or reported as failed).
             for (const e of active) {
-                if (_liveOptimistic.has(e.filename) && (e.downloading || e.downloaded)) {
+                if (_liveOptimistic.has(e.filename) && (e.downloading || e.downloaded || e.download_error)) {
                     _liveOptimistic.delete(e.filename);
+                }
+                if (e.download_error && !e.downloading && _livePendingOpen === e.filename) {
+                    _livePendingOpen = null;
+                    hideProcessingOverlay();
                 }
             }
 
@@ -4719,6 +4740,28 @@
             liveList.innerHTML = active.map(liveCardHtml).join('');
         }
 
+        // Tooltip rows for a failed live download: what BODC lists, how it answered, and the ERDDAP dataset's metadata.
+        function downloadFailureRows(e) {
+            const d = e.download_details || {};
+            const ds = d.dataset || {};
+            const utc = iso => iso ? iso.slice(0, 16).replace('T', ' ') + ' UTC' : '';
+            const rows = [
+                ['', 'File', `${e.filename} · ${formatSize(d.size || 0)} · updated ${utc(new Date(e.server_mtime * 1000).toISOString())}`],
+                ['', 'Error', d.http_status ? `HTTP ${d.http_status} from ${d.answered_by || 'server'}` : e.download_error],
+            ];
+            if (d.url) rows.push(['', 'URL', d.url]);
+            if (ds.title) {
+                rows.push(['', 'Dataset', ds.title]);
+                if (ds.Conventions) rows.push(['', 'Format', ds.Conventions]);
+                if (ds.processing_level) rows.push(['', 'Processing', ds.processing_level]);
+                if (ds.time_coverage_start) rows.push(['', 'Data', `${utc(ds.time_coverage_start)} to ${utc(ds.time_coverage_end)}`]);
+                if (ds.date_modified) rows.push(['', 'Metadata', `modified ${utc(ds.date_modified)}`]);
+            } else {
+                rows.push(['', 'Dataset', 'No ERDDAP metadata found']);
+            }
+            return rows;
+        }
+
         // Markup for one live-deployment card (shared by the real and placeholder renders).
         function liveCardHtml(e) {
             const esc = escapeHtmlSafe;
@@ -4726,6 +4769,7 @@
                 const isDeleting = _liveDeleting.has(e.filename);
                 const isPending = e.downloading || _liveOptimistic.has(e.filename);
                 const isProcessing = e.downloaded && e.status && e.status !== 'ready';
+                const failed = !isPending && !e.downloaded && e.download_error;
 
                 let iconClass = '', iconName = 'satellite_alt', iconHtml = '';
                 if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'progress_activity'; }
@@ -4736,6 +4780,7 @@
                     if (kind) { iconClass = 'ready platform'; iconHtml = platformIconHtml(kind, kind); }
                 }
                 else if (isProcessing) { iconClass = 'processing'; iconName = 'progress_activity'; }
+                else if (failed) { iconClass = 'error'; iconName = 'error'; }
 
                 let metaLine, progressBar = '';
                 if (isPending && !e.downloaded) {
@@ -4743,6 +4788,10 @@
                 } else if (isProcessing) {
                     metaLine = `<span class="file-card-stage">${esc(e.status)}</span><span>${e.progress ?? 0}%</span>`;
                     progressBar = `<div class="file-card-progress"><div class="file-card-progress-bar" style="width:${Math.max(2, e.progress ?? 0)}%"></div></div>`;
+                } else if (failed) {
+                    const tipRows = esc(JSON.stringify(downloadFailureRows(e)));
+                    metaLine = `<span class="file-card-error">Download failed</span>` +
+                        `<span class="material-symbols-outlined file-card-info" data-tip="What BODC reports for this file" data-tip-rows="${tipRows}">info</span>`;
                 } else {
                     metaLine = `<span>updated ${esc(ago)}</span>`;
                 }
@@ -4751,7 +4800,7 @@
                 if (isPending && !e.downloaded) {
                     actionHtml = `<span class="live-spinner" title="Downloading…"></span>`;
                 } else if (!e.downloaded) {
-                    actionHtml = `<button class="file-card-action" data-act="bodc-download" data-fn="${esc(e.filename)}" title="Download to data folder"><span class="material-symbols-outlined text-[14px]">cloud_download</span></button>`;
+                    actionHtml = `<button class="file-card-action" data-act="bodc-download" data-fn="${esc(e.filename)}" title="${failed ? 'Try the download again' : 'Download to data folder'}"><span class="material-symbols-outlined text-[14px]">cloud_download</span></button>`;
                 } else {
                     const kmz = e.file_id && e.status === 'ready'
                         ? `<button class="file-card-action" data-act="live-kmz" data-id="${esc(e.file_id)}" title="Download track as KMZ (Google Earth)"><span class="material-symbols-outlined text-[14px]">public</span></button>`
@@ -5015,6 +5064,29 @@
             if (steps.length) appendCommandBlock(body, steps);
         }
 
+        // Ping the server; after two misses in a row, cover the app until it answers, then reload (its state may be gone).
+        function watchServer() {
+            const overlay = document.getElementById('serverDown');
+            const upDelay = isServerMode ? 15000 : 5000;
+            let misses = 0;
+            if (isServerMode) {
+                document.getElementById('serverDownHint').textContent = 'The server is restarting or can’t be reached.';
+            }
+            async function ping() {
+                let up = true;
+                try { await fetch('/api/config', { cache: 'no-store' }); }
+                catch (_) { up = false; }      // fetch only rejects when nothing answers, not on HTTP errors
+                if (up) {
+                    if (!overlay.hidden) location.reload();
+                    misses = 0;
+                } else if (++misses >= 2) {
+                    overlay.hidden = false;
+                }
+                setTimeout(ping, misses ? 2000 : upDelay);
+            }
+            setTimeout(ping, upDelay);
+        }
+
         async function init() {
             // Request the file list alongside the config rather than after it.
             const filesReq = fetch('/api/files');
@@ -5027,6 +5099,7 @@
             } catch(e) {
                 console.error("Config fetch failed:", e);
             }
+            watchServer();
 
             if (isServerMode) {
                 // Prevent local additions or deletions in server mode
@@ -5037,7 +5110,7 @@
 
             await refreshFiles({ activate: true, request: filesReq });
 
-            // Start the live scan right away so the list is populated when Files first opens.
+            // Fetch the live list now (and on a timer after), so it's ready whenever Files opens.
             refreshLive({ force: false });
 
             // Nudge the user if a newer release is on PyPI.
@@ -5394,8 +5467,8 @@
                 if (!arr.length) return '';
                 for (let v of arr) {
                     const adj = v + '_ADJUSTED';
-                    if (variableCache.some(vc => vc.name === adj)) return adj;
-                    if (variableCache.some(vc => vc.name === v)) return v;
+                    if (hasData(adj)) return adj;
+                    if (hasData(v)) return v;
                 }
                 return variableCache.find(vc => !vc.name.endsWith('_QC'))?.name || '';
             };
@@ -5443,6 +5516,7 @@
 
             buildQcChips();
             qcFlagsContainer.style.display = hasAnyQc ? 'flex' : 'none';
+            setViewSelectorEnabled(viewSelectorOn);   // Chemistry's availability depends on the variables
 
             const isValid = (val) => variableCache.some(v => (v.name === val || v.name === val + '_ADJUSTED') && !v.name.endsWith('_QC'));
 
@@ -6200,7 +6274,11 @@
             Object.values(panels).forEach(p => { if (p.type === 'map' && !p.hostedEl && p.iframe) loadExtraMap(p); });
 
             // Dashboard / Overview / Bio-optics pick plots by the file's variables, so re-run that on every dataset swap.
-            const viewReappliers = { dashboard: applyDashboard, overview: applyOverview, biooptics: applyBioOptics };
+            const viewReappliers = {
+                dashboard: applyDashboard, overview: applyOverview,
+                biooptics: () => applyStackView('biooptics'),
+                chemistry: () => { if (applyStackView('chemistry') === false) selectView('classic'); },   // new file has no chemistry
+            };
             if (viewReappliers[_viewKind]) {
                 viewReappliers[_viewKind]();
                 return;
@@ -6237,15 +6315,12 @@
             filesPanel.hidden = false;
             datasetTrigger.classList.add('open');
             renderFilesList();
-            // Show stale data immediately if we have it; refresh in background.
             if (_liveData) renderLive(_liveData);
-            refreshLive({ force: false });
         }
 
         function closeFilesPanel() {
             filesPanel.hidden = true;
             datasetTrigger.classList.remove('open');
-            clearTimeout(_liveRefreshTimer);
         }
 
         datasetTrigger.addEventListener('click', (e) => {
@@ -6498,10 +6573,16 @@
             viewSelector.querySelectorAll('.view-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.view === sel));
         }
 
+        let viewSelectorOn = false;
         function setViewSelectorEnabled(on) {
             if (!viewSelector) return;
+            viewSelectorOn = on;
             viewSelector.classList.toggle('opacity-50', !on);
-            viewSelector.querySelectorAll('.view-seg-btn').forEach(b => { b.disabled = !on; });
+            // Chemistry is greyed out for files without any of its sensors, rather than opening empty.
+            const chemistryOk = viewSpecs('chemistry').some(s => presetAvailable(s.key));
+            viewSelector.querySelectorAll('.view-seg-btn').forEach(b => {
+                b.disabled = !on || (b.dataset.view === 'chemistry' && !chemistryOk);
+            });
         }
 
         // Click a View button: full reset, then build that layout.
@@ -6511,8 +6592,8 @@
             if (kind !== 'stats') _collapseLayersPanels = new Set();   // leaving Stats → stop auto-collapsing layers
             if (kind === 'duo') {
                 applyDuo();
-            } else if (kind === 'biooptics') {
-                applyBioOptics();
+            } else if (STACK_VIEWS.includes(kind)) {
+                applyStackView(kind);
             } else if (kind === 'map') {
                 applyMapView();
             } else if (kind === 'stats') {

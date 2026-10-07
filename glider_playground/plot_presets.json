@@ -18,7 +18,7 @@
     "VIEWS: which presets each built-in view shows, in order. Presets the file can't satisfy are skipped. An entry is a preset key, or {\"preset\": key, \"draw_order\": ...} to override. 'duo' uses exactly two. 'new_plot_order' is the preference order when adding a new plot panel. 'invert_y_vars' are y variables that auto-switch Invert-Y on when picked by hand."
   ],
   "app": {
-    "name": "Glider Playground",
+    "name": "Ocean Playground",
     "site_url": "https://glider-playground.co.uk"
   },
   "axes": {
@@ -148,6 +148,66 @@
       "draw_order": "outliers",
       "prewarm": true,
       "group": "Bio-optics"
+    },
+    "preset_nitrate": {
+      "label": "Nitrate",
+      "icon": "eco",
+      "colour": "green",
+      "x": "time",
+      "y": "depth",
+      "c": ["NITRATE_NITRITE", "NITRATE"],
+      "cmap": "tempo",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
+    "preset_ph": {
+      "label": "pH",
+      "icon": "water_ph",
+      "colour": "purple",
+      "x": "time",
+      "y": "depth",
+      "c": ["PH_TOTAL", "PH_IN_SITU_TOTAL"],
+      "cmap": "haline",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
+    "preset_dic": {
+      "label": "DIC",
+      "icon": "bubble_chart",
+      "colour": "amber",
+      "x": "time",
+      "y": "depth",
+      "c": ["DIC"],
+      "cmap": "matter",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
+    "preset_redox": {
+      "label": "Redox",
+      "icon": "bolt",
+      "colour": "red",
+      "x": "time",
+      "y": "depth",
+      "c": ["REDOX_CORR", "REDOX"],
+      "cmap": "amp",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
+    "preset_sensor_temps": {
+      "label": "Sensor temps",
+      "icon": "device_thermostat",
+      "colour": "gray",
+      "group": "Core",
+      "x": "time",
+      "y": "depth",
+      "c": [],
+      "cmap": "black",
+      "invert_y": false,
+      "lines": ["TEMP", "TEMP2", "TEMP_DOXY", "TEMP_NITR", "TEMP_DIC"]
     }
   },
   "views": {
@@ -164,6 +224,7 @@
       { "preset": "preset_bbp", "draw_order": "largest" },
       { "preset": "preset_par", "draw_order": "outliers" }
     ],
+    "chemistry": ["preset_nitrate", "preset_ph", "preset_dic", "preset_redox"],
     "duo": ["preset_bbp", "preset_sal"]
   },
   "palettes": {

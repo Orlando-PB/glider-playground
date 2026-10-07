@@ -1,4 +1,4 @@
-// The 3D view of one file: its track and vehicle in its own box, from /api/3d_data + /api/3d_bathy.
+// The 3D view of one file: its track and vehicle in its own box, from /api/3d_track + /api/3d_bathy.
 import { createView, getJSON, setStatus } from './view.js';
 import { byFloat } from './argo.js';
 
@@ -29,11 +29,32 @@ async function getTrack() {
     return { time_ms: new Float64Array(buf, 8, n), lon: f32(0), lat: f32(1), z: f32(2), pitch: f32(3) };
 }
 
+// Stand-in seabed when the bathymetry servers are down: a flat floor below the deepest fix.
+function flatSeabed(track) {
+    let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity, deepest = 0;
+    for (let k = 0; k < track.lon.length; k++) {      // comparisons, not Math.min/max, so gaps (NaN) are skipped
+        const lon = track.lon[k], lat = track.lat[k];
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (track.z[k] < deepest) deepest = track.z[k];
+    }
+    const lonPad = Math.max((maxLon - minLon) * 0.15, 0.1), latPad = Math.max((maxLat - minLat) * 0.15, 0.1), floor = 1.2 * deepest;
+    return {
+        bathy_lon: [minLon - lonPad, maxLon + lonPad],
+        bathy_lat: [minLat - latPad, maxLat + latPad],
+        bathy_z: [[floor, floor], [floor, floor]],
+    };
+}
+
 async function start() {
     const known = (await getJSON('/api/files').catch(() => ({ files: [] }))).files || [];
     if (!known.some(f => f.id === id)) return pickFile(known);
     setStatus('Loading seabed…');
-    const [track, seabed] = await Promise.all([getTrack(), getJSON(`/api/3d_bathy?${q}&grid=${SEABED_GRID}`)]);
+    const [track, chart] = await Promise.all([getTrack(), getJSON(`/api/3d_bathy?${q}&grid=${SEABED_GRID}`).catch(() => null)]);
+    const seabed = chart || flatSeabed(track);
+    if (!chart) document.getElementById('credit').textContent = 'Seabed unavailable (bathymetry server not responding), showing a flat floor';
     const rec = known.find(f => f.id === id);
     document.title = rec.name || '3D view'; setStatus(rec.name || '');
     const view = createView(seabed, { floatTraces: false, store: 'gp_3d_view' });      // floats pass through as models; their dive lines are a Layers option

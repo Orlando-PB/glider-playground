@@ -81,7 +81,7 @@ DATA_DIR = _resolve_data_dir()
 
 # Part of every cache key: bump when a processing change alters cached output
 # (history: OVERVIEW.md, "Cache version history").
-CACHE_VERSION = "32"
+CACHE_VERSION = "33"
 
 # A file counts as NRT (Near Real-Time) if its last sample is within this
 # window of "now" — anything fresher is presumed to still be deployed.
@@ -381,10 +381,9 @@ def _load_once():
                     rec["stage"] = "queued"
             if stale_version or rec.get("status") == STATUS_ERROR:
                 # Retry errored files on every start: a bump may be the very
-                # fix they were waiting for, and plenty of errors are transient
-                # (a network blip fetching bathymetry, an import-lock deadlock
-                # under a busy startup). A genuinely broken file just errors
-                # again quickly, so this costs nothing.
+                # fix they were waiting for, and some errors are transient
+                # (an import-lock deadlock under a busy startup). A genuinely
+                # broken file just errors again quickly, so this costs nothing.
                 rec["status"] = STATUS_PENDING
                 rec["progress"] = 0
                 rec["stage"] = "queued"
@@ -1085,11 +1084,11 @@ def _process(file_id: str):
             _mark_step_done(rec, STEP_SPATIAL)
             done_steps.add(STEP_SPATIAL)
 
-        # 5. 3D + bathymetry.
+        # 5. 3D track (its seabed is fetched in the background by bathy_prefetch).
         if _is_removed(rec):
             return
         if not _is_done(STEP_3D):
-            _set(rec, progress=75, stage="fetching bathymetry")
+            _set(rec, progress=75, stage="building 3D track")
             rec["spatial_3d"] = spatial_logic.generate_3d_data(p)
             _release_memory()
             _mark_step_done(rec, STEP_3D)
@@ -1134,6 +1133,18 @@ def _process(file_id: str):
         _save_payload_sidecar(rec)
         _release_memory()
 
+        # Hand off to the overlay prefetch worker (its own thread, so Copernicus
+        # network time never holds up the next file's processing). Queued before the prewarm
+        # below so their downloads overlap it.
+        if not _is_removed(rec):
+            try:
+                from ..maps import copernicus_prefetch
+                copernicus_prefetch.ensure(file_id)
+                from . import bathy_prefetch      # lazy: it imports this module
+                bathy_prefetch.ensure(file_id)
+            except Exception:
+                traceback.print_exc()
+
         # Best-effort: pre-pack the default plot payloads now that the file is READY
         # (put_plot_binary only stores for ready files) so the first click is a cache
         # hit. Failures here never affect the ready state.
@@ -1146,16 +1157,6 @@ def _process(file_id: str):
             _mark_step_done(rec, STEP_PLOT_PREWARM)
             _release_memory()
 
-        # Hand off to the overlay prefetch worker (its own thread, so Copernicus
-        # network time never holds up the next file's processing).
-        if not _is_removed(rec):
-            try:
-                from ..maps import copernicus_prefetch
-                copernicus_prefetch.ensure(file_id)
-                from . import bathy_prefetch      # lazy: it imports this module
-                bathy_prefetch.ensure(file_id)
-            except Exception:
-                traceback.print_exc()
     except Exception as e:
         if not _is_removed(rec):
             traceback.print_exc()

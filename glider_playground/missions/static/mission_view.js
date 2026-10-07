@@ -73,7 +73,7 @@
             dlg.addEventListener('click', e => { if (e.target === dlg || e.target.dataset.a === 'cancel') dlg.remove(); });
             dlg.querySelector('[data-a=prompt]').onclick = async () => {
                 const guide = await fetch('/api/missions/guide').then(r => r.text());
-                const text = 'Write a ' + (window.GP_APP_NAME || 'Glider Playground') + ' mission JSON for my deployment. Ask me for the data file names, their date ranges and the story of the mission first.\n\n--- FIELD GUIDE ---\n' + guide + '\n\n--- TEMPLATE ---\n' + tpl;
+                const text = 'Write a ' + (window.GP_APP_NAME || 'Ocean Playground') + ' mission JSON for my deployment. Ask me for the data file names, their date ranges and the story of the mission first.\n\n--- FIELD GUIDE ---\n' + guide + '\n\n--- TEMPLATE ---\n' + tpl;
                 navigator.clipboard.writeText(text).then(() => { m2.textContent = 'Prompt copied'; }, () => { m2.textContent = 'Copy blocked by the browser'; });
             };
             dlg.querySelector('[data-a=save]').onclick = () => {

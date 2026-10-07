@@ -66,7 +66,31 @@ def load(mission_id: str) -> dict | None:
         return None
     m = json.loads(f.read_text(encoding="utf-8"))
     m["id"] = _slug(f.stem)
+    if m.get("live"):
+        # A live mission's time bar follows its platforms' data, so it grows as new dives come in.
+        index = _file_index()
+        recs = [rec for rec in (_resolve(p, index) for p in m.get("platforms", [])) if rec]
+        span = live_logic.time_span(recs)
+        if not span:
+            return None
+        m["time"] = {**span, **(m.get("time") or {})}
     return m
+
+
+def live_mission_files() -> set:
+    """Lower-case filenames of every platform in a "live": true mission file."""
+    names = set()
+    for f in _mission_files().values():
+        try:
+            m = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if not m.get("live"):
+            continue
+        for p in m.get("platforms", []):
+            files = p.get("file") or []
+            names.update(str(n).lower() for n in ([files] if isinstance(files, str) else files))
+    return names
 
 
 def _file_index() -> dict:
@@ -117,6 +141,8 @@ def list_missions() -> list[dict]:
         except Exception as e:  # noqa: BLE001
             logger.warning("Mission %s unreadable: %s", mid, e)
             continue
+        if m is None:
+            continue        # a live mission none of whose platforms are loaded
         plats = m.get("platforms", [])
         have = sum(1 for p in plats if _resolve(p, index))
         out.append({"id": mid, "title": " ".join(str(m.get("title", mid)).split()), "summary": m.get("summary", ""),

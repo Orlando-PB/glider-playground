@@ -45,7 +45,7 @@ def prewarm_candidates() -> list:
 
 def app_name() -> str:
     """The name shown to users ('app.name' in plot_presets.json)."""
-    return load().get("app", {}).get("name") or "Glider Playground"
+    return load().get("app", {}).get("name") or "Ocean Playground"
 
 
 def site_url() -> str:

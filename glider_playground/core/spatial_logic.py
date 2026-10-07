@@ -11,7 +11,6 @@ Map *layers* (Copernicus, Argo, ships, waypoints) live in maps/ instead.
 
 import functools
 import io
-import json
 import os
 import time
 import zipfile
@@ -21,6 +20,7 @@ import numpy as np
 import pandas as pd
 import requests
 from netCDF4 import Dataset
+from scipy.io import netcdf_file
 
 from . import plot_logic
 from . import presets_logic
@@ -32,7 +32,6 @@ MAX_POINTS = 5000
 # track than the map: the model is interpolated between samples, so this
 # mostly sharpens dive shapes and pitch/roll changes. Separate cache entry.
 MAX_POINTS_3D = 20000
-BATHY_RESOLUTION = 40
 GEO_GAP_THRESHOLD_KM = 100.0
 GEO_GAP_THRESHOLD_SEC = 2 * 86400.0   # 2 days
 GEO_GROUP_MIN_POINTS = 100
@@ -134,96 +133,94 @@ def _trim_position_outliers(lat, lon, times=None):
 
 # ---------- Bathymetry ----------
 
-@functools.lru_cache(maxsize=32)
-def _fetch_bathy_cached(min_lon: float, max_lon: float, min_lat: float, max_lat: float):
-    # ERDDAP snaps each bound to its NEAREST grid point (1 arc-minute), which can land inside the
-    # request — widen by a cell so the grid (= the 3D scene box) always contains the track.
-    cell = 1 / 60
-    url = (
-        "https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv"
-        f"?altitude[({max(min_lat - cell, -90):.4f}):({min(max_lat + cell, 90):.4f})]"
-        f"[({max(min_lon - cell, -180):.4f}):({min(max_lon + cell, 180):.4f})]"
-    )
-    resp = requests.get(url, timeout=30)
+# The seabed comes from coastwatch; when that doesn't answer, from NOAA PIFSC's copy of ETOPO 2022.
+BATHY_PRIMARY = "https://coastwatch.pfeg.noaa.gov/erddap/griddap"
+BATHY_BACKUP = "https://oceanwatch.pifsc.noaa.gov/erddap/griddap"
+BATHY_PRIMARY_RETRY_SEC = 600     # after coastwatch fails, go straight to the backup for this long
+_bathy_primary_down_until = 0.0
+
+
+def _bathy_url(base, dataset, var, lat0, lat1, lon0, lon1, stride):
+    # .nc rather than .csv: the same grid at a tenth of the bytes, and no text to parse.
+    return (f"{base}/{dataset}.nc?{var}[({lat0:.4f}):{stride}:({lat1:.4f})]"
+            f"[({lon0:.4f}):{stride}:({lon1:.4f})]")
+
+
+def _fetch_bathy_nc(url, var):
+    # PIFSC now and then cuts a response off mid-download; asking again goes through.
+    for attempt in range(3):
+        try:
+            # (connect, read): a server that's down fails in 10 s; one that's busy generating the grid gets 5 min.
+            resp = requests.get(url, timeout=(10, 300))
+            break
+        except requests.exceptions.ChunkedEncodingError:
+            if attempt == 2:
+                raise
     resp.raise_for_status()
+    # scipy reads ERDDAP's NetCDF-3 from memory; netCDF4 would print HDF5 errors probing the disk for a file first.
+    with netcdf_file(io.BytesIO(resp.content), mmap=False, maskandscale=True) as ds:
+        lats = ds.variables["latitude"][:].copy()
+        lons = ds.variables["longitude"][:].copy()
+        z = np.ma.filled(np.ma.masked_invalid(ds.variables[var][:].astype(float)), np.nan)
+    return lats, lons, z
 
-    df = pd.read_csv(io.StringIO(resp.text), skiprows=[1]).dropna(subset=["altitude"])
-    lats = np.sort(df["latitude"].unique())
-    lons = np.sort(df["longitude"].unique())
 
-    lat_step = max(1, len(lats) // BATHY_RESOLUTION)
-    lon_step = max(1, len(lons) // BATHY_RESOLUTION)
-    # Subsample, always keeping the last row/column so the far edges aren't trimmed.
-    lats = np.unique(np.append(lats[::lat_step], lats[-1]))
-    lons = np.unique(np.append(lons[::lon_step], lons[-1]))
+def _fetch_bathy_backup(dataset, lat0, lat1, lon0, lon1, stride, per_deg):
+    """The PIFSC grid runs 0–360° east, so west longitudes are shifted, and a box across 0° is fetched in two halves."""
+    if lon0 >= 0:
+        return _fetch_bathy_nc(_bathy_url(BATHY_BACKUP, dataset, "z", lat0, lat1, lon0, lon1, stride), "z")
+    if lon1 < 0:
+        url = _bathy_url(BATHY_BACKUP, dataset, "z", lat0, lat1, lon0 + 360, lon1 + 360, stride)
+        lats, lons, z = _fetch_bathy_nc(url, "z")
+        return lats, lons - 360, z
 
-    df = df[df["latitude"].isin(lats) & df["longitude"].isin(lons)]
-    pivot = df.pivot(index="latitude", columns="longitude", values="altitude") \
-              .reindex(index=lats, columns=lons)
-
-    return lons.tolist(), lats.tolist(), pivot.values.tolist()
+    last_lon = 360 - 0.5 / per_deg
+    west_url = _bathy_url(BATHY_BACKUP, dataset, "z", lat0, lat1, min(lon0 + 360, last_lon), last_lon, stride)
+    lats, west_lons, west_z = _fetch_bathy_nc(west_url, "z")
+    # Start the east half one stride on from the west half's last column, so the spacing stays even across 0°.
+    east_start = max(0.0, west_lons[-1] + stride / per_deg - 360)
+    if east_start > lon1:
+        return lats, west_lons - 360, west_z
+    east_url = _bathy_url(BATHY_BACKUP, dataset, "z", lat0, lat1, east_start, lon1, stride)
+    _, east_lons, east_z = _fetch_bathy_nc(east_url, "z")
+    return lats, np.concatenate([west_lons - 360, east_lons]), np.hstack([west_z, east_z])
 
 
 def fetch_bathy_grid(bounds: dict, grid: int, fine: bool = True) -> dict:
     """Seabed grid for a lat/lon box, strided server-side to about `grid` points along the longer side. `fine` reads
-    the 15-arc-second ETOPO 2022 (the three.js views); otherwise the 1-arc-minute ETOPO the Plotly views use. The box
+    the 15-arc-second ETOPO 2022 (the three.js views); otherwise a 1-arc-minute ETOPO (missions). The box
     is widened by a cell so it always contains `bounds`. Heights are whole metres, 0 where missing."""
-    dataset, var, per_deg = ("ETOPO_2022_v1_15s", "z", 240) if fine else ("etopo180", "altitude", 60)
+    global _bathy_primary_down_until
+    if fine:
+        dataset = "ETOPO_2022_v1_15s"
+        var = "z"
+        backup_dataset = "ETOPO_2022_v1_15s"
+        per_deg = 240
+    else:
+        dataset = "etopo180"
+        var = "altitude"
+        backup_dataset = "ETOPO_2022_v1_60s"
+        per_deg = 60
     span = max(bounds["max_lat"] - bounds["min_lat"], bounds["max_lon"] - bounds["min_lon"])
     stride = max(1, int(round(span * per_deg / grid)))
     cell = stride / per_deg
-    url = (f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{dataset}.csv"
-           f"?{var}[({max(bounds['min_lat'] - cell, -90):.4f}):{stride}:({min(bounds['max_lat'] + cell, 90):.4f})]"
-           f"[({max(bounds['min_lon'] - cell, -180):.4f}):{stride}:({min(bounds['max_lon'] + cell, 180):.4f})]")
-    resp = requests.get(url, timeout=300)
-    resp.raise_for_status()
-    rows = np.genfromtxt(io.StringIO(resp.text), delimiter=",", skip_header=2)      # latitude-major, both ascending
-    lats, lons = np.unique(rows[:, 0]), np.unique(rows[:, 1])
-    z = np.nan_to_num(rows[:, 2]).reshape(len(lats), len(lons)).round().astype(int)
+    lat0 = max(bounds["min_lat"] - cell, -90)
+    lat1 = min(bounds["max_lat"] + cell, 90)
+    lon0 = max(bounds["min_lon"] - cell, -180)
+    lon1 = min(bounds["max_lon"] + cell, 180)
+
+    fetched = None
+    if time.time() >= _bathy_primary_down_until:
+        try:
+            fetched = _fetch_bathy_nc(_bathy_url(BATHY_PRIMARY, dataset, var, lat0, lat1, lon0, lon1, stride), var)
+        except requests.RequestException:
+            _bathy_primary_down_until = time.time() + BATHY_PRIMARY_RETRY_SEC
+    if fetched is None:
+        fetched = _fetch_bathy_backup(backup_dataset, lat0, lat1, lon0, lon1, stride, per_deg)
+
+    lats, lons, z = fetched
+    z = np.nan_to_num(z).round().astype(int)
     return {"bathy_lon": lons.tolist(), "bathy_lat": lats.tolist(), "bathy_z": z.tolist()}
-
-
-def _bathy_for(bounds: dict, max_depth: float) -> dict:
-    """Bathymetry keys for the 3D payload. If the fetch fails: a flat floor just
-    below the deepest dive, flagged `bathy_fallback` so it gets retried later."""
-    try:
-        b_lon, b_lat, b_z = _fetch_bathy_cached(
-            round(bounds["min_lon"], 2), round(bounds["max_lon"], 2),
-            round(bounds["min_lat"], 2), round(bounds["max_lat"], 2),
-        )
-        return {"bathy_lon": b_lon, "bathy_lat": b_lat, "bathy_z": b_z}
-    except Exception:
-        floor = -abs(max_depth) * 1.2
-        return {
-            "bathy_lon": [bounds["min_lon"], bounds["max_lon"]],
-            "bathy_lat": [bounds["min_lat"], bounds["max_lat"]],
-            "bathy_z": [[floor, floor], [floor, floor]],
-            "bathy_fallback": True,
-        }
-
-
-_bathy_retry_at: dict = {}
-
-
-def retry_bathy(payload: dict) -> bool:
-    """Re-fetch bathymetry for a cached 3D payload stuck on the flat fallback.
-    Patches `payload` in place; True if it now has real bathymetry. At most one
-    attempt per 5 min per area."""
-    b_lon = payload.get("bathy_lon") or []
-    if not (payload.get("bathy_fallback") or len(b_lon) <= 2) or not payload.get("bounds"):
-        return False
-    key = json.dumps(payload["bounds"], sort_keys=True)
-    now = time.time()
-    if now - _bathy_retry_at.get(key, 0) < 300:
-        return False
-    _bathy_retry_at[key] = now
-    elev = [e for e in (payload.get("elevation") or []) if e is not None and e == e]
-    fresh = _bathy_for(payload["bounds"], -min(elev) if elev else 1000.0)
-    payload.update(fresh)
-    if fresh.get("bathy_fallback"):
-        return False
-    payload.pop("bathy_fallback", None)
-    return True
 
 
 # ---------- Core data path ----------
@@ -952,8 +949,6 @@ def generate_3d_data(filepath):
         "min_lat": min_lat - lat_pad, "max_lat": max_lat + lat_pad,
     }
 
-    payload_bathy = _bathy_for(bounds, float(np.nanmax(pres)) if len(pres) > 0 else 1000.0)
-
     return {
         "lon": lon.tolist(),
         "lat": lat.tolist(),
@@ -963,7 +958,6 @@ def generate_3d_data(filepath):
         "pitch": pitch,
         "roll": roll,
         "heading": heading,
-        **payload_bathy,
         "bounds": bounds,
     }
 

@@ -1006,7 +1006,7 @@
                 const units = fmtUnits(plotData.c_units);
                 const cU = units ? ` (${units})` : '';
                 let html = '';
-                if (plotData.lines) html = `<b>Dive</b><span class="sub">· ${esc(plotData.lines.map(l => l.name).join(', '))} over time</span>`;
+                if (plotData.lines) html = `<b>${esc(plotData.lines.map(l => l.name).join(', '))}</b><span class="sub">· over time</span>`;
                 else if (c) html = `<b>${esc(c)}${esc(cU)}</b><span class="sub">· ${esc(y)} ${isXDate ? 'over time' : 'vs ' + esc(x)}</span>`;
                 else if (y) html = `<b>${esc(y)}</b><span class="sub">· ${isXDate ? 'over time' : 'vs ' + esc(x)}</span>`;
                 t.innerHTML = html;

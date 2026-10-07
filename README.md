@@ -1,12 +1,16 @@
-# Glider Playground
+# Ocean Playground
 
 <a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/readme_images/NOC_logo.svg" alt="National Oceanography Centre" width="72" align="right"></a>
 
 A fast, web-based viewer for oceanographic data. Load OG1 NetCDF files — or pull live deployments from BODC.
 
+> **Renamed:** Glider Playground is now **Ocean Playground**. Only the name has changed so far: the PyPI package, the
+> `glider-playground` command, the `~/.glider_playground` folder and the website (glider-playground.co.uk) all keep
+> the old name for now and will be migrated over time.
+
 **Live demo:** [glider-playground.co.uk](https://glider-playground.co.uk) *(running on a Raspberry Pi — may be slow)*
 
-![Glider Playground](glider_playground/static/readme_images/whole_view.webp)
+![Ocean Playground](glider_playground/static/readme_images/whole_view.webp)
 
 ---
 
@@ -51,7 +55,7 @@ Your own files are processed once in the background. Once ready, click a file to
 
 ## Views & Layout
 
-Glider Playground is a flexible, multi-panel workspace — plots, the globe, and the 3D track are all panels you can arrange however you like.
+Ocean Playground is a flexible, multi-panel workspace — plots, the globe, and the 3D track are all panels you can arrange however you like.
 
 - **Drag** a panel by its header to reorder or swap it with another
 - **Split** any panel (the edge **+** buttons) to add another plot or map beside it
@@ -69,6 +73,7 @@ The **View** bar rebuilds the whole workspace in one click:
 | **Dashboard** | Globe + 3D + the six core plots, each with a depth-profile sidebar |
 | **Duo** | Two globes (chlorophyll + currents overlays) beside backscatter and salinity plots |
 | **Bio-optics** | Temperature, chlorophyll, backscatter and PAR plots with a full-height globe |
+| **Chemistry** | Nitrate, pH, DIC and redox plots with a full-height globe (greyed out for files without chemistry sensors) |
 | **Stats** | Deployment summary, map, instruments, and searchable variable / attribute tables (derived variables are labelled) |
 
 ![Dashboard view — globe, 3D track, and six plots with profile sidebars](glider_playground/static/readme_images/dashboard.webp)
@@ -79,7 +84,7 @@ The **View** bar rebuilds the whole workspace in one click:
 
 ### Presets
 
-The **Presets** row sets what a plot shows: **Phases, Thermal, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter, PAR**. Presets the current file has no data for are greyed out.
+The **Presets** row sets what a plot shows: **Phases, Thermal, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter, PAR, Nitrate, pH, DIC, Redox, Sensor temps**. Presets the current file has no data for are greyed out.
 
 ### Globe & Overlays
 
@@ -117,7 +122,7 @@ The surface overlays and currents are fetched live from [Copernicus Marine](http
    ```bash
    pip install copernicusmarine
    ```
-3. **Log in** (stores your credentials locally), then restart Glider Playground:
+3. **Log in** (stores your credentials locally), then restart Ocean Playground:
    ```bash
    copernicusmarine login
    ```

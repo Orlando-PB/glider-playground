@@ -34,6 +34,9 @@ Dates are naive UTC (`"2024-06-09"` or `"2024-06-09T05:10"`). Positions are deci
 {
   "title": "BIO-Carbon",                             // \n = line break
   "summary": "One line for the mission list.",
+  "live": true,                                      // optional: platforms are live BODC files. "time" is filled in from their data
+                                                     // (so it grows), the mission is hidden once none of them are loaded, and they
+                                                     // are left out of the automatic "Live: …" missions
   "time":   { "start": "2024-05-24", "end": "2024-10-01", "open_at": "2024-08-06", "speed": 36000 },   // time bar range. A mission plays from the start; "open_at" (optional) opens it paused on that date; "speed" (optional, mission seconds per real second: 1, 60, 600, 3600, 36000 or 86400) always starts it at that rate instead of the one last chosen
   "region": { "lat": [54.5, 67.0], "lon": [-32.0, 0.0] },   // scene box. Omit to fit the platforms' tracks.
   "camera": { "eye": [-0.1, -1.12, 1.04], "center": [0.08, 0.12, -0.2] },              // optional, Plotly scene units

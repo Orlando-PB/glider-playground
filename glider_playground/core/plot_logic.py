@@ -826,6 +826,7 @@ def get_variables(filepath):
         return []
     
     variables = []
+    preloaded = _get_preloaded(filepath)
     try:
         with NETCDF_LOCK, xr.open_dataset(filepath) as glider_data:
             for name, var in glider_data.variables.items():
@@ -834,12 +835,18 @@ def get_variables(filepath):
                     description = var.attrs.get('long_name', 'No description available')
                     dtype_str = str(var.dtype)
                     var_type = "datetime" if "datetime" in dtype_str or "M8" in dtype_str else "numeric"
-                    variables.append({
+                    entry = {
                         "name": name,
                         "units": units,
                         "type": var_type,
                         "description": description
-                    })
+                    }
+                    # New sensors can ship as placeholders that are all _FillValue (NaN once decoded).
+                    # Checked on the memory-mapped preload copy, not var.values, which would pin every array in RAM.
+                    if var.dtype.kind == "f" and preloaded is not None and name in preloaded \
+                            and not np.isfinite(preloaded[name]).any():
+                        entry["empty"] = True
+                    variables.append(entry)
     except Exception as e:
         logger.warning("Error opening %s: %s", filepath, e)
         return []

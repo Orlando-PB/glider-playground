@@ -1,4 +1,4 @@
-# Glider Playground — Overview
+# Ocean Playground — Overview
 
 Internal reference for anyone looking at this codebase. Covers what the
 app is made of, how it processes data, how it ships, and how the server deployment works.
@@ -131,6 +131,7 @@ change alters cached output, and add a line here.
 
 | Version | Change |
 |---|---|
+| v33 | variable list flags all-NaN variables `empty`, so presets skip placeholder variables with no data; 3D payload no longer carries bathymetry (the seabed comes only from bathy_prefetch / `/api/3d_bathy`) |
 | v32 | PROFILE_NUMBER / PROFILE_DIRECTION filled onto rows without a depth sample inside a profile (profile filter kept only the CTD grid, so Dive lines vanished profile-by-profile) |
 | v31 | 3D view bathymetry grid widened by one cell and keeps its far edges, so the scene box always contains the track |
 | v30 | map track and 3D track point caps are now the same locally and on the server (5000 / 20000; the server was 1000 / 4000) — LOW_MEMORY mode removed |
@@ -218,8 +219,11 @@ NetCDF files updated in the last `DAYS_ACTIVE` (7) days, matching suffix `_R.nc`
 files), and downloads them into `DATA_DIR`.
 
 - **Discovery**: fetches ERDDAP's `.json` directory-listing format, walks dataset directories
-  modified recently or named `*_R`, and keeps recently-modified `_R.nc` files. The scan result is
-  cached in-process for `SCAN_CACHE_TTL` (120s) so concurrent viewers share one upstream fetch.
+  modified recently or named `*_R`, and keeps recently-modified `_R.nc` files. One background
+  thread, started with the app, scans every `SCAN_INTERVAL` (15 min; `SCAN_RETRY`, 2 min, after a
+  failed scan). Requests never start a scan: `/api/live` returns the last result, and the Files
+  panel's Refresh button only wakes the scanner early. The page polls `/api/live` once a minute
+  (every 2 s while something is downloading), whether or not the panel is open.
 - **Download**: streamed to a `.part` temp file, then atomically renamed into `DATA_DIR`. Downloads
   are serialized through a single-worker thread pool (one at a time) to avoid hammering ERDDAP or
   disk I/O.
@@ -230,11 +234,8 @@ files), and downloads them into `DATA_DIR`.
 - **Suppression**: a separate marker (`.glider_playground_suppressed.json`) tracks gliders a user
   explicitly removed via the UI; auto-download skips them until the user explicitly re-requests
   the file, which clears the suppression.
-- **Auto-update sweep**: rate-limited to once per `AUTO_UPDATE_COOLDOWN` (5 min), runs as a side
-  effect of any live-feed fetch and also from a dedicated background thread every
-  `SCANNER_INTERVAL` (30 min) so gliders update even with the Files panel closed. It downloads new
-  files, re-downloads files where the server's copy is newer, and deletes managed files
-  once they fall outside the `DAYS_ACTIVE` window.
+- **Sync after each scan**: downloads new files, re-downloads files where the server's copy is
+  newer, and deletes managed files the server hasn't updated for `PRUNE_DAYS` (30).
 
 ## Copernicus Marine overlays
 

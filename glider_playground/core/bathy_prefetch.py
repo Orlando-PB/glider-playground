@@ -7,9 +7,11 @@ end of cache_logic._process, and for files that predate this at startup) and kee
 opened before its turn.
 """
 import json
+import logging
 import threading
-import traceback
 from collections import deque
+
+import requests
 
 from . import cache_logic, spatial_logic
 
@@ -17,6 +19,9 @@ GRID = 600                      # seabed points along the box's longer side
 _queue: deque = deque()
 _cv = threading.Condition()
 _started = False
+_offline_logged = False
+
+log = logging.getLogger(__name__)
 
 
 def key(grid: int = GRID) -> str:
@@ -66,6 +71,7 @@ def ensure(file_id: str) -> None:
 
 
 def _worker() -> None:
+    global _offline_logged
     while True:
         with _cv:
             while not _queue:
@@ -76,8 +82,14 @@ def _worker() -> None:
             if rec and rec.get("status") == cache_logic.STATUS_READY:
                 track(file_id)
                 fetch(file_id)
+            _offline_logged = False
+        except requests.RequestException:
+            if not _offline_logged:
+                log.warning("Seabed servers (NOAA coastwatch and PIFSC) not reachable; "
+                            "the 3D view will try again when it opens a file.")
+                _offline_logged = True
         except Exception:  # noqa: BLE001 — best effort: the route fetches on demand
-            traceback.print_exc()
+            log.exception("Seabed prefetch failed for %s", file_id)
 
 
 def start() -> None:

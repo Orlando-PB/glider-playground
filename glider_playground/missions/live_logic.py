@@ -54,14 +54,22 @@ def _label(name: str) -> str:
     return name[:-3].removesuffix("_R").replace("_", " ")
 
 
-def _mission(group: list[dict]) -> dict | None:
-    from .mission_logic import _slug
+def time_span(recs: list[dict]) -> dict | None:
+    """{"start", "end"} covering every record's track, or None if none has one yet."""
     t0, t1 = [], []
-    for r in group:
+    for r in recs:
         t = [x for x in ((cache_logic.get_payload(r["id"], "spatial_3d") or {}).get("time_ms") or []) if x]
         if t:
             t0.append(min(t)); t1.append(max(t))
     if not t0:
+        return None
+    return {"start": _naive(min(t0)), "end": _naive(max(t1))}
+
+
+def _mission(group: list[dict]) -> dict | None:
+    from .mission_logic import _slug
+    span = time_span(group)
+    if not span:
         return None
     lat = sum(r["last_lat"] for r in group) / len(group)
     lon = sum(r["last_lon"] for r in group) / len(group)
@@ -72,8 +80,8 @@ def _mission(group: list[dict]) -> dict | None:
         "id": PREFIX + _slug(group[0]["name"][:-3]),
         "live": True,
         "title": f"Live: {title}",
-        "summary": f"{len(group)} BODC platform{'s' if len(group) > 1 else ''} near {where}, last heard from {_naive(max(t1))[:10]}.",
-        "time": {"start": _naive(min(t0)), "end": _naive(max(t1))},
+        "summary": f"{len(group)} BODC platform{'s' if len(group) > 1 else ''} near {where}, last heard from {span['end'][:10]}.",
+        "time": span,
         "platforms": [{"key": f"p{i}", "label": n, "file": r["name"], "colour": COLOURS[i % len(COLOURS)],
                        "show_label": True} for i, (r, n) in enumerate(zip(group, names))],
     }
@@ -88,16 +96,18 @@ def _tidy(keep: set) -> None:
 
 
 def missions() -> dict:
-    """{id: mission} for what is live now. Touching the feed starts its scan and downloads; it never waits on them."""
+    """{id: mission} for what is live now, from the files the feed's background scanner has downloaded."""
+    from .mission_logic import live_mission_files
     now = time.time()
     if now - _built["at"] < TTL:
         return _built["missions"]
     out = {}
     try:
-        erddap_fetch.list_live()          # starts the scan, downloads and the 30-day prune
+        claimed = live_mission_files()      # platforms a "live": true mission file already shows
         recs = [r for r in cache_logic.list_files()
                 if erddap_fetch.is_managed(r.get("path", "")) and r.get("status") == cache_logic.STATUS_READY
-                and r.get("last_lat") is not None and r.get("last_lon") is not None]
+                and r.get("last_lat") is not None and r.get("last_lon") is not None
+                and r["name"].lower() not in claimed]
         for group in _clusters(recs):
             m = _mission(group)
             if m:
@@ -117,6 +127,7 @@ def status() -> dict:
     except Exception:  # noqa: BLE001
         return {"scanning": False, "downloading": 0, "processing": 0, "error": True}
     act = [a for a in feed["active"] if not a.get("suppressed")]
-    down = sum(1 for a in act if a.get("downloading") or not a.get("downloaded"))
+    # A failed download (e.g. listed on BODC but 404) isn't pending: counting it would show "downloading" forever.
+    down = sum(1 for a in act if a.get("downloading") or not (a.get("downloaded") or a.get("download_error")))
     proc = sum(1 for a in act if a.get("downloaded") and not a.get("downloading") and a.get("status") != cache_logic.STATUS_READY)
     return {"scanning": bool(feed.get("scanning")), "downloading": down, "processing": proc, "error": bool(feed.get("scan_error"))}
