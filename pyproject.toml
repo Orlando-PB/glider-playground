@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "glider-playground"
-version = "0.2.104"
+version = "0.2.105"
 description = "A fast, web-based explorer for OG1 ocean data (NetCDF)."
 readme = "README.md"
 license = {text = "Apache-2.0"}
