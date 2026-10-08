@@ -31,7 +31,14 @@
     const idFromPath = () => { const m = location.pathname.match(/^\/missions(?:\/([^/]+))?\/?$/); return m ? (m[1] ? decodeURIComponent(m[1]) : '') : null; };   // null = not a mission URL
     const pathFor = id => (id == null ? '/' : id ? '/missions/' + encodeURIComponent(id) : '/missions');
     const fit = () => { overlay.style.top = nav.getBoundingClientRect().bottom + 'px'; };
-    let current = null, lastMission = '';      // null = closed, '' = list, else mission id
+    let current = null, lastMission = '', loaded = false;      // current: null = closed, '' = list, else mission id
+
+    // replace() rather than src: an iframe navigation adds its own history entry, so Back would step the frame
+    // back to the list while the page URL (our pushState) stayed on the mission.
+    function load(url) {
+        frame.contentWindow.location.replace(url);
+        loaded = true;
+    }
 
     function show(id, push) {
         const open = id != null;
@@ -39,7 +46,7 @@
         overlay.style.display = open ? 'block' : 'none';
         try { frame.contentWindow.postMessage({ type: 'missionVisible', on: open }, '*'); } catch (_) {}
         if (open) {
-            if (id !== current || !frame.getAttribute('src')) frame.src = id ? `/missions/static/mission_three.html?theme=${encodeURIComponent(theme())}&id=${encodeURIComponent(id)}` : `/missions/static/mission_view.html?embed=1&theme=${encodeURIComponent(theme())}`;      // the list is still mission_view.html
+            if (id !== current || !loaded) load(id ? `/missions/static/mission_three.html?theme=${encodeURIComponent(theme())}&id=${encodeURIComponent(id)}` : `/missions/static/mission_view.html?embed=1&theme=${encodeURIComponent(theme())}`);      // the list is still mission_view.html
             if (id) lastMission = id;
             requestAnimationFrame(fit);
         }
