@@ -131,6 +131,8 @@ change alters cached output, and add a line here.
 
 | Version | Change |
 |---|---|
+| v35 | derivation clears the derived store first, so a reprocess recomputes every derived variable (it used to skip ones already stored, keeping them stale, and dropped them when anything new was added) |
+| v34 | PRAC_SALINITY2, ABS_SALINITY2, CONS_TEMP2 and DENSITY2 derived from a second CTD (CNDC2/TEMP2/PRES2, e.g. SixSense) |
 | v33 | variable list flags all-NaN variables `empty`, so presets skip placeholder variables with no data; 3D payload no longer carries bathymetry (the seabed comes only from bathy_prefetch / `/api/3d_bathy`) |
 | v32 | PROFILE_NUMBER / PROFILE_DIRECTION filled onto rows without a depth sample inside a profile (profile filter kept only the CTD grid, so Dive lines vanished profile-by-profile) |
 | v31 | 3D view bathymetry grid widened by one cell and keeps its far edges, so the scene box always contains the track |

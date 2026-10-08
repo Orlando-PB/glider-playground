@@ -247,6 +247,7 @@ def clear_derived(filepath: str):
     with _DERIVED_META_LOCK:
         _DERIVED_META.pop(filepath, None)
     shutil.rmtree(_derived_dir(filepath), ignore_errors=True)
+    _bust_caches()
 
 
 def _merge_derived(filepath: str, names, result):
@@ -349,10 +350,8 @@ def clear_preloaded(filepath: str):
         _PRELOADED.pop(filepath, None)
     shutil.rmtree(_preload_dir(filepath), ignore_errors=True)
     _clear_ctd_cache(filepath)
+    # Also busts the caches: the file changed on disk, so the (filepath, interp, clean) cache key is stale too.
     clear_derived(filepath)
-    _bust_caches()
-    # The file changed on disk, so the (filepath, interp, clean) cache key is stale for this path too;
-    # its on-disk overlays were just removed above.
 
 
 def _load_npy(path: Path):
@@ -410,17 +409,19 @@ CTD_INTERP_MAX_GAP_MINUTES = 5
 _CTD_INTERP_MAX_GAP_NS = CTD_INTERP_MAX_GAP_MINUTES * 60 * 1_000_000_000
 
 
-def _resolve_ctd_var_map(filepath):
+def _resolve_ctd_var_map(filepath, suffix=""):
     """Map canonical CTD names to the actual file variable, preferring the
-    `_ADJUSTED` variant when present so processing operates on the cleaned data."""
+    `_ADJUSTED` variant when present so processing operates on the cleaned data.
+    suffix "2" maps a second CTD instead (CNDC2/TEMP2/PRES2)."""
     var_names = set(_get_var_names(filepath) or [])
     out = {}
     for v in CTD_VARS:
-        adj = f"{v}_ADJUSTED"
+        name = f"{v}{suffix}"
+        adj = f"{name}_ADJUSTED"
         if adj in var_names:
             out[v] = adj
-        elif v in var_names:
-            out[v] = v
+        elif name in var_names:
+            out[v] = name
     return out
 
 

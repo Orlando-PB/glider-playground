@@ -135,18 +135,22 @@ def list_missions() -> list[dict]:
     bundle.import_inbox()
     index = _file_index()
     out = []
+    ends = {}
     for mid in [*live_logic.missions(), *_mission_files()]:
         try:
             m = load(mid)
+            if m is None:
+                continue    # a live mission none of whose platforms are loaded
+            end = (m.get("time") or {}).get("end")
+            ends[mid] = _ms(end) if end else 0.0
         except Exception as e:  # noqa: BLE001
             logger.warning("Mission %s unreadable: %s", mid, e)
             continue
-        if m is None:
-            continue        # a live mission none of whose platforms are loaded
         plats = m.get("platforms", [])
         have = sum(1 for p in plats if _resolve(p, index))
         out.append({"id": mid, "title": " ".join(str(m.get("title", mid)).split()), "summary": m.get("summary", ""),
                     "platforms": len(plats), "platforms_available": have, "live": bool(m.get("live"))})
+    out.sort(key=lambda entry: ends[entry["id"]], reverse=True)      # most recent first
     return out
 
 

@@ -1119,19 +1119,15 @@
                 layout.yaxis.autorange = isInverted ? 'reversed' : true;
             }
 
-            // Dive: one overlaid, independently autoranged axis per line; ticks only on the first line of the second unit.
+            // Dive: one overlaid, independently autoranged axis per extra unit; ticks only on the second unit's.
             if (lineGroups) {
-                const secondUnit = lineGroups.units[1];
-                let labelled2 = false;
-                plotData.lines.forEach((l, i) => {
-                    if (i === 0) return;
-                    const showTicks = fmtUnits(l.units) === secondUnit && !labelled2;
-                    if (showTicks) labelled2 = true;
-                    layout[`yaxis${i + 1}`] = { overlaying: 'y', side: 'right', showgrid: false, zeroline: false, autorange: true,
+                for (let k = 1; k < lineGroups.units.length; k++) {
+                    const showTicks = k === 1;
+                    layout[`yaxis${k + 1}`] = { overlaying: 'y', side: 'right', showgrid: false, zeroline: false, autorange: true,
                         showticklabels: showTicks, ticks: showTicks ? 'outside' : '', showline: showTicks,
                         linecolor: LINE_COLOR, tickcolor: LINE_COLOR, tickfont: { color: AXIS_COLOR, size: 10 },
                         title: showTicks && y2Label ? { text: y2Label, font: { size: 11, color: AXIS_LABEL_COLOR }, standoff: 6 } : undefined };
-                });
+                }
             }
 
             // Clicked-point marker is a DOM overlay (#point-pin, see positionPin), not a shape.
@@ -1151,8 +1147,8 @@
                 + 4.8314e-4 * S * S;
         }
 
-        const TS_SALINITY_VARS = ['ABS_SALINITY', 'PRAC_SALINITY'];
-        const TS_TEMP_VARS = ['TEMP', 'CONS_TEMP'];
+        const TS_SALINITY_VARS = ['ABS_SALINITY', 'PRAC_SALINITY', 'ABS_SALINITY2', 'PRAC_SALINITY2'];
+        const TS_TEMP_VARS = ['TEMP', 'CONS_TEMP', 'TEMP2', 'CONS_TEMP2'];
         // dens0 wants practical salinity; SA (g/kg) is ~SP × 35.16504/35 (TEOS-10 reference ratio).
         const SA_TO_SP = 35 / 35.16504;
 
@@ -1173,7 +1169,7 @@
 
         function buildDensityContourTraces(data) {
             if (!TS_SALINITY_VARS.includes(data.x_var) || !TS_TEMP_VARS.includes(data.y_var)) return [];
-            const sScale = data.x_var === 'ABS_SALINITY' ? SA_TO_SP : 1;
+            const sScale = data.x_var.startsWith('ABS_SALINITY') ? SA_TO_SP : 1;
             const sExt = xDataExtent(data.x, false);
             const tExt = xDataExtent(data.y, false);
             if (!isFinite(sExt.min) || !isFinite(sExt.max) || !isFinite(tExt.min) || !isFinite(tExt.max)) return [];
@@ -1232,20 +1228,28 @@
             ];
         }
 
-        // Dive: every line gets its own y axis so each fills the height. Ticks are shown once per unit — the first
-        // unit's on the left (inverted when invert_y, i.e. depth), the second's on the right; the rest are unlabelled.
-        // Units are compared once tidied (fmtUnits), so 'kg/m3' and 'kg m-3' share an axis.
+        // Dive: lines with the same unit share a y axis, so sensors can be compared; each other unit gets its own
+        // axis filling the height. The first unit's is on the left (inverted when invert_y, i.e. depth), the second's
+        // on the right, the rest unlabelled. Units are compared once tidied (fmtUnits), so 'kg/m3' and 'kg m-3' match.
         const LINE_COLOURS = ['#41658a', '#e0813d', '#3fa66b', '#b5488f', '#8a7d3f', '#4fa3c7'];
         function lineAxisGroups(lines) {
             const units = []; lines.forEach(l => { const u = fmtUnits(l.units); if (!units.includes(u)) units.push(u); });
-            return { units, axisOf: (l, i) => i === 0 ? 'y' : `y${i + 1}` };
+            const axisOf = (l) => { const k = units.indexOf(fmtUnits(l.units)); return k === 0 ? 'y' : `y${k + 1}`; };
+            return { units, axisOf };
+        }
+        // size_mode: 'small' | 'med' | 'large'.
+        function pointMarkerSize() {
+            const MARKER_SIZE_FACTORS = { small: 0.5, med: 0.75, large: 1 };
+            return plotConfig.defaultMarkerSize * (MARKER_SIZE_FACTORS[urlParams.get('size_mode') || 'large'] ?? 1);
         }
         function createLineTraces(data) {
             const { axisOf } = lineAxisGroups(data.lines);
+            const asPoints = urlParams.get('line_mode') === 'markers';
             return data.lines.map((l, i) => ({
-                x: l.x, y: l.y, mode: 'lines', type: 'scattergl', yaxis: axisOf(l, i),
+                x: l.x, y: l.y, mode: asPoints ? 'markers' : 'lines', type: 'scattergl', yaxis: axisOf(l),
                 name: withUnits(l.name, l.units),
                 line: { width: 1.3, color: LINE_COLOURS[i % LINE_COLOURS.length] },
+                marker: { size: pointMarkerSize(), color: LINE_COLOURS[i % LINE_COLOURS.length], opacity: MARKER_OPACITY },
                 connectgaps: false, showlegend: true, hoverinfo: 'none', customdata: [],
             }));
         }
@@ -1256,12 +1260,9 @@
             let cmapName = urlParams.get('cmap') || 'thermal';
             const isDiscrete09 = cmapName === 'discrete_09';
             // draw_order: 'normal' | 'largest' | 'smallest' | 'outliers' (what draws on top);
-            // size_mode: 'small' | 'med' | 'large'.
             const drawOrder = urlParams.get('draw_order') || 'normal';
             const orderActive = drawOrder === 'largest' || drawOrder === 'smallest' || drawOrder === 'outliers';
-            const sizeMode = urlParams.get('size_mode') || 'large';   // 'small' | 'med' | 'large'
-            const MARKER_SIZE_FACTORS = { small: 0.5, med: 0.75, large: 1 };
-            const markerSize = plotConfig.defaultMarkerSize * (MARKER_SIZE_FACTORS[sizeMode] ?? 1);
+            const markerSize = pointMarkerSize();
 
             // --- Discrete 0-9 mode: one trace per integer value, legend instead of colorbar ---
             if (isDiscrete09 && data.c && data.c.length) {

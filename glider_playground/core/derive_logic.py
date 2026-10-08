@@ -62,6 +62,10 @@ DERIVED_METADATA = {
     "ABS_SALINITY": {"units": "g/kg", "description": _CALC + "Absolute salinity, derived via TEOS-10/GSW"},
     "CONS_TEMP": {"units": "degrees_Celsius", "description": _CALC + "Conservative temperature, derived via TEOS-10/GSW"},
     "DENSITY": {"units": "kg/m3", "description": _CALC + "In-situ density, derived via TEOS-10/GSW"},
+    "PRAC_SALINITY2": {"units": "1", "description": _CALC + "Practical salinity from the second CTD (CNDC2/TEMP2/PRES2), via TEOS-10/GSW"},
+    "ABS_SALINITY2": {"units": "g/kg", "description": _CALC + "Absolute salinity from the second CTD (CNDC2/TEMP2/PRES2), via TEOS-10/GSW"},
+    "CONS_TEMP2": {"units": "degrees_Celsius", "description": _CALC + "Conservative temperature from the second CTD (CNDC2/TEMP2/PRES2), via TEOS-10/GSW"},
+    "DENSITY2": {"units": "kg/m3", "description": _CALC + "In-situ density from the second CTD (CNDC2/TEMP2/PRES2), via TEOS-10/GSW"},
     "SCI_PHASE": {"units": "1", "description": _CALC + "Scientific phase classification (0 unknown, 1 ascent, 2 descent, 3 surfacing, 4 parking, 5 inflection, 6 propelled, 7 transition)"},
     "PROFILE_NUMBER": {"units": "1", "description": _CALC + "Derived profile number (NaN = no profile, e.g. surfacing)"},
     "PROFILE_DIRECTION": {"units": "1", "description": _CALC + "Profile direction (-1=ascent, 1=descent, 0=transect, NaN otherwise)"},
@@ -162,18 +166,20 @@ def _compute_time_qc(filepath, log, names, existing, time_var):
     return [qc_name], {qc_name: qc}, meta
 
 
-def _compute_ctd(filepath, log, names, existing, time_var):
-    wanted = [n for n in ("PRAC_SALINITY", "ABS_SALINITY", "CONS_TEMP", "DENSITY") if not provided(n, existing)]
+def _compute_ctd(filepath, log, names, existing, time_var, suffix=""):
+    """Salinity/density from the main CTD, or with suffix "2" from a second CTD
+    (CNDC2/TEMP2/PRES2, e.g. SixSense)."""
+    outputs = tuple(name + suffix for name in ("PRAC_SALINITY", "ABS_SALINITY", "CONS_TEMP", "DENSITY"))
+    var_map = plot_logic._resolve_ctd_var_map(filepath, suffix)
+    wanted = [n for n in outputs if not provided(n, existing)]
     if not wanted or not _HAS_GSW:
         return [], {}, {}
-
-    var_map = plot_logic._resolve_ctd_var_map(filepath)
     if not all(k in var_map for k in ("CNDC", "TEMP", "PRES")):
         return [], {}, {}
 
     lat_name, lon_name = spatial_logic._resolve_latlon_names(names)
     if not lat_name or not lon_name:
-        log("No LATITUDE/LONGITUDE - skipping CTD derivation")
+        log(f"No LATITUDE/LONGITUDE - skipping CTD{suffix} derivation")
         return [], {}, {}
 
     needed = set(var_map.values())
@@ -187,7 +193,7 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     if not data:
         return [], {}, {}
 
-    log("CTD derive: cleaning conductivity / temperature / pressure")
+    log(f"CTD{suffix} derive: cleaning conductivity / temperature / pressure")
     units_map = plot_logic._get_var_units(filepath)
     canon = plot_logic._build_ctd_canonical_dict(data, var_map, time_var)
     cleaned = plot_logic._apply_ctd_processing(
@@ -202,7 +208,7 @@ def _compute_ctd(filepath, log, names, existing, time_var):
         lat = np.asarray(data[lat_name], dtype=float)
         lon = np.asarray(data[lon_name], dtype=float)
     except Exception as e:
-        log(f"CTD derive: input read failed ({e})")
+        log(f"CTD{suffix} derive: input read failed ({e})")
         return [], {}, {}
 
     # GSW's SP_from_C expects conductivity in mS/cm. Source files store CNDC in
@@ -210,7 +216,7 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     # so convert here based on the file's actual units — this conversion is only
     # for the salinity/density calculation below, it never touches the CNDC
     # values shown in the plot or written by "Clean".
-    cndc_units = str((units_map or {}).get("CNDC", "")).strip().lower()
+    cndc_units = str((units_map or {}).get("CNDC" + suffix, "")).strip().lower()
     if cndc_units not in plot_logic.CTD_CNDC_MSCM_UNITS:
         cndc = cndc * 10.0
 
@@ -232,7 +238,7 @@ def _compute_ctd(filepath, log, names, existing, time_var):
     lon = _interp_over_time(lon, tvals)
 
     if not (len(cndc) == len(temp) == n == len(lat) == len(lon)):
-        log("CTD derive: input length mismatch - skipping")
+        log(f"CTD{suffix} derive: input length mismatch - skipping")
         return [], {}, {}
 
     bad = np.zeros(n, dtype=bool)
@@ -243,25 +249,25 @@ def _compute_ctd(filepath, log, names, existing, time_var):
             bad |= np.isfinite(arr) & ((arr < lo) | (arr > hi))
     n_bad = int(bad.sum())
     if n_bad:
-        log(f"CTD derive: ignoring {n_bad} sample(s) with physically impossible CNDC/TEMP/PRES")
+        log(f"CTD{suffix} derive: ignoring {n_bad} sample(s) with physically impossible CNDC/TEMP/PRES")
         cndc, temp, pres = cndc.copy(), temp.copy(), pres.copy()
         cndc[bad] = temp[bad] = pres[bad] = np.nan
 
-    log(f"CTD derive: computing {', '.join(wanted)} via GSW")
+    log(f"CTD{suffix} derive: computing {', '.join(wanted)} via GSW")
     try:
         sp = gsw.SP_from_C(cndc, temp, pres)
         sa = gsw.SA_from_SP(sp, pres, lon, lat)
         ct = gsw.CT_from_t(sa, temp, pres)
         rho = gsw.rho(sa, ct, pres)
     except Exception as e:
-        log(f"CTD derive: GSW computation failed ({e})")
+        log(f"CTD{suffix} derive: GSW computation failed ({e})")
         return [], {}, {}
 
     computed = {
-        "PRAC_SALINITY": sp,
-        "ABS_SALINITY": sa,
-        "CONS_TEMP": ct,
-        "DENSITY": rho,
+        "PRAC_SALINITY" + suffix: sp,
+        "ABS_SALINITY" + suffix: sa,
+        "CONS_TEMP" + suffix: ct,
+        "DENSITY" + suffix: rho,
     }
 
     arrays, meta = {}, {}
@@ -683,10 +689,12 @@ def derive_all_extra_variables(filepath, log_cb=None):
             try: log_cb(msg)
             except Exception: pass
 
+    # A previous run's derived variables would otherwise count as already in the file and be skipped.
+    plot_logic.clear_derived(filepath)
     names = list(plot_logic._get_var_names(filepath) or [])
     if not names:
         return []
-        
+
     existing = set(names)
     time_var = _resolve_time_var(names)
     
@@ -709,6 +717,14 @@ def derive_all_extra_variables(filepath, log_cb=None):
         all_meta.update(cm)
     except Exception as e:
         log(f"CTD derivation failed ({e})")
+
+    try:
+        cw, ca, cm = _compute_ctd(filepath, log, names, existing, time_var, suffix="2")
+        all_wanted.extend(cw)
+        all_arrays.update(ca)
+        all_meta.update(cm)
+    except Exception as e:
+        log(f"Second CTD derivation failed ({e})")
 
     try:
         pw, pa, pm = _compute_profiles(filepath, log, names, existing, time_var)

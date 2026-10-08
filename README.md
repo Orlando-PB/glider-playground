@@ -2,13 +2,15 @@
 
 <a href="https://www.noc.ac.uk/" title="National Oceanography Centre"><img src="glider_playground/static/readme_images/NOC_logo.svg" alt="National Oceanography Centre" width="72" align="right"></a>
 
-A fast, web-based viewer for oceanographic data. Load OG1 NetCDF files — or pull live deployments from BODC.
+A web-based viewer for ocean glider and other platform data. Load your own OG1 NetCDF files, or open live deployments from BODC.
 
-> **Renamed:** Glider Playground is now **Ocean Playground**. Only the name has changed so far: the PyPI package, the
-> `glider-playground` command, the `~/.glider_playground` folder and the website (glider-playground.co.uk) all keep
-> the old name for now and will be migrated over time.
+> **Renamed:** Glider Playground is now **Ocean Playground**. So far only the name has changed: the PyPI package, the
+> `glider-playground` command, the `~/.glider_playground` folder and the website (glider-playground.co.uk) still use
+> the old name and will be moved over time.
 
-**Live demo:** [glider-playground.co.uk](https://glider-playground.co.uk) *(running on a Raspberry Pi — may be slow)*
+**Live site:** [glider-playground.co.uk](https://glider-playground.co.uk), no login needed *(it runs on a Raspberry Pi, so it can be slow)*
+
+**One-page guides (A5 PDF):** [Cheat sheet](https://github.com/Orlando-PB/glider-playground/blob/main/docs/cheat_sheet.pdf), how to use it · [Features](https://github.com/Orlando-PB/glider-playground/blob/main/docs/features.pdf), what it does
 
 ![Ocean Playground](glider_playground/static/readme_images/whole_view.webp)
 
@@ -37,17 +39,15 @@ pip install .
 
 ## Loading Data
 
-<img src="glider_playground/static/readme_images/files_dropdown.webp" alt="Files panel with live BODC deployments" width="340" align="right">
+Click the file name (top left) to open the file panel. From there you can:
 
-Click the **file button** (top-left) to open the file panel. You can:
+- **Open a live BODC deployment**: platforms reporting in the last week are listed at the top
+- **Add files**: pick individual `.nc` files
+- **Add folder**: load every `.nc` file in a folder
 
-- **Browse live BODC deployments** — pull published datasets directly from the British Oceanographic Data Centre
-- **Add files** — pick individual `.nc` files
-- **Add folder** — load an entire folder of `.nc` files at once
+Each file is processed once in the background; click it when it's ready.
 
-Your own files are processed once in the background. Once ready, click a file to load it.
-
-> **File format:** input files must be in [OG1](https://github.com/OceanGlidersCommunity/OG-format-user-manual) format (or OG1-compatible) — the OceanGliders community NetCDF standard.
+> **File format:** files must be [OG1](https://github.com/OceanGlidersCommunity/OG-format-user-manual) (or OG1-compatible), the OceanGliders community NetCDF format.
 
 > Live data is provided by the [British Oceanographic Data Centre (BODC)](https://platforms.bodc.ac.uk/deployment-catalogue/).
 
@@ -55,79 +55,89 @@ Your own files are processed once in the background. Once ready, click a file to
 
 ## Views & Layout
 
-Ocean Playground is a flexible, multi-panel workspace — plots, the globe, and the 3D track are all panels you can arrange however you like.
-
-- **Drag** a panel by its header to reorder or swap it with another
-- **Split** any panel (the edge **+** buttons) to add another plot or map beside it
-- **Resize** by dragging the dividers; **close** a panel with its ✕
+Plots, the globe and the 3D view are panels. Drag a panel by its header to move it, use the **+** on its edges to add another panel beside it, drag the dividers to resize, and close a panel with its ✕.
 
 ### Views
 
-The **View** bar rebuilds the whole workspace in one click:
+The **View** bar sets up the whole layout:
 
-| View | What you get |
+| View | Shows |
 |---|---|
-| **Classic** | A single plot with the globe and 3D track (the default) |
-| **Map** | Globe + 3D view side by side, no plot |
-| **Overview** | Globe + 3D alongside the headline plots |
-| **Dashboard** | Globe + 3D + the six core plots, each with a depth-profile sidebar |
-| **Duo** | Two globes (chlorophyll + currents overlays) beside backscatter and salinity plots |
-| **Bio-optics** | Temperature, chlorophyll, backscatter and PAR plots with a full-height globe |
-| **Chemistry** | Nitrate, pH, DIC and redox plots with a full-height globe (greyed out for files without chemistry sensors) |
-| **Stats** | Deployment summary, map, instruments, and searchable variable / attribute tables (derived variables are labelled) |
+| **Classic** | One plot, with the globe and 3D view (the default) |
+| **Map** | Globe and 3D view side by side |
+| **Overview** | Globe and 3D view next to the main plots |
+| **Dashboard** | Globe, 3D view and six plots, each with a depth-profile sidebar |
+| **Duo** | Two globes (chlorophyll and currents) next to backscatter and salinity plots |
+| **Bio-optics** | Temperature, chlorophyll, backscatter and PAR, with a full-height globe |
+| **Chemistry** | Nitrate, pH, DIC and redox, with a full-height globe (greyed out if the file has no chemistry sensors) |
+| **Metadata** | Deployment summary, map, instruments, and searchable variable and attribute lists (click a variable to plot it; derived variables are labelled) |
 
-![Dashboard view — globe, 3D track, and six plots with profile sidebars](glider_playground/static/readme_images/dashboard.webp)
+![Dashboard view: globe, 3D view and six plots with profile sidebars](glider_playground/static/readme_images/dashboard.webp)
 
-![Bio-optics view — temperature, chlorophyll, backscatter and PAR beside a full-height globe](glider_playground/static/readme_images/bio_optics.webp)
-
-![Stats view — deployment summary, instruments, variables and attributes](glider_playground/static/readme_images/stats.webp)
+![Metadata view: deployment summary, instruments, variables and attributes](glider_playground/static/readme_images/stats.webp)
 
 ### Presets
 
-The **Presets** row sets what a plot shows: **Phases, Thermal, T-S Diagram, Salinity, Density, Chlorophyll, Oxygen, Backscatter, PAR, Nitrate, pH, DIC, Redox, Sensor temps**. Presets the current file has no data for are greyed out.
+**Presets** pick what a plot shows. They are grouped into four menus:
+
+| Group | Presets |
+|---|---|
+| **Core** | Phases, Dive, PRES vs PRES2, PRES & PRES2, Sensor temps |
+| **Physics** | Thermal, T-S Diagram, Salinity, Density (each also as a "2" version for a second CTD, e.g. a SixSense sensor) |
+| **Bio-optics** | Chlorophyll, Oxygen, Backscatter, PAR |
+| **Chemistry** | Nitrate, Phosphate, Alkalinity, pH, DIC, Redox |
+
+Presets the file has no data for are greyed out.
 
 ### Globe & Overlays
 
-- **Globe** — the glider's GPS track on an interactive 3D globe, with every other loaded deployment shown faintly alongside
-- **Copernicus overlays** — drape satellite/model surface fields over the globe: **Chlorophyll-a, Temperature, Salinity, O₂, pH, Biomass, Sea Level Anomaly**, plus **Currents** as an animated particle-flow field. **Smooth** toggles interpolation of the overlay grid, and **Latest** swaps the deployment-date snapshot for today's conditions
-- **Glider DAC** — per-dive depth-averaged current vectors, shown when the file provides them
-- **Argo floats** — latest position of every Argo float, with details on click
-- **Research ships** — latest reported positions of RRS Discovery, RRS James Cook and RRS Sir David Attenborough
+- **Globe**: the glider's GPS track, with every other loaded deployment shown faintly
+- **Copernicus overlays**: surface fields from satellites and models: chlorophyll-a, temperature, salinity, O₂, pH, biomass and sea level anomaly, plus currents as moving particles. **Smooth** interpolates the grid, and **Latest** shows today's conditions instead of the deployment date
+- **Glider DAC**: depth-averaged current for each dive, when the file has it
+- **Argo floats**: the last position of every Argo float; click one for its details and drift track
+- **Research ships**: latest positions of RRS Discovery, RRS James Cook and RRS Sir David Attenborough
 
-![Duo view — chlorophyll and surface-current overlays beside backscatter and salinity plots](glider_playground/static/readme_images/globe_overlay.webp)
+![Duo view: chlorophyll and surface-current overlays next to backscatter and salinity plots](glider_playground/static/readme_images/globe_overlay.webp)
 
 ### 3D View
 
-The dive track drawn in 3D over NOAA bathymetry. Height is scaled automatically.
+The dive track in 3D over NOAA bathymetry. Depth is stretched so the dives are visible.
 
-<img src="glider_playground/static/readme_images/3d_view.webp" alt="3D view — a dive track over bathymetry, with scenery" width="520" align="right">
+<img src="glider_playground/static/readme_images/3d_view.webp" alt="3D view: a dive track over the seabed" width="520" align="right">
 
-- **Playback** — press play (or drag the slider) to fly the vehicle along its track, at a choice of speeds
+- **Playback**: press play, or drag the slider, to move the vehicle along its track
 - **Style** menu:
-  - **Colour land** — shade land and ice above the waterline
-  - **True height** — turn off the vertical scaling
-  - **Scenery** — shows cosmetic details
-  - **Argo floats** — show floats that surfaced near the glider during playback
+  - **Home**: back to the starting view
+  - **Follow**: keep the camera on the vehicle
+  - **True height**: turn off the depth stretch
+  - **Argo**: floats that surfaced near the glider, with their dives
+  - **Dive lines**: show or hide the Argo floats' dives
+  - **Wildlife**: the odd animal swimming past (just for fun)
+  - **Track colour**: colour the track by a preset, or by whatever the selected plot shows
 
 <br clear="right">
 
-![Map view — globe layer menu and the 3D view's Style menu](glider_playground/static/readme_images/map_layers.webp)
+### Missions
+
+**Missions** (top bar) puts several platforms in one 3D scene on a shared time bar: gliders, ALRs, Argo floats and ships. Live BODC gliders working near each other are grouped into a mission automatically. You can also write your own as a JSON file (see [missions/README.md](glider_playground/missions/README.md)). Click a platform to open its data.
+
+![A mission: several gliders in one 3D scene on a shared time bar](glider_playground/static/readme_images/mission_view.webp)
 
 ### Copernicus Setup
 
-The surface overlays and currents are fetched live from [Copernicus Marine](https://marine.copernicus.eu/), which needs a (free) account and a one-time login:
+The overlays and currents come from [Copernicus Marine](https://marine.copernicus.eu/), which needs a free account and a one-time login:
 
-1. **Register** for a free account at [marine.copernicus.eu/register](https://data.marine.copernicus.eu/register).
+1. **Register** at [marine.copernicus.eu/register](https://data.marine.copernicus.eu/register).
 2. **Install** the toolbox:
    ```bash
    pip install copernicusmarine
    ```
-3. **Log in** (stores your credentials locally), then restart Ocean Playground:
+3. **Log in** (this saves your credentials locally), then restart Ocean Playground:
    ```bash
    copernicusmarine login
    ```
 
-Once you're logged in, the overlay layers fetch on demand. Until then the app will prompt you with whichever of these steps is missing.
+Until you're logged in, the app tells you which of these steps is missing.
 
 Overlays and currents are provided by the E.U. Copernicus Marine Service:
 
@@ -140,37 +150,33 @@ Overlays and currents are provided by the E.U. Copernicus Marine Service:
 
 ## Plotting & Inspecting
 
-By default, presets drive the plots. Open **Settings** (top bar) to change the plot variables and more.
+Presets set up the plots. Open **Settings** (top bar) to choose any variable for the x axis, y axis and colour, and for the options below.
 
-![Settings bar](glider_playground/static/readme_images/settings.webp)
-
-- **Zoom** — drag a box on the plot to zoom in; double-click to reset
-- **Colour bar slider** — drag the ends of the colour bar to trim the colour range (**Auto** / **Reset** beneath it)
-- **Inspector** — hover the plot to read exact values for the nearest sample in a floating card
-- **Profile sidebar** — the **Profile** button adds a value-vs-depth plot to the left of a plot
-- **Order / Size / Quality** — choose which points draw on top, marker size, and the maximum number of points drawn
-- **Colour palette** — pick from a range of oceanographic colour maps
-- **Phases** — show only selected glider phases
-- **Sync time** — zooming one plot zooms all
-- **Share** — copy a link that reopens this exact view
-- **Download** — save a high-resolution PNG of the whole workspace (every panel as shown, without the controls)
-- **Dark theme** — toggle from the top bar
-
-![Overview in the dark theme](glider_playground/static/readme_images/dark_theme.webp)
+- **Zoom**: drag a box on the plot; double-click to reset
+- **Colour range**: drag the ends of the colour bar (**Auto** / **Reset** beneath it)
+- **Inspector**: hover the plot to read the nearest sample's values
+- **Profile**: adds a value-against-depth plot to the left of a plot
+- **Order / Size / Quality**: which points draw on top, marker size, and how many points are drawn (up to every point)
+- **Colour palette**: a choice of oceanographic colour maps
+- **Phases**: show only some glider phases
+- **Sync time**: zooming one plot zooms them all
+- **Share**: copy a link that reopens this exact view
+- **Download**: save a PNG of the whole workspace, without the controls
+- **Dark theme**: the moon button in the top bar
 
 ### Profiles
 
-If a file contains dive profiles, a **Profiles** navigator appears. Step through individual profiles or cycles, filter by direction (upcast / downcast / transect), or view everything at once.
+If a file has dive profiles, a **Profiles** navigator appears. Step through single profiles or cycles, filter by direction (up, down or transect), or show everything.
 
 ---
 
 ## Quality Control
 
-QC flags follow the Argo convention: `0` No QC, `1` Good, `2` Probably good, `3` Probably bad, `4` Bad, `5` Changed, `8` Interpolated, `9` Missing. Samples are always filtered to the allowed set (default `0,1,2,5,8`).
+QC flags follow the Argo convention: `0` No QC, `1` Good, `2` Probably good, `3` Probably bad, `4` Bad, `5` Changed, `8` Interpolated, `9` Missing. Only samples with an allowed flag are shown (default `0,1,2,5,8`).
 
-- PRES gaps up to 5 minutes are always interpolated (flag `8`); a longer gap is a real data gap and is left unfilled.
-- Exact `0.0` fill values in PRES/TEMP/CNDC are always flagged missing (flag `9`) and nulled.
-- NaT and out-of-order timestamps are always dropped outright. Other out-of-range timestamps (pre-1990 / future) are flagged bad (flag `4`) and filterable like anything else.
+- PRES gaps of up to 5 minutes are always interpolated (flag `8`); longer gaps are real gaps and are left empty.
+- Exact `0.0` fill values in PRES/TEMP/CNDC are always flagged missing (flag `9`) and removed.
+- NaT and out-of-order timestamps are always dropped. Other out-of-range times (before 1990 or in the future) are flagged bad (flag `4`) and can be filtered like any other flag.
 
 ---
 
@@ -184,9 +190,9 @@ pip uninstall glider-playground
 
 ## Developer Info
 
-To change the default plots, dashboard views or colour palettes, edit [`glider_playground/plot_presets.json`](glider_playground/plot_presets.json) (instructions are at the top of the file) and restart.
+To change the default plots, views or colour palettes, edit [`glider_playground/plot_presets.json`](glider_playground/plot_presets.json) (instructions at the top of the file) and restart.
 
-See [OVERVIEW.md](OVERVIEW.md) for the code layout, architecture, data pipeline, and deployment.
+See [OVERVIEW.md](OVERVIEW.md) for the code layout, architecture, data pipeline and deployment.
 
 ---
 

@@ -12,6 +12,8 @@
     "  draw_order - optional: normal | outliers | smallest | largest (which points are drawn on top).",
     "  prewarm    - true = pre-cache this plot when a file is first processed, so the first click is instant. Only applies to files processed after the change.",
     "  group      - optional: presets sharing a group name fold into one toolbar chip that opens a menu on hover (the chip shows whichever member is active). Presets without a group stay as their own chip.",
+    "  points     - optional, with lines: true draws each variable as points instead of connected lines.",
+    "  requires   - optional: variables that must ALL be in the file, otherwise the preset is hidden rather than greyed out (e.g. a second sensor).",
     "  c: []      - no colour variable: points are drawn in one colour (use cmap 'black').",
     "  lines      - optional: several variables drawn as connected lines against x on ONE plot (e.g. Dive). Each entry is a variable name, a candidate list, or a shared list from 'axes'; variables the file lacks are skipped. Variables with the same units share an axis: the first unit on the left (inverted if invert_y), the second on the right.",
     "ADD A PALETTE: add a name + list of hex colours to 'palettes', LOW value first -> HIGH value last. (Gradients copied top-to-bottom from a colour bar are high-first: reverse them.)",
@@ -50,6 +52,32 @@
       "invert_y": true,
       "lines": ["depth", "ALTITUDE", ["GLIDER_PITCH", "PITCH"], ["GLIDER_ROLL", "ROLL"]]
     },
+    "preset_pres_compare": {
+      "label": "PRES vs PRES2",
+      "icon": "compare_arrows",
+      "colour": "gray",
+      "group": "Core",
+      "x": ["PRES"],
+      "y": ["PRES2"],
+      "c": [],
+      "cmap": "black",
+      "invert_y": false,
+      "requires": ["PRES2"]
+    },
+    "preset_pres_series": {
+      "label": "PRES & PRES2",
+      "icon": "stacked_line_chart",
+      "colour": "gray",
+      "group": "Core",
+      "x": "time",
+      "y": "depth",
+      "c": [],
+      "cmap": "black",
+      "invert_y": true,
+      "requires": ["PRES2"],
+      "lines": ["PRES", "PRES2"],
+      "points": true
+    },
     "preset_temp": {
       "label": "Thermal",
       "icon": "thermostat",
@@ -60,6 +88,18 @@
       "cmap": "temp",
       "invert_y": true,
       "prewarm": true,
+      "group": "Physics"
+    },
+    "preset_temp2": {
+      "label": "Thermal 2",
+      "icon": "thermostat",
+      "colour": "red",
+      "x": "time",
+      "y": ["PRES2"],
+      "c": ["TEMP2", "CONS_TEMP2"],
+      "cmap": "temp",
+      "invert_y": true,
+      "requires": ["TEMP2"],
       "group": "Physics"
     },
     "preset_ts": {
@@ -74,6 +114,18 @@
       "prewarm": false,
       "group": "Physics"
     },
+    "preset_ts2": {
+      "label": "T-S Diagram 2",
+      "icon": "scatter_plot",
+      "colour": "purple",
+      "x": ["ABS_SALINITY2", "PRAC_SALINITY2"],
+      "y": ["TEMP2", "CONS_TEMP2"],
+      "c": ["PRES2"],
+      "cmap": "deep",
+      "invert_y": false,
+      "requires": ["PRAC_SALINITY2"],
+      "group": "Physics"
+    },
     "preset_sal": {
       "label": "Salinity",
       "icon": "water_drop",
@@ -86,6 +138,18 @@
       "prewarm": true,
       "group": "Physics"
     },
+    "preset_sal2": {
+      "label": "Salinity 2",
+      "icon": "water_drop",
+      "colour": "blue",
+      "x": "time",
+      "y": ["PRES2"],
+      "c": ["ABS_SALINITY2", "PRAC_SALINITY2"],
+      "cmap": "sal",
+      "invert_y": true,
+      "requires": ["PRAC_SALINITY2"],
+      "group": "Physics"
+    },
     "preset_density": {
       "label": "Density",
       "icon": "layers",
@@ -96,6 +160,18 @@
       "cmap": "dense",
       "invert_y": true,
       "prewarm": true,
+      "group": "Physics"
+    },
+    "preset_density2": {
+      "label": "Density 2",
+      "icon": "layers",
+      "colour": "indigo",
+      "x": "time",
+      "y": ["PRES2"],
+      "c": ["DENSITY2"],
+      "cmap": "dense",
+      "invert_y": true,
+      "requires": ["DENSITY2"],
       "group": "Physics"
     },
     "preset_chla": {
@@ -161,6 +237,30 @@
       "prewarm": false,
       "group": "Chemistry"
     },
+    "preset_phosphate": {
+      "label": "Phosphate",
+      "icon": "grain",
+      "colour": "cyan",
+      "x": "time",
+      "y": "depth",
+      "c": ["PHOSPHATE"],
+      "cmap": "algae",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
+    "preset_totalk": {
+      "label": "Alkalinity",
+      "icon": "science",
+      "colour": "indigo",
+      "x": "time",
+      "y": "depth",
+      "c": ["TOTALK"],
+      "cmap": "deep",
+      "invert_y": true,
+      "prewarm": false,
+      "group": "Chemistry"
+    },
     "preset_ph": {
       "label": "pH",
       "icon": "water_ph",
@@ -207,13 +307,13 @@
       "c": [],
       "cmap": "black",
       "invert_y": false,
-      "lines": ["TEMP", "TEMP2", "TEMP_DOXY", "TEMP_NITR", "TEMP_DIC"]
+      "lines": ["TEMP", "TEMP2", "TEMP_DOXY", "TEMP_NITR", "TEMP_PHOS", "TEMP_DIC", "TEMP_TOTALK"]
     }
   },
   "views": {
     "default_preset": "preset_temp",
     "new_plot_order": ["preset_temp", "preset_sal", "preset_density", "preset_chla", "preset_doxy", "preset_bbp", "preset_ts"],
-    "invert_y_vars": ["PRES", "PRES_ENG", "GLIDER_DEPTH", "DEPTH"],
+    "invert_y_vars": ["PRES", "PRES2", "PRES_ENG", "GLIDER_DEPTH", "DEPTH"],
     "overview": ["preset_temp", "preset_density", "preset_chla", "preset_doxy"],
     "dashboard": ["preset_temp", "preset_sal", "preset_density", "preset_doxy", "preset_chla", "preset_bbp"],
     "biooptics": [
@@ -224,7 +324,7 @@
       { "preset": "preset_bbp", "draw_order": "largest" },
       { "preset": "preset_par", "draw_order": "outliers" }
     ],
-    "chemistry": ["preset_nitrate", "preset_ph", "preset_dic", "preset_redox"],
+    "chemistry": ["preset_nitrate", "preset_phosphate", "preset_dic", "preset_totalk", "preset_ph", "preset_redox"],
     "duo": ["preset_bbp", "preset_sal"]
   },
   "palettes": {

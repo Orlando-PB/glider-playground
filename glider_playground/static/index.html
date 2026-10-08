@@ -681,14 +681,16 @@
         .preset-btn:not(:disabled):hover { filter: brightness(1.15); }
         .preset-btn:not(:disabled).active {
             transform: scale(1.04);
-            box-shadow: 0 0 0 3px rgba(65,101,138,0.22);
+            /* The 1px border plus a 1px inset: a 2px ring flush with the chip's edge, so it keeps its size. */
+            border-color: var(--ring, currentColor);
+            box-shadow: inset 0 0 0 1px var(--ring, currentColor);
         }
         .preset-btn:disabled { opacity: 0.25 !important; filter: grayscale(100%); cursor: not-allowed; }
         /* Grouped presets: one chip, a vertical menu beneath on hover / focus / click. */
         .preset-group { position: relative; display: inline-flex; }
         .preset-group-btn { display: inline-flex; align-items: center; gap: 4px; padding-right: 7px !important; }
-        .preset-btn.preset-group-plain { background: var(--bg-panel-3); color: var(--text-secondary); border: 2px solid transparent; }   /* border-color is set inline when a member is active */
-        .preset-group-btn.active { transform: none; box-shadow: none; }   /* the coloured border is the active mark */
+        .preset-btn.preset-group-plain { background: var(--bg-panel-3); color: var(--text-secondary); }   /* --ring is set inline to the active member's colour */
+        .preset-group-btn.active { transform: none; }
         :root[data-theme="light"] .preset-group-plain { background: #dde3ec; color: #1f2937; }
         .preset-caret { opacity: 0.7; transition: transform 0.15s; }
         .preset-group.open .preset-caret { transform: rotate(180deg); }
@@ -1544,8 +1546,8 @@
                     <button class="view-seg-btn" data-view="dashboard" title="Globe + 3D + the six core plots with depth-profile sidebars"><span class="material-symbols-outlined text-[14px]">dashboard</span>Dashboard</button>
                     <button class="view-seg-btn" data-view="duo" title="Two globes (Chl-a + currents overlays) beside backscatter and salinity plots"><span class="material-symbols-outlined text-[14px]">looks_two</span>Duo</button>
                     <button class="view-seg-btn" data-view="biooptics" title="Temp, chlorophyll and backscatter (smallest- and largest-on-top), and PAR, with a full-height globe on the right"><span class="material-symbols-outlined text-[14px]">biotech</span>Bio-optics</button>
-                    <button class="view-seg-btn" data-view="chemistry" title="Nitrate, pH, DIC and redox, with a full-height globe on the right (files with chemistry sensors only)"><span class="material-symbols-outlined text-[14px]">science</span>Chemistry</button>
-                    <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Stats</button>
+                    <button class="view-seg-btn" data-view="chemistry" title="Nutrients, carbonate (DIC, alkalinity), pH and redox, with a full-height globe on the right (files with chemistry sensors only)"><span class="material-symbols-outlined text-[14px]">science</span>Chemistry</button>
+                    <button class="view-seg-btn" data-view="stats" title="Map + instruments, variables and attributes side by side"><span class="material-symbols-outlined text-[14px]">table_chart</span>Metadata</button>
                 </div>
             </div>
 
@@ -2437,6 +2439,7 @@
             });
             if (s.cycleProfile) Object.entries(s.cycleProfile).forEach(([k, v]) => params.set(k, v));
             if (s.lines && s.lines.length) params.set('lines', s.lines.join(','));
+            if (s.lines && OceanPresets[s.preset]?.points) params.set('line_mode', 'markers');
             if (s.zoomBounds) {
                 params.set('zXmin', s.zoomBounds.xMin); params.set('zXmax', s.zoomBounds.xMax);
                 params.set('zYmin', s.zoomBounds.yMin); params.set('zYmax', s.zoomBounds.yMax);
@@ -2844,6 +2847,7 @@
             const p = OceanPresets[key];
             if (!p) return false;
             const isVal = (val) => !val.endsWith('_QC') && (hasData(val) || hasData(val + '_ADJUSTED'));
+            if (!p.requires.every(isVal)) return false;
             if (p.lines) return p.x.some(isVal) && p.lines.some(cands => cands.some(isVal));   // any one line is enough
             return p.x.some(isVal) && p.y.some(isVal) && (p.c.length === 0 || p.c.some(isVal));
         }
@@ -3294,7 +3298,7 @@
             renderPanel(summary);
             setActive(plot.id);
             markViewApplied();
-            requestAnimationFrame(fitClassicSummaryHeight);
+            requestAnimationFrame(fitPanelsToContent);
         }
 
         function buildFromSnapshot(snap) {
@@ -3382,11 +3386,12 @@
                     text: p.label || key, icon: p.icon || 'show_chart',
                     bg: named ? named[0] : 'preset-btn-custom', textCol: named ? named[1] : '',
                     customColour: named ? null : (p.colour || '#9ca3af'),
-                    x: names(p.x), y: names(p.y), c: names(p.c),
+                    x: names(p.x), y: names(p.y), c: names(p.c), requires: names(p.requires),
                     cmap: p.cmap || 'thermal', invert: !!p.invert_y,
                     group: p.group || null,
                     // `lines`: several y variables (each a candidate list) drawn as lines on one plot; y is the axis title's variable.
                     lines: Array.isArray(p.lines) ? p.lines.map(names) : null,
+                    points: !!p.points,
                 };
                 if (p.draw_order) out[key].drawOrder = p.draw_order;
             }
@@ -3566,7 +3571,7 @@
                 // Duo globe just (re)loaded → (re)apply its Copernicus overlay.
                 const mp = panelByWindow(event.source);
                 if (mp && _duoOverlays[mp.id]) applyDuoOverlay(mp, _duoOverlays[mp.id]);
-                // Stats globe → keep its Layers panel collapsed.
+                // Metadata globe → keep its Layers panel collapsed.
                 if (mp && _collapseLayersPanels.has(mp.id)) {
                     try { event.source.postMessage({ type: 'collapseLayers' }, '*'); } catch (_) {}
                 }
@@ -3827,7 +3832,11 @@
 
             for (const [key, p] of Object.entries(OceanPresets)) {
                 if (!!p.lines !== !!currentLines) continue;
-                if (p.lines) { if (p.x.includes(currentX)) return key; continue; }
+                if (p.lines) {
+                    const lines = resolveLines(p);
+                    if (p.x.includes(currentX) && lines && lines.join() === currentLines.join()) return key;
+                    continue;
+                }
                 const matchX = p.x.includes(currentX);
                 const matchY = p.y.includes(currentY);
                 const matchC = p.c.includes(currentC) || (!currentC && p.c.length === 0);
@@ -3922,7 +3931,7 @@
                 const src = members.find(b => isOn(b.dataset.preset)) || null;
                 g.trig.className = 'preset-btn preset-group-btn preset-group-plain';
                 g.trig.classList.toggle('active', !!src);
-                g.trig.style.borderColor = src ? getComputedStyle(src).color : '';
+                g.trig.style.setProperty('--ring', src ? getComputedStyle(src).color : '');
                 if (!g.trig.innerHTML) g.trig.innerHTML = `<span class="preset-text">${name}</span><span class="material-symbols-outlined text-[14px] preset-caret">expand_more</span>`;
                 g.trig.setAttribute('aria-label', `${name} presets${src ? `, current: ${src.querySelector('.preset-text')?.textContent}` : ''}`);
                 g.trig.disabled = members.length > 0 && members.every(b => b.disabled);
@@ -3986,19 +3995,41 @@
             return { dir: 'col', ratio: 0.16, _summaryTop: true, a: { leaf: true, panelId: summaryId }, b: main };
         }
 
+        // Height a hosted panel's content needs. The header floats (absolute), so that is just the content; +2 hairline so nothing clips.
+        function panelContentHeight(type, selector) {
+            const panel = Object.values(panels).find(p => p.type === type);
+            const content = panel && panel.el.querySelector(selector);
+            return content && content.scrollHeight ? content.scrollHeight + 2 : 0;
+        }
+
+        // Size the summary / instrument panels to their content, giving the rest to the globe or plot.
+        function fitPanelsToContent() {
+            fitClassicSummaryHeight();
+            fitMetadataColumn();
+        }
+
         // Size the classic-view summary strip to its content. Skipped once the layout is hand-edited.
         function fitClassicSummaryHeight() {
             if (_viewKind !== 'default' || !layoutTree || !layoutTree._summaryTop) return;
-            const summaryP = Object.values(panels).find(p => p.type === 'summary');
-            if (!summaryP) return;
             const hostH = panelHost.clientHeight;
-            const content = summaryP.el.querySelector('#summaryContent');
-            if (!hostH || !content) return;
-            // The header floats (absolute), so the body only needs the content height.
-            const contentH = content.scrollHeight;
-            if (!contentH) return;
-            const desired = contentH + 2;   // +2 hairline so nothing clips
-            layoutTree.ratio = Math.max(0.04, Math.min(0.5, desired / hostH));
+            const summaryH = panelContentHeight('summary', '#summaryContent');
+            if (!hostH || !summaryH) return;
+            layoutTree.ratio = Math.max(0.04, Math.min(0.5, summaryH / hostH));
+            applyGeometry();
+        }
+
+        // Metadata view: summary and instruments only as tall as their content, the globe takes what is left.
+        function fitMetadataColumn() {
+            if (_viewKind !== 'stats' || !layoutTree || !layoutTree.a || !layoutTree.a.b) return;
+            const leftCol = layoutTree.a;
+            const columnH = panelHost.clientHeight * (isPortrait() ? layoutTree.ratio : 1);
+            const summaryH = panelContentHeight('summary', '#summaryContent');
+            const instrumentsH = panelContentHeight('instruments', '#instrumentRows');
+            if (!columnH || !summaryH || !instrumentsH) return;
+            leftCol.ratio = Math.max(0.08, Math.min(0.5, summaryH / columnH));
+            const belowSummaryH = columnH * (1 - leftCol.ratio);
+            // The globe keeps at least a third; a longer instrument list scrolls.
+            leftCol.b.ratio = Math.max(0.35, Math.min(0.92, 1 - instrumentsH / belowSummaryH));
             applyGeometry();
         }
 
@@ -4043,7 +4074,7 @@
             };
         }
 
-        // Stats: three columns: summary/globe/instruments, variables, attributes. Portrait: one column.
+        // Metadata view: three columns: summary/globe/instruments, variables, attributes. Portrait: one column.
         function statsLayoutTree(summaryId, mapId, instrId, varsId, attrsId) {
             // Left column: summary on top, then globe over instruments beneath it.
             const leftCol = {
@@ -4122,12 +4153,12 @@
             }
             _layoutPortrait = isPortrait();
             renderLayout();
-            requestAnimationFrame(fitClassicSummaryHeight);
+            requestAnimationFrame(fitPanelsToContent);
         }
         let _reflowTimer = null;
         window.addEventListener('resize', () => {
             clearTimeout(_reflowTimer);
-            _reflowTimer = setTimeout(() => { reflowLayoutForOrientation(); fitClassicSummaryHeight(); }, 150);
+            _reflowTimer = setTimeout(() => { reflowLayoutForOrientation(); fitPanelsToContent(); }, 150);
         });
 
         // Top bar: View + Presets move up beside Files when they fit unwrapped, else they keep their own line.
@@ -4155,6 +4186,8 @@
         if (toolbarRow) {
             new MutationObserver(scheduleFitToolbar).observe(toolbarRow.querySelector('.toolbar-secondline'), { childList: true, subtree: true, characterData: true });
             new MutationObserver(scheduleFitToolbar).observe(toolbarRow.querySelector('.toolbar-main'), { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
+            // Page modes (e.g. html.gp-mission) show/hide toolbar parts via a class on <html>.
+            new MutationObserver(scheduleFitToolbar).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         }
         scheduleFitToolbar();
 
@@ -4286,7 +4319,7 @@
         // Copernicus overlay per Duo globe (by panel id), reapplied on mapReady. Cleared for non-Duo views.
         let _duoOverlays = {};
 
-        // Globe panel ids whose Layers panel starts collapsed (Stats view); reapplied on mapReady.
+        // Globe panel ids whose Layers panel starts collapsed (Metadata view); reapplied on mapReady.
         let _collapseLayersPanels = new Set();
 
         // Tell a Duo globe to show its overlay and collapse Layers. A failed fetch posts 'overlaySetup' back.
@@ -4362,10 +4395,10 @@
             markViewApplied();
         }
 
-        // Stats: a no-plot dataset-inspection layout in three columns.
+        // Metadata view: a no-plot dataset-inspection layout in three columns.
         function applyStatsView() {
             _pendingGlobeFit = false;
-            const { map: keepMap } = keepGlobe();   // globe only — no 3D in Stats
+            const { map: keepMap } = keepGlobe();   // globe only — no 3D in Metadata
             const map     = keepMap || createPanel('map', { datasetId: datasetSelect.value || '' });
             const summary = createPanel('summary', {});
             const instr   = createPanel('instruments', {});
@@ -4392,6 +4425,7 @@
             updatePresetUI();
             setColourRail(false);   // no plot → grey the colour bar
             markViewApplied();
+            requestAnimationFrame(fitPanelsToContent);
         }
 
         // Rebuild the default view seeded with a preset (preset pressed while no plot panel is open).
@@ -4415,7 +4449,7 @@
             setActive(plot.id);
             updatePresetUI();
             markViewApplied();
-            requestAnimationFrame(fitClassicSummaryHeight);
+            requestAnimationFrame(fitPanelsToContent);
         }
 
         function resetPlotState(fullReset = true) {
@@ -4770,6 +4804,8 @@
                 const isPending = e.downloading || _liveOptimistic.has(e.filename);
                 const isProcessing = e.downloaded && e.status && e.status !== 'ready';
                 const failed = !isPending && !e.downloaded && e.download_error;
+                // BODC listed a newer copy we couldn't fetch: the card keeps the older file.
+                const updateFailed = !isPending && !isProcessing && e.downloaded && e.download_error;
 
                 let iconClass = '', iconName = 'satellite_alt', iconHtml = '';
                 if (isPending && !e.downloaded) { iconClass = 'processing'; iconName = 'progress_activity'; }
@@ -4788,9 +4824,9 @@
                 } else if (isProcessing) {
                     metaLine = `<span class="file-card-stage">${esc(e.status)}</span><span>${e.progress ?? 0}%</span>`;
                     progressBar = `<div class="file-card-progress"><div class="file-card-progress-bar" style="width:${Math.max(2, e.progress ?? 0)}%"></div></div>`;
-                } else if (failed) {
+                } else if (failed || updateFailed) {
                     const tipRows = esc(JSON.stringify(downloadFailureRows(e)));
-                    metaLine = `<span class="file-card-error">Download failed</span>` +
+                    metaLine = `<span class="file-card-error">${failed ? 'Download failed' : 'Update failed'}</span>` +
                         `<span class="material-symbols-outlined file-card-info" data-tip="What BODC reports for this file" data-tip-rows="${tipRows}">info</span>`;
                 } else {
                     metaLine = `<span>updated ${esc(ago)}</span>`;
@@ -5446,7 +5482,7 @@
                 }
 
                 renderSummary(data.global_attributes || {}, escapeHtml);
-                requestAnimationFrame(fitClassicSummaryHeight);   // content changed → re-fit the classic strip
+                requestAnimationFrame(fitPanelsToContent);   // content changed → re-fit the summary / instrument panels
 
                 // Re-apply any active filter to the freshly rendered rows.
                 applyListFilter('var');
@@ -5539,7 +5575,10 @@
                 const isValidPreset = presetAvailable(key);
                 
                 const btn = presetContainer.querySelector(`[data-preset="${key}"]`);
-                if (btn) btn.disabled = !isValidPreset;
+                if (btn) {
+                    btn.disabled = !isValidPreset;
+                    btn.style.display = !isValidPreset && p.requires.length ? 'none' : '';   // optional-sensor presets hide rather than grey out
+                }
 
                 if (isValidPreset) {
                     validPresets.add(key);
@@ -6589,7 +6628,7 @@
         function selectView(kind) {
             fullResetState();
             if (kind !== 'duo') _duoOverlays = {};   // leaving Duo → stop reapplying its overlays
-            if (kind !== 'stats') _collapseLayersPanels = new Set();   // leaving Stats → stop auto-collapsing layers
+            if (kind !== 'stats') _collapseLayersPanels = new Set();   // leaving Metadata → stop auto-collapsing layers
             if (kind === 'duo') {
                 applyDuo();
             } else if (STACK_VIEWS.includes(kind)) {
